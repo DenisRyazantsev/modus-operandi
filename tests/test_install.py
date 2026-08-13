@@ -230,6 +230,17 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("latest-review-{{ inputs.task_id }}.md", workflow)
         self.assertIn('show_file: ".workflow/tasks/latest-review-{{ inputs.task_id }}.md"', workflow)
 
+    def test_workflow_adr_revise_loop(self):
+        self.assertEqual(self.install(), 0)
+        workflow = (
+            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn('options: [approve, revise, reject]', workflow)
+        self.assertIn("adr-loop", workflow)
+        self.assertIn("feedback.md", workflow)
+        self.assertIn("{{ steps.adr-gate.output.choice != 'approve' }}", workflow)
+        self.assertIn("adr-feedback-clear", workflow)
+
     def test_placeholder_config_is_rejected(self):
         self.assertEqual(self.install(), 0)
         self.write_config(

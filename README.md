@@ -91,9 +91,18 @@ meaningful task id (default: `task`).
 ### Gates and resume
 
 With `human_gates: true` (default) the workflow pauses at the ADR gate and the final
-gate. Each gate shows the material to review inline: the ADR for `approve-adr`, and
+gate. Each gate shows the material to review inline: the ADR for the ADR gate, and
 the latest `review-N.md` (copied to `latest-review-<task_id>.md`) for `final-gate`.
-Review and continue:
+
+At the ADR gate you can choose `approve`, `revise`, or `reject`:
+
+- **approve** — proceed to the executor;
+- **revise** — the workflow asks you to write your feedback into
+  `.workflow/tasks/<task_id>/feedback.md`, then the planner updates the ADR
+  accordingly and the gate re-opens with the revised ADR (up to 3 rounds);
+- **reject** — abort the run.
+
+Review and continue (after an abort or a paused gate):
 
 ```
 specify workflow status
@@ -140,10 +149,12 @@ opencode serve
 |----------------|------------|-------------------|----------------------------------------------------------------------|
 | `adr.md`       | planner    | executor, planner | created on step 1                                                    |
 | `questions.md` | executor   | planner           | always written; first line `QUESTIONS: NONE` or `QUESTIONS: PRESENT` |
-| `answers.md`   | planner    | executor          | written only when `QUESTIONS: PRESENT`                               |
-| `review-N.md`  | planner    | executor, planner | first line exactly `VERDICT: PASS` or `VERDICT: FIX`                 |
+| `answers.md` | planner | executor | written only when `QUESTIONS: PRESENT` |
+| `feedback.md` | user | planner | written at the revise gate; cleared after the revision |
+| `review-N.md` | planner | executor, planner | first line exactly `VERDICT: PASS` or `VERDICT: FIX` |
 
-The workflow steps: `write-adr` → `approve-adr` (gate) → `executor-questions` →
+The workflow steps: `write-adr` → `adr-loop` (gate with approve/revise/reject →
+optional feedback revision) → `executor-questions` →
 `planner-answers` → `implement` → `review-loop` (`do-while`: review → fix → verdict)
 → `final-verdict` → `final-gate` (gate).
 

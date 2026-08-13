@@ -289,7 +289,7 @@ def render_workflow(cfg, paths):
         verdict_decl = (
             "  adr_verdict:\n"
             '    type: string\n'
-            '    enum: ["", approve, reject]\n'
+            '    enum: ["", approve, revise, reject]\n'
             '    default: "approve"\n'
             "  final_verdict:\n"
             '    type: string\n'

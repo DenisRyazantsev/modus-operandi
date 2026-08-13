@@ -25,13 +25,38 @@ steps:
       with sections: Context, Decision, Alternatives, Consequences, Acceptance Criteria.
       Feature: {{ inputs.feature }}" --task {{ inputs.task_id }}
 
-  - id: approve-adr
-    type: gate
-    message: "ADR is ready — approve?"
-    options: [approve, reject]
-    on_reject: abort
-    show_file: "${state_dir}/tasks/{{ inputs.task_id }}/adr.md"
+  - id: adr-loop
+    type: do-while
+    max_iterations: 3
+    condition: "{{ steps.adr-gate.output.choice != 'approve' }}"
+    steps:
+      - id: adr-gate
+        type: gate
+        message: "ADR is ready — approve, revise, or reject?"
+        options: [approve, revise, reject]
+        on_reject: abort
+        show_file: "${state_dir}/tasks/{{ inputs.task_id }}/adr.md"
 ${approve_adr_verdict}
+      - id: adr-revise-branch
+        type: if
+        condition: "{{ steps.adr-gate.output.choice == 'revise' }}"
+        then:
+          - id: adr-feedback-gate
+            type: gate
+            message: >-
+              Write your feedback into ${state_dir}/tasks/{{ inputs.task_id }}/feedback.md,
+              then choose continue. The planner will update adr.md accordingly.
+            options: [continue, abort]
+          - id: adr-revise
+            type: shell
+            run: >-
+              "${run_agent}" planner
+              "Read ${state_dir}/tasks/{{ inputs.task_id }}/feedback.md. If it contains
+              feedback, update ${state_dir}/tasks/{{ inputs.task_id }}/adr.md accordingly.
+              If it is empty or missing, do nothing." --task {{ inputs.task_id }}
+          - id: adr-feedback-clear
+            type: shell
+            run: "rm -f ${state_dir}/tasks/{{ inputs.task_id }}/feedback.md"
 
   - id: executor-questions
     type: shell
