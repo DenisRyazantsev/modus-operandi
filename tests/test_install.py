@@ -241,6 +241,17 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("{{ steps.adr-gate.output.choice != 'approve' }}", workflow)
         self.assertIn("adr-feedback-clear", workflow)
 
+    def test_workflow_agent_steps_have_timeout(self):
+        self.assertEqual(self.install(), 0)
+        workflow = (
+            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
+        ).read_text(encoding="utf-8")
+        for step in ("write-adr", "adr-revise", "executor-questions",
+                     "planner-answers", "implement", "review", "fix"):
+            block = workflow.split("- id: %s" % step, 1)[1].split("\n  - id:", 1)[0]
+            self.assertIn("timeout: 7200", block, step)
+        self.assertNotIn("timeout", workflow.split("- id: verdict", 1)[1].split("- id: latest-review", 1)[0])
+
     def test_placeholder_config_is_rejected(self):
         self.assertEqual(self.install(), 0)
         self.write_config(

@@ -41,6 +41,7 @@ CONFIG_EXAMPLE = REPO_ROOT / "config.example.yml"
 MIN_SPECIFY_VERSION = (0, 16)
 DEFAULT_STATE_DIR = ".workflow"
 DEFAULT_MAX_FIX_ITERATIONS = 5
+DEFAULT_SHELL_TIMEOUT = 7200
 DEFAULT_TASK_ID = "task"
 DEFAULT_REASONING = "max"
 
@@ -186,6 +187,7 @@ DEFAULT_CONFIG = {
     "workflow": {
         "state_dir": DEFAULT_STATE_DIR,
         "max_fix_iterations": DEFAULT_MAX_FIX_ITERATIONS,
+        "shell_timeout": DEFAULT_SHELL_TIMEOUT,
         "human_gates": True,
         "use_serve": False,
     }
@@ -229,6 +231,8 @@ def validate_config(cfg):
     workflow = cfg["workflow"]
     if not isinstance(workflow.get("max_fix_iterations"), int) or workflow["max_fix_iterations"] < 1:
         errors.append("workflow.max_fix_iterations must be an integer >= 1")
+    if not isinstance(workflow.get("shell_timeout"), int) or workflow["shell_timeout"] < 1:
+        errors.append("workflow.shell_timeout must be a positive number of seconds")
     if not re.fullmatch(r"[A-Za-z0-9_./-]+", str(workflow.get("state_dir", ""))):
         errors.append("workflow.state_dir contains unsupported characters")
     if not isinstance(workflow.get("human_gates"), bool):
@@ -305,6 +309,7 @@ def render_workflow(cfg, paths):
             "run_agent": str(paths["run_agent"]),
             "state_dir": workflow["state_dir"],
             "task_default": DEFAULT_TASK_ID,
+            "step_timeout": str(workflow["shell_timeout"]),
             "verdict_inputs_decl": verdict_decl,
             "approve_adr_verdict": approve_verdict,
             "final_gate_verdict": final_verdict,

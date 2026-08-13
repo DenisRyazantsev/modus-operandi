@@ -19,6 +19,7 @@ ${verdict_inputs_decl}
 steps:
   - id: write-adr
     type: shell
+    timeout: ${step_timeout}
     run: >-
       "${run_agent}" planner
       "Write an ADR for the following feature into ${state_dir}/tasks/{{ inputs.task_id }}/adr.md
@@ -49,6 +50,7 @@ ${approve_adr_verdict}
             options: [continue, abort]
           - id: adr-revise
             type: shell
+            timeout: ${step_timeout}
             run: >-
               "${run_agent}" planner
               "Read ${state_dir}/tasks/{{ inputs.task_id }}/feedback.md. If it contains
@@ -60,6 +62,7 @@ ${approve_adr_verdict}
 
   - id: executor-questions
     type: shell
+    timeout: ${step_timeout}
     run: >-
       "${run_agent}" executor
       "Read ${state_dir}/tasks/{{ inputs.task_id }}/adr.md. If anything is ambiguous, write
@@ -70,6 +73,7 @@ ${approve_adr_verdict}
 
   - id: planner-answers
     type: shell
+    timeout: ${step_timeout}
     run: >-
       "${run_agent}" planner
       "Read ${state_dir}/tasks/{{ inputs.task_id }}/questions.md. If its first line is
@@ -79,6 +83,7 @@ ${approve_adr_verdict}
 
   - id: implement
     type: shell
+    timeout: ${step_timeout}
     run: >-
       "${run_agent}" executor
       "Implement the feature per ${state_dir}/tasks/{{ inputs.task_id }}/adr.md and
@@ -92,6 +97,7 @@ ${approve_adr_verdict}
     steps:
       - id: review
         type: shell
+        timeout: ${step_timeout}
         run: >-
           "${run_agent}" planner
           "Review the git changes against ${state_dir}/tasks/{{ inputs.task_id }}/adr.md.
@@ -103,6 +109,7 @@ ${approve_adr_verdict}
 
       - id: fix
         type: shell
+        timeout: ${step_timeout}
         run: >-
           "${run_agent}" executor
           "Read the latest ${state_dir}/tasks/{{ inputs.task_id }}/review-N.md and fix all its

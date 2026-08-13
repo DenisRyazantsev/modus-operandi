@@ -63,6 +63,7 @@ models:
 workflow:
   state_dir: .workflow         # task artifact directory inside a project
   max_fix_iterations: 5        # review-fix loop ceiling
+  shell_timeout: 7200          # per-step timeout in seconds for agent steps (2h)
   human_gates: true            # false = gates auto-approve (non-interactive)
   use_serve: false             # true = run-agent.sh passes --attach http://localhost:4096
 ```
