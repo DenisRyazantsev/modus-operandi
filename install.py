@@ -87,6 +87,15 @@ def get_specify_version():
     return parse_specify_version(result.stdout)
 
 
+def _in_venv():
+    return sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+
+
+def _pip_works(python):
+    result = run([python, "-m", "pip", "--version"], check=False)
+    return result.returncode == 0
+
+
 def ensure_pyyaml():
     global yaml
     if yaml is not None:
@@ -96,13 +105,25 @@ def ensure_pyyaml():
             "no network access and PyYAML is not installed; "
             "run: pip3 install --user pyyaml"
         )
-    for pip in (find_in_path("pip3"), find_in_path("python3")):
-        if not pip:
+    candidates = []
+    python = find_in_path("python3")
+    uv = find_in_path("uv")
+    if _in_venv():
+        if uv:
+            candidates.append([uv, "pip", "install", "pyyaml"])
+        if python and _pip_works(python):
+            candidates.append([python, "-m", "pip", "install", "pyyaml"])
+    pip3 = find_in_path("pip3")
+    if pip3:
+        candidates.append([pip3, "install", "--user", "pyyaml"])
+    if uv and not _in_venv():
+        candidates.append([uv, "pip", "install", "--system", "pyyaml"])
+    if python and not _in_venv() and _pip_works(python):
+        candidates.append([python, "-m", "pip", "install", "--user", "pyyaml"])
+    for cmd in candidates:
+        result = run(cmd, check=False)
+        if result.returncode != 0:
             continue
-        cmd = [pip, "install", "--user", "pyyaml"]
-        if Path(pip).name == "python3":
-            cmd = [pip, "-m", "pip", "install", "--user", "pyyaml"]
-        run(cmd)
         try:
             import importlib
 
@@ -134,6 +155,11 @@ def ensure_specify():
             run([path, "install", "specify-cli"])
         else:
             run([path, "install", "--user", "specify-cli"])
+        if get_specify_version():
+            return
+    python = find_in_path("python3")
+    if python and _pip_works(python):
+        run([python, "-m", "pip", "install", "--user", "specify-cli"])
         if get_specify_version():
             return
     raise InstallError(
