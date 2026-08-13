@@ -1,0 +1,195 @@
+# spec-kit-llm-client
+
+Installer for a global **planner → executor** workflow on top of [GitHub Spec Kit](https://github.com/spec-kit/specify-cli) and [OpenCode](https://opencode.ai).
+
+It solves the hand-off problem between a strong model (planning/review) and a cheap model (implementation): sessions stay **warm** across steps via `opencode run --session`, so the executor does not re-read the whole project at every step.
+
+Run `install.py` once, edit one config file, and then in any project:
+
+```
+specify workflow run ~/.config/spec-kit-llm-client/adr-pipeline.yml -i feature="build a kanban board"
+```
+
+Full cycle: ADR → executor questions → planner answers → implementation → review → fixes until the reviewer says `VERDICT: PASS`.
+
+## Requirements
+
+- Linux/macOS
+- Python 3 (with `pip3` or `uv` for dependency installation)
+- [opencode](https://opencode.ai/docs) 1.18+ on PATH
+- [uv](https://docs.astral.sh/uv/) (recommended) or `pipx`/`pip3` — used to install `specify-cli` (>= 0.16)
+- `git` in the project you run the workflow in
+
+## Install
+
+```
+git clone <this repo>
+cd spec-kit-llm-client
+python3 install.py
+```
+
+The installer:
+
+1. checks prerequisites (python3, opencode, network when needed);
+2. installs `specify-cli` (uv → pipx → pip) and PyYAML if missing;
+3. creates `~/.config/opencode/agent/{planner,executor}.md`,
+   `~/.config/opencode/scripts/run-agent.sh` and
+   `~/.config/spec-kit-llm-client/{config.yml,adr-pipeline.yml}`;
+4. validates everything (agents visible to opencode, workflow accepted by the
+   spec-kit engine, `run-agent.sh` executable).
+
+`python3 install.py` is idempotent — rerun after editing `config.yml` to regenerate
+agents and the workflow. `--update` additionally prints newly available config options.
+
+## Configure
+
+Edit `~/.config/spec-kit-llm-client/config.yml`:
+
+```yaml
+models:
+  planner:
+    provider: opencode-go      # opencode provider id
+    model: deepseek-v4-pro     # strong model: planning and review
+  executor:
+    provider: opencode-go
+    model: deepseek-v4-flash   # cheap model: implementation
+
+workflow:
+  state_dir: .workflow         # task artifact directory inside a project
+  max_fix_iterations: 5        # review-fix loop ceiling
+  human_gates: true            # false = gates auto-approve (non-interactive)
+  use_serve: false             # true = run-agent.sh passes --attach http://localhost:4096
+```
+
+The config file is never overwritten by the installer.
+
+## Usage
+
+In any project (no `specify init` required):
+
+```
+specify workflow run ~/.config/spec-kit-llm-client/adr-pipeline.yml -i feature="describe the feature"
+```
+
+Optional per-project registration (requires `specify init` in the project first):
+
+```
+python3 <repo>/install.py --register
+specify workflow run adr-pipeline -i feature="describe the feature"
+```
+
+Both commands create the task artifacts in `.workflow/tasks/<task_id>/` (add to your
+`.gitignore` — see `templates/gitignore.snippet`). Use `-i task_id=<name>` for a
+meaningful task id (default: `task`).
+
+### Gates and resume
+
+With `human_gates: true` (default) the workflow pauses at the ADR gate and the final
+gate. Review and continue:
+
+```
+specify workflow status
+specify workflow resume <run_id>
+```
+
+With `human_gates: false` the gates auto-approve through `verdict_input` defaults; the
+workflow runs unattended. If the review loop exhausts `max_fix_iterations` without a
+`VERDICT: PASS`, the `final-verdict` step fails the run — inspect the latest
+`review-N.md`, fix the findings manually, and resume:
+
+```
+specify workflow resume <run_id>
+```
+
+### Warm sessions and `--reset`
+
+`run-agent.sh` keeps one opencode session per role in `<state_dir>/sessions.json`
+(default `.workflow/`). Steps continue the same session, so the agents keep their
+context between steps. Sessions are shared between runs in the same project.
+
+Long sessions are eventually auto-compacted by opencode. When a session grows too
+large, drop it and hand the context over manually:
+
+```
+run-agent.sh executor "summarize the task state into .workflow/tasks/<id>/handoff.md" --task <id>
+run-agent.sh executor --reset
+run-agent.sh executor "read handoff.md and continue" --task <id>
+```
+
+### `opencode serve` mode
+
+Set `workflow.use_serve: true` and start the server yourself:
+
+```
+opencode serve
+```
+
+`run-agent.sh` will then pass `--attach http://localhost:4096` to `opencode run`.
+
+## How it works
+
+| Artifact | Written by | Read by | Rule |
+|---|---|---|---|
+| `adr.md` | planner | executor, planner | created on step 1 |
+| `questions.md` | executor | planner | always written; first line `QUESTIONS: NONE` or `QUESTIONS: PRESENT` |
+| `answers.md` | planner | executor | written only when `QUESTIONS: PRESENT` |
+| `review-N.md` | planner | executor, planner | first line exactly `VERDICT: PASS` or `VERDICT: FIX` |
+
+The workflow steps: `write-adr` → `approve-adr` (gate) → `executor-questions` →
+`planner-answers` → `implement` → `review-loop` (`do-while`: review → fix → verdict)
+→ `final-verdict` → `final-gate` (gate).
+
+The loop verdict checks the **latest** review file only (`sort -V`):
+`last=$(ls -1 .../review-*.md 2>/dev/null | sort -V | tail -1) && head -1 "$last" | grep -q '^VERDICT: PASS'`.
+
+## Security notes
+
+- `run-agent.sh` passes `--auto` to `opencode run` (agents may act without
+  confirmation; required for headless workflow steps). The agents also carry a
+  `permission: {"*": allow}` frontmatter as a fallback for TUI usage.
+- The workflow interpolates `{{ inputs.feature }}` into a shell command. Pass only
+  trusted, simple feature descriptions; do not pipe untrusted text into `-i feature=`.
+- Workflow `shell` steps run with your privileges — review the generated
+  `adr-pipeline.yml` before running it.
+
+## Uninstall
+
+```
+python3 install.py --uninstall
+```
+
+Removes the generated agents, script, workflow and example config (keeps
+`config.yml`), then asks whether to uninstall `specify-cli`/PyYAML (`--yes` answers
+yes). Projects where you ran `--register` keep their installed copy — remove it with
+`specify workflow remove adr-pipeline`.
+
+## Troubleshooting
+
+- **`error: required input 'feature' not provided`** during install validation is
+  expected — it proves the workflow parsed.
+- **Session ids**: `run-agent.sh` extracts the `sessionID` field from `opencode run
+  --format json` output, with a `sessionId` fallback. If a future opencode version
+  changes the stream shape, update `extract_session_id()` in
+  `templates/run-agent.sh.tpl` (output of `opencode run --format json` prints the
+  first `sessionID:...` occurrence).
+- **specify-cli version**: the installer pins a minimum version (>= 0.16). The
+  workflow schema (`do-while`, `verdict_input`, `continue_on_error`) is verified
+  against 0.16.2.
+- **Task ids**: keep `task_id` simple (letters, digits, `-`/`_`); it is interpolated
+  into shell paths.
+- **`opencode agent list` validation** reads the target config dir via
+  `XDG_CONFIG_HOME`, so `--home` installs validate correctly.
+
+## Layout
+
+```
+install.py                  entry point
+config.example.yml          reference config (English comments)
+templates/
+  planner.md.tpl            planner agent (strong model)
+  executor.md.tpl           executor agent (cheap model)
+  adr-pipeline.yml.tpl      spec-kit workflow
+  run-agent.sh.tpl          session glue
+  gitignore.snippet         recommended .gitignore lines
+tests/test_install.py       smoke tests (unittest, all through --home)
+```
