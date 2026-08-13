@@ -42,7 +42,6 @@ MIN_SPECIFY_VERSION = (0, 16)
 DEFAULT_STATE_DIR = ".workflow"
 DEFAULT_MAX_FIX_ITERATIONS = 5
 DEFAULT_SHELL_TIMEOUT = 7200
-DEFAULT_TASK_ID = "task"
 DEFAULT_REASONING = "max"
 
 
@@ -308,7 +307,6 @@ def render_workflow(cfg, paths):
         {
             "run_agent": str(paths["run_agent"]),
             "state_dir": workflow["state_dir"],
-            "task_default": DEFAULT_TASK_ID,
             "step_timeout": str(workflow["shell_timeout"]),
             "verdict_inputs_decl": verdict_decl,
             "approve_adr_verdict": approve_verdict,

@@ -221,6 +221,15 @@ class InstallerTest(unittest.TestCase):
         before_final_gate = workflow.split("final-gate", 1)[0]
         self.assertNotIn("continue_on_error", before_final_gate.split("final-verdict", 1)[1])
 
+    def test_workflow_task_id_is_required(self):
+        self.assertEqual(self.install(), 0)
+        workflow = (
+            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
+        ).read_text(encoding="utf-8")
+        block = workflow.split("task_id:", 1)[1].split("steps:", 1)[0]
+        self.assertIn("required: true", block)
+        self.assertNotIn("default:", block)
+
     def test_workflow_gates_show_files(self):
         self.assertEqual(self.install(), 0)
         workflow = (

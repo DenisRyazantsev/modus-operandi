@@ -26,23 +26,44 @@ PROMPT="$$2"
 shift 2
 [ "$$ROLE" = "planner" ] || [ "$$ROLE" = "executor" ] || usage
 
+TASK_ID=""
+RESET=0
 while [ $$# -gt 0 ]; do
   case "$$1" in
-    --task) shift 2 ;;
+    --task) TASK_ID="$$2"; shift 2 ;;
     --reset) RESET=1; shift ;;
     *) usage ;;
   esac
 done
 
 STATE_DIR="$${SKLC_STATE_DIR:-.workflow}"
-SESSIONS_FILE="$$STATE_DIR/sessions.json"
 ATTACH_FLAG="${serve_attach}"
+if [ -n "$$TASK_ID" ]; then
+  SESSIONS_FILE="$$STATE_DIR/sessions-$$TASK_ID.json"
+else
+  SESSIONS_FILE="$$STATE_DIR/sessions.json"
+fi
+PID_FILE="$$STATE_DIR/pids/$$(basename "$$SESSIONS_FILE").pid"
 
-mkdir -p "$$STATE_DIR"
+mkdir -p "$$STATE_DIR/pids"
 if ! touch "$$SESSIONS_FILE"; then
   echo "error: cannot write $$SESSIONS_FILE" >&2
   exit 2
 fi
+
+# Kill any opencode process left over from a previously killed step (e.g. a
+# shell-step timeout that killed the shell but not the agent), so a zombie
+# cannot keep writing to this session or burn tokens.
+if [ -f "$$PID_FILE" ]; then
+  OLD_PID="$$(cat "$$PID_FILE" 2>/dev/null || true)"
+  if [ -n "$$OLD_PID" ] && kill -0 "$$OLD_PID" 2>/dev/null; then
+    echo "warning: killing stale opencode process $$OLD_PID for role '$$ROLE'" >&2
+    kill "$$OLD_PID" 2>/dev/null || true
+  fi
+  rm -f "$$PID_FILE"
+fi
+echo "$$$$" > "$$PID_FILE"
+trap 'rm -f "$$PID_FILE"' EXIT
 
 read_session() {
   python3 -c 'import json,sys

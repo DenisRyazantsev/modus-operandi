@@ -13,7 +13,8 @@ inputs:
     prompt: "Describe what you want to build"
   task_id:
     type: string
-    default: "${task_default}"
+    required: true
+    prompt: "Short id for this task (used for artifacts and sessions)"
 ${verdict_inputs_decl}
 
 steps:

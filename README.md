@@ -75,8 +75,12 @@ The config file is never overwritten by the installer.
 In any project (no `specify init` required):
 
 ```
-specify workflow run ~/.config/spec-kit-llm-client/adr-pipeline.yml -i feature="describe the feature"
+specify workflow run ~/.config/spec-kit-llm-client/adr-pipeline.yml -i feature="describe the feature" -i task_id=my-feature
 ```
+
+`task_id` is required: it names the artifacts (`.workflow/tasks/<task_id>/`) and the
+warm sessions (`.workflow/sessions-<task_id>.json`). Use a short, unique id per task —
+running a different task with the same `task_id` reuses that task's sessions.
 
 Optional per-project registration (requires `specify init` in the project first):
 
@@ -121,9 +125,15 @@ specify workflow resume <run_id>
 
 ### Warm sessions and `--reset`
 
-`run-agent.sh` keeps one opencode session per role in `<state_dir>/sessions.json`
-(default `.workflow/`). Steps continue the same session, so the agents keep their
-context between steps. Sessions are shared between runs in the same project.
+`run-agent.sh` keeps one opencode session per role per task in
+`<state_dir>/sessions-<task_id>.json` (default `.workflow/`). Steps continue the same
+session, so the agents keep their context between steps. Rerunning the same
+`task_id` resumes the same sessions; a new `task_id` starts fresh ones.
+
+Before each step, `run-agent.sh` kills any opencode process it previously recorded
+for that session (`<state_dir>/pids/`). This cleans up orphans left behind when a
+shell-step timeout kills the workflow shell but not the agent process — a stale
+agent can no longer keep writing to the session or burn tokens.
 
 Long sessions are eventually auto-compacted by opencode. When a session grows too
 large, drop it and hand the context over manually:
