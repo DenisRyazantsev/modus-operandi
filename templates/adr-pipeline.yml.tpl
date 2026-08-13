@@ -1,0 +1,102 @@
+schema_version: "1.0"
+workflow:
+  id: "adr-pipeline"
+  name: "ADR Pipeline"
+  version: "1.0.0"
+  author: "spec-kit-llm-client"
+  description: "Planner -> executor cycle: ADR, questions, implementation, review-fix loop"
+
+inputs:
+  feature:
+    type: string
+    required: true
+    prompt: "Describe what you want to build"
+  task_id:
+    type: string
+    default: "${task_default}"
+${verdict_inputs_decl}
+
+steps:
+  - id: write-adr
+    type: shell
+    run: >-
+      "${run_agent}" planner
+      "Write an ADR for the following feature into ${state_dir}/tasks/{{ inputs.task_id }}/adr.md
+      with sections: Context, Decision, Alternatives, Consequences, Acceptance Criteria.
+      Feature: {{ inputs.feature }}" --task {{ inputs.task_id }}
+
+  - id: approve-adr
+    type: gate
+    message: "ADR is ready — approve?"
+    options: [approve, reject]
+    on_reject: abort
+${approve_adr_verdict}
+
+  - id: executor-questions
+    type: shell
+    run: >-
+      "${run_agent}" executor
+      "Read ${state_dir}/tasks/{{ inputs.task_id }}/adr.md. If anything is ambiguous, write
+      ${state_dir}/tasks/{{ inputs.task_id }}/questions.md whose first line is exactly
+      'QUESTIONS: PRESENT' followed by your numbered questions, then stop. If everything is
+      clear, write ${state_dir}/tasks/{{ inputs.task_id }}/questions.md with the first line
+      exactly 'QUESTIONS: NONE'." --task {{ inputs.task_id }}
+
+  - id: planner-answers
+    type: shell
+    run: >-
+      "${run_agent}" planner
+      "Read ${state_dir}/tasks/{{ inputs.task_id }}/questions.md. If its first line is
+      'QUESTIONS: PRESENT', write ${state_dir}/tasks/{{ inputs.task_id }}/answers.md answering
+      each question line-by-line in the same order. If it is 'QUESTIONS: NONE', write nothing."
+      --task {{ inputs.task_id }}
+
+  - id: implement
+    type: shell
+    run: >-
+      "${run_agent}" executor
+      "Implement the feature per ${state_dir}/tasks/{{ inputs.task_id }}/adr.md and
+      ${state_dir}/tasks/{{ inputs.task_id }}/answers.md (if present). Then run the project's
+      tests/linter if available." --task {{ inputs.task_id }}
+
+  - id: review-loop
+    type: do-while
+    max_iterations: ${max_fix_iterations}
+    condition: "{{ steps.verdict.output.exit_code != 0 }}"
+    steps:
+      - id: review
+        type: shell
+        run: >-
+          "${run_agent}" planner
+          "Review the git changes against ${state_dir}/tasks/{{ inputs.task_id }}/adr.md.
+          Run git status, then git diff HEAD (includes staged changes). Write
+          ${state_dir}/tasks/{{ inputs.task_id }}/review-N.md (N is the next number after the
+          existing review files) with the first line exactly 'VERDICT: PASS' or
+          'VERDICT: FIX' followed by actionable findings. The verdict must reflect the
+          implemented code, not the ADR document." --task {{ inputs.task_id }}
+
+      - id: fix
+        type: shell
+        run: >-
+          "${run_agent}" executor
+          "Read the latest ${state_dir}/tasks/{{ inputs.task_id }}/review-N.md and fix all its
+          findings. Then run the project's tests/linter if available." --task {{ inputs.task_id }}
+
+      - id: verdict
+        type: shell
+        continue_on_error: true
+        run: >-
+          last=$$(ls -1 ${state_dir}/tasks/{{ inputs.task_id }}/review-*.md 2>/dev/null
+          | sort -V | tail -1) && head -1 "$$last" | grep -q '^VERDICT: PASS'
+
+  - id: final-verdict
+    type: shell
+    run: >-
+      last=$$(ls -1 ${state_dir}/tasks/{{ inputs.task_id }}/review-*.md 2>/dev/null
+      | sort -V | tail -1) && head -1 "$$last" | grep -q '^VERDICT: PASS'
+
+  - id: final-gate
+    type: gate
+    message: "Review is clean — close?"
+    options: [approve, reject]
+${final_gate_verdict}

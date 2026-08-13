@@ -1,0 +1,17 @@
+# spec-kit-llm-client configuration
+# On first install this file is copied to ~/.config/spec-kit-llm-client/config.yml.
+# Edit the values below, then re-run install.py to regenerate the agents and workflow.
+
+models:
+  planner:
+    provider: opencode-go          # opencode provider id
+    model: deepseek-v4-pro         # strong model for planning and review
+  executor:
+    provider: opencode-go
+    model: deepseek-v4-flash       # cheap/fast model for implementation
+
+workflow:
+  state_dir: .workflow           # task artifact directory inside a project
+  max_fix_iterations: 5          # ceiling for the review-fix loop
+  human_gates: true              # false = gates auto-approve (non-interactive runs)
+  use_serve: false               # true = run-agent.sh passes --attach http://localhost:4096
