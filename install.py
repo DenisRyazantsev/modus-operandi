@@ -42,6 +42,7 @@ MIN_SPECIFY_VERSION = (0, 16)
 DEFAULT_STATE_DIR = ".workflow"
 DEFAULT_MAX_FIX_ITERATIONS = 5
 DEFAULT_TASK_ID = "task"
+DEFAULT_REASONING = "max"
 
 
 class InstallError(Exception):
@@ -205,6 +206,10 @@ def load_config(path):
     workflow.update(cfg.get("workflow") or {})
     cfg["workflow"] = workflow
     cfg["models"] = cfg.get("models") or {}
+    for role in ("planner", "executor"):
+        model = dict(cfg["models"].get(role) or {})
+        model.setdefault("reasoning", DEFAULT_REASONING)
+        cfg["models"][role] = model
     return cfg
 
 
@@ -212,7 +217,7 @@ def validate_config(cfg):
     errors = []
     for role in ("planner", "executor"):
         model = cfg["models"].get(role) or {}
-        for key in ("provider", "model"):
+        for key in ("provider", "model", "reasoning"):
             value = model.get(key)
             if not value:
                 errors.append("missing required key: models.%s.%s" % (role, key))
@@ -246,12 +251,20 @@ def render_agents(cfg, paths):
     render_file(
         TEMPLATES_DIR / "planner.md.tpl",
         paths["agents"] / "planner.md",
-        {"planner_provider": planner["provider"], "planner_model": planner["model"]},
+        {
+            "planner_provider": planner["provider"],
+            "planner_model": planner["model"],
+            "planner_reasoning": planner["reasoning"],
+        },
     )
     render_file(
         TEMPLATES_DIR / "executor.md.tpl",
         paths["agents"] / "executor.md",
-        {"executor_provider": executor["provider"], "executor_model": executor["model"]},
+        {
+            "executor_provider": executor["provider"],
+            "executor_model": executor["model"],
+            "executor_reasoning": executor["reasoning"],
+        },
     )
 
 

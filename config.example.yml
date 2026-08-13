@@ -6,9 +6,11 @@ models:
   planner:
     provider: opencode-go          # opencode provider id
     model: deepseek-v4-pro         # strong model for planning and review
+    reasoning: max                 # reasoning effort passed to the provider (e.g. minimal, low, high, max)
   executor:
     provider: opencode-go
     model: deepseek-v4-flash       # cheap/fast model for implementation
+    reasoning: max                 # reasoning effort passed to the provider
 
 workflow:
   state_dir: .workflow           # task artifact directory inside a project

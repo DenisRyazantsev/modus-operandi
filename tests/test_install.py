@@ -171,7 +171,23 @@ class InstallerTest(unittest.TestCase):
             self.home / ".config/opencode/agent/executor.md"
         ).read_text(encoding="utf-8")
         self.assertIn("opencode-go/deepseek-v4-flash", executor)
+        self.assertIn("reasoningEffort: max", executor)
         self.assertIn("permission", executor)
+
+    def test_rendered_planner_reasoning_from_config(self):
+        self.assertEqual(self.install(), 0)
+        self.write_config(self.read_config().replace(
+            "reasoning: max", "reasoning: high", 1
+        ))
+        self.assertEqual(self.install(), 0)
+        planner = (
+            self.home / ".config/opencode/agent/planner.md"
+        ).read_text(encoding="utf-8")
+        executor = (
+            self.home / ".config/opencode/agent/executor.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("reasoningEffort: high", planner)
+        self.assertIn("reasoningEffort: max", executor)
 
     def test_workflow_render_human_gates_false(self):
         self.assertEqual(self.install(), 0)

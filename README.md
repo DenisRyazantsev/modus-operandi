@@ -1,8 +1,11 @@
 # spec-kit-llm-client
 
-Installer for a global **planner → executor** workflow on top of [GitHub Spec Kit](https://github.com/spec-kit/specify-cli) and [OpenCode](https://opencode.ai).
+Installer for a global **planner → executor** workflow on top
+of [GitHub Spec Kit](https://github.com/spec-kit/specify-cli) and [OpenCode](https://opencode.ai).
 
-It solves the hand-off problem between a strong model (planning/review) and a cheap model (implementation): sessions stay **warm** across steps via `opencode run --session`, so the executor does not re-read the whole project at every step.
+It solves the hand-off problem between a strong model (planning/review) and a cheap model (implementation): sessions
+stay **warm** across steps via `opencode run --session`, so the executor does not re-read the whole project at every
+step.
 
 Run `install.py` once, edit one config file, and then in any project:
 
@@ -10,7 +13,8 @@ Run `install.py` once, edit one config file, and then in any project:
 specify workflow run ~/.config/spec-kit-llm-client/adr-pipeline.yml -i feature="build a kanban board"
 ```
 
-Full cycle: ADR → executor questions → planner answers → implementation → review → fixes until the reviewer says `VERDICT: PASS`.
+Full cycle: ADR → executor questions → planner answers → implementation → review → fixes until the reviewer says
+`VERDICT: PASS`.
 
 ## Requirements
 
@@ -50,9 +54,11 @@ models:
   planner:
     provider: opencode-go      # opencode provider id
     model: deepseek-v4-pro     # strong model: planning and review
+    reasoning: max             # reasoning effort passed to the provider (minimal/low/high/max)
   executor:
     provider: opencode-go
     model: deepseek-v4-flash   # cheap model: implementation
+    reasoning: max             # reasoning effort passed to the provider
 
 workflow:
   state_dir: .workflow         # task artifact directory inside a project
@@ -128,12 +134,12 @@ opencode serve
 
 ## How it works
 
-| Artifact | Written by | Read by | Rule |
-|---|---|---|---|
-| `adr.md` | planner | executor, planner | created on step 1 |
-| `questions.md` | executor | planner | always written; first line `QUESTIONS: NONE` or `QUESTIONS: PRESENT` |
-| `answers.md` | planner | executor | written only when `QUESTIONS: PRESENT` |
-| `review-N.md` | planner | executor, planner | first line exactly `VERDICT: PASS` or `VERDICT: FIX` |
+| Artifact       | Written by | Read by           | Rule                                                                 |
+|----------------|------------|-------------------|----------------------------------------------------------------------|
+| `adr.md`       | planner    | executor, planner | created on step 1                                                    |
+| `questions.md` | executor   | planner           | always written; first line `QUESTIONS: NONE` or `QUESTIONS: PRESENT` |
+| `answers.md`   | planner    | executor          | written only when `QUESTIONS: PRESENT`                               |
+| `review-N.md`  | planner    | executor, planner | first line exactly `VERDICT: PASS` or `VERDICT: FIX`                 |
 
 The workflow steps: `write-adr` → `approve-adr` (gate) → `executor-questions` →
 `planner-answers` → `implement` → `review-loop` (`do-while`: review → fix → verdict)
