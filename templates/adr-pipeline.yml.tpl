@@ -30,6 +30,7 @@ steps:
     message: "ADR is ready — approve?"
     options: [approve, reject]
     on_reject: abort
+    show_file: "${state_dir}/tasks/{{ inputs.task_id }}/adr.md"
 ${approve_adr_verdict}
 
   - id: executor-questions
@@ -95,8 +96,15 @@ ${approve_adr_verdict}
       last=$$(ls -1 ${state_dir}/tasks/{{ inputs.task_id }}/review-*.md 2>/dev/null
       | sort -V | tail -1) && head -1 "$$last" | grep -q '^VERDICT: PASS'
 
+  - id: latest-review
+    type: shell
+    run: >-
+      latest=$$(ls -1 ${state_dir}/tasks/{{ inputs.task_id }}/review-*.md 2>/dev/null
+      | sort -V | tail -1) && cp "$$latest" ${state_dir}/tasks/latest-review-{{ inputs.task_id }}.md
+
   - id: final-gate
     type: gate
     message: "Review is clean — close?"
     options: [approve, reject]
+    show_file: "${state_dir}/tasks/latest-review-{{ inputs.task_id }}.md"
 ${final_gate_verdict}

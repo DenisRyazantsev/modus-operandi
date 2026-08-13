@@ -221,6 +221,15 @@ class InstallerTest(unittest.TestCase):
         before_final_gate = workflow.split("final-gate", 1)[0]
         self.assertNotIn("continue_on_error", before_final_gate.split("final-verdict", 1)[1])
 
+    def test_workflow_gates_show_files(self):
+        self.assertEqual(self.install(), 0)
+        workflow = (
+            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("show_file: \".workflow/tasks/{{ inputs.task_id }}/adr.md\"", workflow)
+        self.assertIn("latest-review-{{ inputs.task_id }}.md", workflow)
+        self.assertIn('show_file: ".workflow/tasks/latest-review-{{ inputs.task_id }}.md"', workflow)
+
     def test_placeholder_config_is_rejected(self):
         self.assertEqual(self.install(), 0)
         self.write_config(

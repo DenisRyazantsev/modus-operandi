@@ -91,7 +91,9 @@ meaningful task id (default: `task`).
 ### Gates and resume
 
 With `human_gates: true` (default) the workflow pauses at the ADR gate and the final
-gate. Review and continue:
+gate. Each gate shows the material to review inline: the ADR for `approve-adr`, and
+the latest `review-N.md` (copied to `latest-review-<task_id>.md`) for `final-gate`.
+Review and continue:
 
 ```
 specify workflow status
