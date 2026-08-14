@@ -5,9 +5,9 @@ from __future__ import annotations
 import re
 import shutil
 from pathlib import Path
+from typing import Any
 
-from . import CONFIG_EXAMPLE, InstallError
-from . import deps
+from . import CONFIG_EXAMPLE, InstallError, Paths, deps
 
 DEFAULT_STATE_DIR = ".workflow"
 DEFAULT_MAX_FIX_ITERATIONS = 5
@@ -16,7 +16,7 @@ DEFAULT_SHELL_TIMEOUT = 7200
 DEFAULT_REASONING = "max"
 DEFAULT_ADR_DIR = "architecture"
 
-DEFAULT_CONFIG = {
+DEFAULT_CONFIG: dict[str, Any] = {
     "workflow": {
         "state_dir": DEFAULT_STATE_DIR,
         "max_fix_iterations": DEFAULT_MAX_FIX_ITERATIONS,
@@ -29,7 +29,7 @@ DEFAULT_CONFIG = {
 }
 
 
-def build_paths(home):
+def build_paths(home: str | Path) -> Paths:
     base = Path(home)
     return {
         "agents": base / ".config" / "opencode" / "agent",
@@ -43,19 +43,20 @@ def build_paths(home):
     }
 
 
-def ensure_config(paths):
+def ensure_config(paths: Paths) -> None:
     shutil.copy2(CONFIG_EXAMPLE, paths["config_example"])
     if not paths["config"].exists():
         shutil.copy2(CONFIG_EXAMPLE, paths["config"])
-        print("created %s with defaults (edit it to change models)" % paths["config"])
+        print("created {} with defaults (edit it to change models)".format(paths["config"]))
 
 
-def load_config(path):
+def load_config(path: str | Path) -> dict[str, Any]:
     with open(path, encoding="utf-8") as fh:
-        return deps.yaml.safe_load(fh) or {}
+        raw = deps.yaml.safe_load(fh) or {}
+    return dict(raw)
 
 
-def apply_defaults(raw):
+def apply_defaults(raw: Any) -> dict[str, Any]:
     cfg = dict(raw or {})
     workflow = dict(DEFAULT_CONFIG["workflow"])
     workflow.update(cfg.get("workflow") or {})
@@ -68,23 +69,28 @@ def apply_defaults(raw):
     return cfg
 
 
-def validate_config(cfg):
-    errors = []
+def validate_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    errors: list[str] = []
     for role in ("planner", "executor"):
         model = cfg["models"].get(role) or {}
         for key in ("provider", "model", "reasoning"):
             value = model.get(key)
             if not value:
-                errors.append("missing required key: models.%s.%s" % (role, key))
+                errors.append(f"missing required key: models.{role}.{key}")
             elif "<" in str(value) or ">" in str(value):
                 errors.append(
-                    "placeholder value in models.%s.%s - edit config.yml first"
-                    % (role, key)
+                    f"placeholder value in models.{role}.{key} - edit config.yml first"
                 )
     workflow = cfg["workflow"]
-    if not isinstance(workflow.get("max_fix_iterations"), int) or workflow["max_fix_iterations"] < 1:
+    if (
+        not isinstance(workflow.get("max_fix_iterations"), int)
+        or workflow["max_fix_iterations"] < 1
+    ):
         errors.append("workflow.max_fix_iterations must be an integer >= 1")
-    if not isinstance(workflow.get("max_srp_iterations"), int) or workflow["max_srp_iterations"] < 1:
+    if (
+        not isinstance(workflow.get("max_srp_iterations"), int)
+        or workflow["max_srp_iterations"] < 1
+    ):
         errors.append("workflow.max_srp_iterations must be an integer >= 1")
     if not isinstance(workflow.get("shell_timeout"), int) or workflow["shell_timeout"] < 1:
         errors.append("workflow.shell_timeout must be a positive number of seconds")
@@ -101,10 +107,10 @@ def validate_config(cfg):
     return cfg
 
 
-def collect_keys(data, prefix=""):
-    keys = set()
+def collect_keys(data: Any, prefix: str = "") -> set[str]:
+    keys: set[str] = set()
     for key, value in (data or {}).items():
-        full = "%s.%s" % (prefix, key) if prefix else str(key)
+        full = f"{prefix}.{key}" if prefix else str(key)
         if isinstance(value, dict):
             keys.update(collect_keys(value, full))
         else:
@@ -112,10 +118,10 @@ def collect_keys(data, prefix=""):
     return keys
 
 
-def print_diff_new_options(config_path, cfg):
+def print_diff_new_options(config_path: str | Path, cfg: dict[str, Any]) -> None:
     example = deps.yaml.safe_load(CONFIG_EXAMPLE.read_text(encoding="utf-8")) or {}
     new = collect_keys(example) - collect_keys(cfg)
     if new:
-        print("new options available (not yet set in %s):" % config_path)
+        print(f"new options available (not yet set in {config_path}):")
         for key in sorted(new):
-            print("  %s" % key)
+            print(f"  {key}")

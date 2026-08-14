@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import shutil
+from pathlib import Path
 from string import Template
+from typing import Any
 
-from . import TEMPLATES_DIR
+from . import TEMPLATES_DIR, Paths
 
 
-def render_file(template_path, target_path, mapping):
+def render_file(
+    template_path: Path, target_path: Path, mapping: dict[str, str]
+) -> None:
     text = Template(template_path.read_text(encoding="utf-8")).substitute(mapping)
     target_path.write_text(text, encoding="utf-8")
 
 
-def render_agents(cfg, paths):
+def render_agents(cfg: dict[str, Any], paths: Paths) -> None:
     planner = cfg["models"]["planner"]
     executor = cfg["models"]["executor"]
     render_file(
@@ -36,7 +40,7 @@ def render_agents(cfg, paths):
     )
 
 
-def render_run_agent(cfg, paths):
+def render_run_agent(cfg: dict[str, Any], paths: Paths) -> None:
     use_serve = cfg["workflow"]["use_serve"]
     serve_attach = "--attach http://localhost:4096" if use_serve else ""
     render_file(
@@ -47,11 +51,11 @@ def render_run_agent(cfg, paths):
     paths["run_agent"].chmod(0o755)
 
 
-def render_save_adr(paths):
+def render_save_adr(paths: Paths) -> None:
     shutil.copy2(TEMPLATES_DIR / "save_adr.py", paths["save_adr"])
 
 
-def render_workflow(cfg, paths):
+def render_workflow(cfg: dict[str, Any], paths: Paths) -> None:
     workflow = cfg["workflow"]
     if workflow["human_gates"]:
         verdict_decl = ""

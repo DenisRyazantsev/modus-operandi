@@ -4,30 +4,31 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
-from . import REPO_ROOT, InstallError
-from . import actions, config, deps, render, verify
+from . import REPO_ROOT, InstallError, Paths, actions, config, deps, render, verify
 
 
-def print_instructions(paths):
+def print_instructions(paths: Paths) -> None:
     print(
         "\nDone. Next steps:\n"
-        "  1. Edit %s to choose your models "
+        "  1. Edit {} to choose your models "
         "(planner = strong, executor = cheap), then rerun install.py.\n"
         "  2. In any project run:\n"
-        "       specify workflow run %s -i feature=\"your feature description\"\n"
+        "       specify workflow run {} -i feature=\"your feature description\"\n"
         "     or, from a Spec Kit project (run 'specify init' first), install by ID once:\n"
-        "       python3 %s --register\n"
+        "       python3 {} --register\n"
         "     and then:\n"
         "       specify workflow run adr-pipeline -i feature=\"...\"\n"
         "  3. If the run pauses at a gate, review and resume with:\n"
-        "       specify workflow resume <run_id>\n"
-        % (paths["config"], paths["workflow"], REPO_ROOT / "install.py")
+        "       specify workflow resume <run_id>\n".format(
+            paths["config"], paths["workflow"], REPO_ROOT / "install.py"
+        )
     )
 
 
-def run_install(args):
+def run_install(args: argparse.Namespace) -> None:
     home = Path(args.home).expanduser() if args.home else Path.home()
     paths = config.build_paths(home)
     if args.register:
@@ -66,7 +67,7 @@ def run_install(args):
     print_instructions(paths)
 
 
-def parse_args(argv):
+def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Install the spec-kit-llm-client planner/executor pipeline"
     )
@@ -91,18 +92,18 @@ def parse_args(argv):
     return parser.parse_args(argv)
 
 
-def main(argv=None):
+def main(argv: Sequence[str] | None = None) -> int:
     try:
         run_install(parse_args(argv))
     except InstallError as exc:
-        print("error: %s" % exc, file=sys.stderr)
+        print(f"error: {exc}", file=sys.stderr)
         return 1
     except (OSError, ValueError, KeyError) as exc:
-        print("error: %s" % exc, file=sys.stderr)
+        print(f"error: {exc}", file=sys.stderr)
         return 1
     except Exception as exc:
         if deps.yaml is not None and isinstance(exc, deps.yaml.YAMLError):
-            print("error: %s" % exc, file=sys.stderr)
+            print(f"error: {exc}", file=sys.stderr)
             return 1
         raise
     return 0

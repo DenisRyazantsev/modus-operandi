@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
-from . import InstallError
-from . import deps
+from . import InstallError, Paths, deps
 
 
-def confirm(prompt):
+def confirm(prompt: str) -> bool:
     try:
         return input(prompt).strip().lower() in ("y", "yes")
     except EOFError:
         return False
 
 
-def do_register(paths):
+def do_register(paths: Paths) -> None:
     if not paths["workflow"].exists():
         raise InstallError("adr-pipeline.yml not found - run install.py first")
     specify = deps.find_in_path("specify")
@@ -30,8 +30,8 @@ def do_register(paths):
     print("run it with: specify workflow run adr-pipeline -i feature=\"...\"")
 
 
-def _uninstall_pip_package(package):
-    attempts = []
+def _uninstall_pip_package(package: str) -> bool:
+    attempts: list[list[str]] = []
     python = deps.find_in_path("python3")
     if python and deps._pip_works(python):
         attempts.append([python, "-m", "pip", "uninstall", "-y", package])
@@ -46,8 +46,8 @@ def _uninstall_pip_package(package):
     return False
 
 
-def do_uninstall(paths, yes):
-    removed = []
+def do_uninstall(paths: Paths, yes: bool) -> None:
+    removed: list[str] = []
     for path in (
         paths["agents"] / "planner.md",
         paths["agents"] / "executor.md",
@@ -62,11 +62,9 @@ def do_uninstall(paths, yes):
     if removed:
         print("removed:\n  " + "\n  ".join(removed))
     for directory in (paths["agents"], paths["scripts"], paths["sklc"]):
-        try:
+        with contextlib.suppress(OSError):
             directory.rmdir()
-        except OSError:
-            pass
-    print("kept your configuration: %s" % paths["config"])
+    print("kept your configuration: {}".format(paths["config"]))
     if yes or confirm("uninstall specify-cli? [y/N] "):
         uv = deps.find_in_path("uv")
         if uv and deps.get_specify_version():

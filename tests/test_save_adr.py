@@ -13,6 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 _SPEC = importlib.util.spec_from_file_location(
     "save_adr", REPO_ROOT / "templates" / "save_adr.py"
 )
+assert _SPEC is not None and _SPEC.loader is not None
 save_adr = importlib.util.module_from_spec(_SPEC)
 sys.modules["save_adr"] = save_adr
 _SPEC.loader.exec_module(save_adr)
@@ -155,9 +156,8 @@ class CmdSaveTest(unittest.TestCase):
 
     def test_planner_refusal_fails(self):
         self.adr("---\nstatus: accepted\n---\n# ADR: Сплиты\n")
-        with mock.patch("subprocess.run"):
-            with self.assertRaises(SystemExit) as cm:
-                self.save()
+        with mock.patch("subprocess.run"), self.assertRaises(SystemExit) as cm:
+            self.save()
         self.assertIn("slug", str(cm.exception))
 
 

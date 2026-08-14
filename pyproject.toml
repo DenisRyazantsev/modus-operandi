@@ -3,3 +3,27 @@ name = "spec-kit-llm-client"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = ["pyyaml"]
+
+[dependency-groups]
+dev = ["ruff", "mypy", "types-PyYAML"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+lint.select = ["E", "F", "I", "W", "B", "UP", "SIM"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+files = ["install.py", "sklc", "templates/save_adr.py"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+strict = false
+disallow_untyped_defs = false
+check_untyped_defs = false
+disallow_untyped_calls = false
+disallow_any_generics = false
+warn_return_any = false
+no_implicit_optional = false
+allow_incomplete_defs = false

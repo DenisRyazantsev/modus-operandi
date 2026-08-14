@@ -38,7 +38,7 @@ SLUG_ASCII_ERROR = (
 )
 
 
-def read_slug(text):
+def read_slug(text: str) -> str | None:
     fm = text.split("---", 2)
     if len(fm) < 3:
         return None
@@ -46,7 +46,7 @@ def read_slug(text):
     return m.group(1) if m else None
 
 
-def sanitize_slug(raw):
+def sanitize_slug(raw: str) -> str:
     if not raw:
         raise ValueError(SLUG_ASCII_ERROR)
     ascii_slug = re.sub(r"[^a-z0-9-]", "-", raw.lower()).strip("-")
@@ -63,7 +63,7 @@ def sanitize_slug(raw):
     return slug
 
 
-def find_next_number(adr_dir):
+def find_next_number(adr_dir: str) -> int:
     nums = [
         int(m.group(1))
         for m in (
@@ -75,30 +75,30 @@ def find_next_number(adr_dir):
     return max(nums) + 1 if nums else 1
 
 
-def rewrite_heading(text, num):
+def rewrite_heading(text: str, num: str) -> str:
     return re.sub(
         HEADING_RE,
-        lambda m: "# ADR-%s: %s" % (num, m.group(1).strip()),
+        lambda m: f"# ADR-{num}: {m.group(1).strip()}",
         text,
         count=1,
     )
 
 
-def _ask_planner_for_slug(adr_path, run_agent, task_id):
+def _ask_planner_for_slug(adr_path: Path, run_agent: str, task_id: str) -> None:
     prompt = (
-        "Read %s. Its YAML frontmatter (between the first two '---' lines) is "
+        f"Read {adr_path}. Its YAML frontmatter (between the first two '---' lines) is "
         "missing the 'slug' field. Add it on its own line right after the opening "
         "'---': a short 2-3 word ENGLISH summary of the ADR in lowercase kebab-case "
-        "(e.g. 'slug: prod-validation-splits'). Change nothing else." % adr_path
+        "(e.g. 'slug: prod-validation-splits'). Change nothing else."
     )
     cmd = run_agent + " planner " + shlex.quote(prompt) + " --task " + shlex.quote(task_id)
     subprocess.run(cmd, shell=True, check=True)
 
 
-def cmd_save(args):
+def cmd_save(args: argparse.Namespace) -> None:
     adr_path = Path(args.state_dir) / "tasks" / args.task_id / "adr.md"
     if not adr_path.exists():
-        sys.exit("error: adr.md not found: %s" % adr_path)
+        sys.exit(f"error: adr.md not found: {adr_path}")
     text = adr_path.read_text(encoding="utf-8")
     slug = read_slug(text)
     if slug is None:
@@ -118,16 +118,16 @@ def cmd_save(args):
         sys.exit(str(exc) + "; fix the slug field in " + str(adr_path))
 
     adr_dir = Path(args.adr_dir)
-    existing = sorted(adr_dir.glob("ADR-*-%s.md" % slug))
+    existing = sorted(adr_dir.glob(f"ADR-*-{slug}.md"))
     if existing:
         saved_path = str(existing[0])
         print("adr already saved: " + saved_path)
     else:
         num = find_next_number(str(adr_dir))
-        name = "ADR-%04d-%s.md" % (num, slug)
+        name = f"ADR-{num:04d}-{slug}.md"
         target = adr_dir / name
         adr_dir.mkdir(parents=True, exist_ok=True)
-        target.write_text(rewrite_heading(text, "%04d" % num), encoding="utf-8")
+        target.write_text(rewrite_heading(text, f"{num:04d}"), encoding="utf-8")
         print("saved adr: " + str(target))
         saved_path = str(target)
     (Path(args.state_dir) / "tasks" / args.task_id / "adr-saved.txt").write_text(
@@ -135,7 +135,7 @@ def cmd_save(args):
     )
 
 
-def cmd_sync(args):
+def cmd_sync(args: argparse.Namespace) -> None:
     saved_file = Path(args.state_dir) / "tasks" / args.task_id / "adr-saved.txt"
     if not saved_file.exists():
         sys.exit("no adr-saved.txt")
@@ -152,7 +152,7 @@ def cmd_sync(args):
     print("adr synced: " + str(target))
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     p_save = sub.add_parser("save")

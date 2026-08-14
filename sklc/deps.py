@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import os
 import re
 import shutil
@@ -9,32 +10,56 @@ import socket
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from . import InstallError
 
+yaml: Any
 try:
-    import yaml
+    yaml = importlib.import_module("yaml")
 except ImportError:
     yaml = None
+
+__all__ = [
+    "MIN_SPECIFY_VERSION",
+    "yaml",
+    "find_in_path",
+    "run",
+    "network_available",
+    "parse_specify_version",
+    "_specify_candidates",
+    "get_specify_version",
+    "latest_specify_version",
+    "_in_venv",
+    "_pip_works",
+    "check_prerequisites",
+    "ensure_pyyaml",
+    "ensure_specify",
+]
 
 MIN_SPECIFY_VERSION = (0, 16)
 
 
-def find_in_path(name):
+def find_in_path(name: str) -> str | None:
     return shutil.which(name)
 
 
-def run(cmd, cwd=None, env=None, check=True):
+def run(
+    cmd: list[str],
+    cwd: str | Path | None = None,
+    env: dict[str, str] | None = None,
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True)
     if check and result.returncode != 0:
         raise InstallError(
-            "command failed with exit code %d: %s\n%s"
-            % (result.returncode, " ".join(cmd), result.stderr.strip())
+            f"command failed with exit code {result.returncode}: "
+            f"{' '.join(cmd)}\n{result.stderr.strip()}"
         )
     return result
 
 
-def network_available():
+def network_available() -> bool:
     try:
         socket.create_connection(("pypi.org", 443), timeout=5).close()
         return True
@@ -42,16 +67,16 @@ def network_available():
         return False
 
 
-def parse_specify_version(text):
+def parse_specify_version(text: str | None) -> tuple[int, int] | None:
     m = re.search(r"(\d+)\.(\d+)", text or "")
     if not m:
         return None
     return (int(m.group(1)), int(m.group(2)))
 
 
-def _specify_candidates():
+def _specify_candidates() -> list[str]:
     exe = "specify.exe" if os.name == "nt" else "specify"
-    candidates = []
+    candidates: list[str] = []
     for base in (
         Path.home() / ".local" / "bin",
         Path.home() / ".local" / "share" / "uv" / "tools" / "specify-cli" / "bin",
@@ -62,7 +87,7 @@ def _specify_candidates():
     return candidates
 
 
-def get_specify_version():
+def get_specify_version() -> tuple[int, int] | None:
     path = find_in_path("specify")
     if not path:
         return None
@@ -72,10 +97,9 @@ def get_specify_version():
     return parse_specify_version(result.stdout)
 
 
-def latest_specify_version():
-    for path in _specify_candidates() + [find_in_path("specify")]:
-        if not path:
-            continue
+def latest_specify_version() -> tuple[tuple[int, int] | None, str | None]:
+    paths = [p for p in _specify_candidates() + [find_in_path("specify")] if p]
+    for path in paths:
         result = run([path, "--version"], check=False)
         if result.returncode != 0:
             continue
@@ -85,11 +109,16 @@ def latest_specify_version():
     return None, None
 
 
-def _in_venv():
+def _in_venv() -> bool:
     return sys.prefix != getattr(sys, "base_prefix", sys.prefix)
 
 
-def check_prerequisites():
+def _pip_works(python: str) -> bool:
+    result = run([python, "-m", "pip", "--version"], check=False)
+    return result.returncode == 0
+
+
+def check_prerequisites() -> None:
     if not find_in_path("python3"):
         raise InstallError("python3 not found in PATH")
     if not find_in_path("opencode"):
@@ -98,12 +127,7 @@ def check_prerequisites():
         )
 
 
-def _pip_works(python):
-    result = run([python, "-m", "pip", "--version"], check=False)
-    return result.returncode == 0
-
-
-def ensure_pyyaml():
+def ensure_pyyaml() -> None:
     global yaml
     if yaml is not None:
         return
@@ -112,7 +136,7 @@ def ensure_pyyaml():
             "no network access and PyYAML is not installed; "
             "run: pip3 install --user pyyaml"
         )
-    candidates = []
+    candidates: list[list[str]] = []
     python = find_in_path("python3")
     uv = find_in_path("uv")
     if _in_venv():
@@ -132,8 +156,6 @@ def ensure_pyyaml():
         if result.returncode != 0:
             continue
         try:
-            import importlib
-
             yaml = importlib.import_module("yaml")
             return
         except ImportError:
@@ -143,7 +165,7 @@ def ensure_pyyaml():
     )
 
 
-def ensure_specify():
+def ensure_specify() -> None:
     version = get_specify_version()
     if version and version >= MIN_SPECIFY_VERSION:
         return
@@ -169,21 +191,23 @@ def ensure_specify():
         version, binary = latest_specify_version()
         if version and version >= MIN_SPECIFY_VERSION:
             print(
-                "warning: specify-cli installed at %s but not on PATH; "
-                "add it to PATH (e.g. ~/.local/bin)" % binary
+                f"warning: specify-cli installed at {binary} but not on PATH; "
+                "add it to PATH (e.g. ~/.local/bin)"
             )
             return
     python = find_in_path("python3")
     if python and _pip_works(python):
-        result = run([python, "-m", "pip", "install", "--user", "specify-cli"], check=False)
+        result = run(
+            [python, "-m", "pip", "install", "--user", "specify-cli"], check=False
+        )
         if result.returncode == 0:
             if get_specify_version():
                 return
             version, binary = latest_specify_version()
             if version and version >= MIN_SPECIFY_VERSION:
                 print(
-                    "warning: specify-cli installed at %s but not on PATH; "
-                    "add it to PATH (e.g. ~/.local/bin)" % binary
+                    f"warning: specify-cli installed at {binary} but not on PATH; "
+                    "add it to PATH (e.g. ~/.local/bin)"
                 )
                 return
     raise InstallError(

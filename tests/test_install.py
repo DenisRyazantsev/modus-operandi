@@ -15,10 +15,8 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sklc import deps
+from sklc import InstallError, config, deps, verify
 from sklc import cli as install
-from sklc import config, verify
-from sklc import InstallError
 
 
 class FakeResult:
@@ -77,9 +75,11 @@ class InstallerTest(unittest.TestCase):
 
     def run_main(self, argv, which=which_fake):
         stderr = io.StringIO()
-        with mock.patch.object(deps, "find_in_path", side_effect=which):
-            with mock.patch("sys.stderr", stderr):
-                rc = install.main(argv)
+        with (
+            mock.patch.object(deps, "find_in_path", side_effect=which),
+            mock.patch("sys.stderr", stderr),
+        ):
+            rc = install.main(argv)
         return rc, stderr.getvalue()
 
     def install(self, *extra):
@@ -134,14 +134,13 @@ class InstallerTest(unittest.TestCase):
         project = tempfile.TemporaryDirectory()
         self.addCleanup(project.cleanup)
         (Path(project.name) / ".specify").mkdir()
-        with mock.patch.object(Path, "home", return_value=self.home):
-            with _chdir(Path(project.name)):
-                self.assertEqual(self.run_main(["--register"])[0], 0)
-                self.assertEqual(self.run_main(["--register"])[0], 0)
-        adds = [
-            cmd for cmd in self.records
-            if cmd[1:3] == ["workflow", "add"]
-        ]
+        with (
+            mock.patch.object(Path, "home", return_value=self.home),
+            _chdir(Path(project.name)),
+        ):
+            self.assertEqual(self.run_main(["--register"])[0], 0)
+            self.assertEqual(self.run_main(["--register"])[0], 0)
+        adds = [cmd for cmd in self.records if cmd[1:3] == ["workflow", "add"]]
         self.assertEqual(len(adds), 2)
         self.assertTrue(workflow.exists())
 
@@ -149,9 +148,11 @@ class InstallerTest(unittest.TestCase):
         self.assertEqual(self.install(), 0)
         project = tempfile.TemporaryDirectory()
         self.addCleanup(project.cleanup)
-        with mock.patch.object(Path, "home", return_value=self.home):
-            with _chdir(Path(project.name)):
-                rc, err = self.run_main(["--register"])
+        with (
+            mock.patch.object(Path, "home", return_value=self.home),
+            _chdir(Path(project.name)),
+        ):
+            rc, err = self.run_main(["--register"])
         self.assertEqual(rc, 1)
         self.assertIn("specify init", err)
 
@@ -356,11 +357,11 @@ class InstallerTest(unittest.TestCase):
         for step in ("write-adr", "adr-revise", "executor-questions",
                      "planner-answers", "implement", "review", "fix",
                      "sync-adr", "save-adr", "srp-review", "srp-fix"):
-            block = workflow.split("- id: %s" % step, 1)[1].split("\n  - id:", 1)[0]
+            block = workflow.split(f"- id: {step}", 1)[1].split("\n  - id:", 1)[0]
             self.assertIn("timeout: 7200", block, step)
         for step in ("verdict", "pass-check", "adr-feedback-clear",
                      "validate-task-id", "srp-verdict", "srp-pass-check"):
-            block = workflow.split("- id: %s" % step, 1)[1]
+            block = workflow.split(f"- id: {step}", 1)[1]
             block = block.split("\n      - id:", 1)[0]
             block = block.split("\n  - id:", 1)[0]
             self.assertNotIn("timeout", block, step)
@@ -501,9 +502,11 @@ class InstallerTest(unittest.TestCase):
                 return FakeResult(0, "build (primary)\n")
             return FakeResult(0)
 
-        with mock.patch.object(deps, "run", side_effect=run_fake):
-            with self.assertRaises(InstallError) as cm:
-                verify.verify_install(paths)
+        with (
+            mock.patch.object(deps, "run", side_effect=run_fake),
+            self.assertRaises(InstallError) as cm,
+        ):
+            verify.verify_install(paths)
         err = str(cm.exception)
         self.assertIn("planner", err)
         self.assertIn("executor", err)
