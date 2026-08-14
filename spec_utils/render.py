@@ -51,6 +51,12 @@ def render_run_agent(cfg: dict[str, Any], paths: Paths) -> None:
     paths["run_agent"].chmod(0o755)
 
 
+def render_run_pipeline(paths: Paths) -> None:
+    # Wrapper that surfaces the failing step's stdout/stderr after a run.
+    render_file(TEMPLATES_DIR / "run-pipeline.sh.tpl", paths["run_pipeline"], {})
+    paths["run_pipeline"].chmod(0o755)
+
+
 def render_save_adr(paths: Paths) -> None:
     shutil.copy2(TEMPLATES_DIR / "save_adr.py", paths["save_adr"])
 

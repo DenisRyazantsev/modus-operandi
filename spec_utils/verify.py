@@ -18,6 +18,10 @@ def check_files(paths: Paths) -> list[str]:
         errors.append("generated script missing: {}".format(paths["save_adr"]))
     if not os.access(paths["run_agent"], os.X_OK):
         errors.append("run-agent.sh is not executable: {}".format(paths["run_agent"]))
+    if not os.access(paths["run_pipeline"], os.X_OK):
+        errors.append(
+            "run-pipeline.sh is not executable: {}".format(paths["run_pipeline"])
+        )
     for _, path in (
         ("adr-pipeline.yml", paths["workflow"]),
         ("review-pipeline.yml", paths["review_workflow"]),

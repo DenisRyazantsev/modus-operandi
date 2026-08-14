@@ -29,6 +29,17 @@ It has no inputs and no gates — keep the terminal open until it completes.
 The same review stages run in both workflows: SRP → bugs → general correctness →
 readability "traps", each loop fixing its findings until pass.
 
+specify hides a failing step's stdout/stderr; use the installed wrapper to see
+them after a failure:
+
+```
+~/.config/opencode/scripts/run-pipeline.sh review-pipeline
+~/.config/opencode/scripts/run-pipeline.sh adr-pipeline -i feature="..."
+```
+
+On failure it re-reads the run state (`.specify/workflows/runs/<id>/`) and prints
+the failing steps' output plus the resume command.
+
 ## Requirements
 
 - Linux/macOS

@@ -63,6 +63,7 @@ def run_install(args: argparse.Namespace) -> None:
         config.print_diff_new_options(paths["config"], raw)
     render.render_agents(cfg, paths)
     render.render_run_agent(cfg, paths)
+    render.render_run_pipeline(paths)
     render.render_save_adr(paths)
     render.render_workflow(cfg, paths)
     render.render_review_workflow(cfg, paths)

@@ -47,6 +47,11 @@ def build_paths(home: str | Path) -> Paths:
         / "spec-kit-llm-client"
         / "review-pipeline.yml",
         "run_agent": base / ".config" / "opencode" / "scripts" / "run-agent.sh",
+        "run_pipeline": base
+        / ".config"
+        / "opencode"
+        / "scripts"
+        / "run-pipeline.sh",
         "save_adr": base / ".config" / "opencode" / "scripts" / "save_adr.py",
     }
 
