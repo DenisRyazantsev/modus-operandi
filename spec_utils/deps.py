@@ -37,7 +37,7 @@ __all__ = [
     "get_specify_version",
     "latest_specify_version",
     "_in_venv",
-    "_pip_works",
+    "pip_works",
     "check_prerequisites",
     "ensure_pyyaml",
     "ensure_specify",
@@ -127,7 +127,7 @@ def _in_venv() -> bool:
     return sys.prefix != getattr(sys, "base_prefix", sys.prefix)
 
 
-def _pip_works(python: str) -> bool:
+def pip_works(python: str) -> bool:
     result = run([python, "-m", "pip", "--version"], check=False)
     return result.returncode == 0
 
@@ -156,14 +156,14 @@ def ensure_pyyaml() -> None:
     if _in_venv():
         if uv:
             candidates.append([uv, "pip", "install", "pyyaml"])
-        if python and _pip_works(python):
+        if python and pip_works(python):
             candidates.append([python, "-m", "pip", "install", "pyyaml"])
     pip3 = find_in_path("pip3")
     if pip3:
         candidates.append([pip3, "install", "--user", "pyyaml"])
     if uv and not _in_venv():
         candidates.append([uv, "pip", "install", "--system", "pyyaml"])
-    if python and not _in_venv() and _pip_works(python):
+    if python and not _in_venv() and pip_works(python):
         candidates.append([python, "-m", "pip", "install", "--user", "pyyaml"])
     for cmd in candidates:
         result = run(cmd, check=False)
@@ -210,7 +210,7 @@ def ensure_specify() -> None:
             )
             return
     python = find_in_path("python3")
-    if python and _pip_works(python):
+    if python and pip_works(python):
         result = run(
             [python, "-m", "pip", "install", "--user", "specify-cli"], check=False
         )

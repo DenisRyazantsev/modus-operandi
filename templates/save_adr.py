@@ -145,10 +145,10 @@ def cmd_save(args: argparse.Namespace) -> None:
         colliding = sorted(adr_dir.glob(f"ADR-*-{slug}.md"))
         if colliding:
             sys.exit(
-                "error: an ADR with slug '%s' already exists as %s but task '%s' "
-                "has no saved ADR of its own. The slug is used by another task; "
-                "change it in adr.md (e.g. '%s-2') or remove the colliding file "
-                "and resume the run" % (slug, colliding[0], args.task_id, slug)
+                f"error: an ADR with slug '{slug}' already exists as {colliding[0]} "
+                f"but task '{args.task_id}' has no saved ADR of its own. The slug is "
+                f"used by another task; change it in adr.md (e.g. '{slug}-2') or "
+                "remove the colliding file and resume the run"
             )
         num = find_next_number(str(adr_dir))
         name = f"ADR-{num:04d}-{slug}.md"
@@ -177,6 +177,26 @@ def cmd_sync(args: argparse.Namespace) -> None:
     print("adr synced: " + str(target))
 
 
+def cmd_check_review(args: argparse.Namespace) -> None:
+    # Shared verdict helper for the review loops (review and srp kinds): exits 0
+    # when the LATEST <kind>-review-N.md starts with its PASS marker, 1 otherwise
+    # (mirrors the old shell chain `ls | sort -V | tail -1 && head -1 | grep`).
+    # Always prints the latest file path (or nothing) so the pass-check steps can
+    # report it.
+    task_dir = Path(args.state_dir) / "tasks" / args.task_id
+    # Files are named review-N.md and srp-review-N.md respectively.
+    prefix = "srp-review" if args.kind == "srp" else "review"
+    files = sorted(task_dir.glob(f"{prefix}-*.md"))
+    latest = files[-1] if files else None
+    if latest is not None:
+        print(str(latest))
+    marker = "SRP: PASS" if args.kind == "srp" else "VERDICT: PASS"
+    ok = latest is not None and latest.read_text(
+        encoding="utf-8"
+    ).splitlines()[0].strip() == marker
+    sys.exit(0 if ok else 1)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -188,11 +208,17 @@ def main(argv: list[str] | None = None) -> int:
     p_sync = sub.add_parser("sync")
     p_sync.add_argument("state_dir")
     p_sync.add_argument("task_id")
+    p_check = sub.add_parser("check-review")
+    p_check.add_argument("state_dir")
+    p_check.add_argument("task_id")
+    p_check.add_argument("kind", choices=("review", "srp"))
     args = parser.parse_args(argv)
     if args.command == "save":
         cmd_save(args)
-    else:
+    elif args.command == "sync":
         cmd_sync(args)
+    else:
+        cmd_check_review(args)
     return 0
 
 

@@ -51,8 +51,17 @@ def ensure_config(paths: Paths) -> None:
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
+    # Config loading is the one place a YAML parse error can surface from user
+    # input, so it is converted to InstallError here — main() then stays flat
+    # without special-casing yaml types.
     with open(path, encoding="utf-8") as fh:
-        raw = deps.yaml.safe_load(fh) or {}
+        text = fh.read()
+    try:
+        raw = deps.yaml.safe_load(text) or {}
+    except Exception as exc:
+        if deps.yaml is not None and isinstance(exc, deps.yaml.YAMLError):
+            raise InstallError(f"invalid config.yml: {exc}") from exc
+        raise
     return dict(raw)
 
 

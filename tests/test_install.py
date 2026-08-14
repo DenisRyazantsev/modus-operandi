@@ -222,9 +222,12 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("do-while", workflow)
         self.assertIn('condition: "{{ steps.verdict.output.exit_code != 0 }}"', workflow)
         self.assertIn("continue_on_error: true", workflow)
-        self.assertIn("sort -V", workflow)
+        self.assertIn("check-review", workflow)
+        self.assertIn('check-review ".workflow" "{{ inputs.task_id }}" review', workflow)
         self.assertIn("REVIEW OK: final verdict PASS", workflow)
         self.assertIn("WARNING: review loop exhausted", workflow)
+        self.assertIn("- id: fix-branch", workflow)
+        self.assertNotIn("sort -V", workflow)
 
     def test_workflow_task_id_is_required(self):
         self.assertEqual(self.install(), 0)
@@ -376,13 +379,12 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("- id: srp-verdict", workflow)
         self.assertIn("- id: srp-fix", workflow)
         self.assertIn("- id: srp-pass-check", workflow)
-        self.assertIn("'^SRP: PASS'", workflow)
+        self.assertIn('check-review ".workflow" "{{ inputs.task_id }}" srp', workflow)
         self.assertIn("SRP REVIEW OK: final verdict PASS", workflow)
         self.assertIn("WARNING: SRP review loop exhausted", workflow)
         self.assertIn("{{ steps.srp-verdict.output.exit_code != 0 }}", workflow)
         block = workflow.split("- id: srp-loop", 1)[1].split("\n  - id:", 1)[0]
         self.assertIn("max_iterations: 5", block)
-        self.assertIn("srp-review-*.md", block)
         self.assertIn("SRP: FIX", block)
         self.assertIn("- id: srp-fix-branch", block)
         implement_index = workflow.index("- id: implement")

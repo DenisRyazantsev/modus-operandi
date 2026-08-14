@@ -145,8 +145,7 @@ ${approve_adr_verdict}
         type: shell
         continue_on_error: true
         run: >-
-          last=$$(ls -1 ${state_dir}/tasks/{{ inputs.task_id }}/srp-review-*.md 2>/dev/null
-          | sort -V | tail -1) && head -1 "$$last" | grep -q '^SRP: PASS'
+          python3 "${save_adr}" check-review "${state_dir}" "{{ inputs.task_id }}" srp
 
       - id: srp-fix-branch
         type: if
@@ -164,9 +163,7 @@ ${approve_adr_verdict}
   - id: srp-pass-check
     type: shell
     run: >-
-      last=$$(ls -1 ${state_dir}/tasks/{{ inputs.task_id }}/srp-review-*.md 2>/dev/null
-      | sort -V | tail -1);
-      if [ -n "$$last" ] && head -1 "$$last" | grep -q '^SRP: PASS'; then
+      if last=$$(python3 "${save_adr}" check-review "${state_dir}" "{{ inputs.task_id }}" srp 2>/dev/null); then
       echo "SRP REVIEW OK: final verdict PASS ($$last)";
       else
       echo "WARNING: SRP review loop exhausted ${max_srp_iterations} iterations without 'SRP: PASS' (latest review: $${last:-none}); inspect the latest srp-review file and the code";
@@ -197,8 +194,7 @@ ${approve_adr_verdict}
         type: shell
         continue_on_error: true
         run: >-
-          last=$$(ls -1 ${state_dir}/tasks/{{ inputs.task_id }}/review-*.md 2>/dev/null
-          | sort -V | tail -1) && head -1 "$$last" | grep -q '^VERDICT: PASS'
+          python3 "${save_adr}" check-review "${state_dir}" "{{ inputs.task_id }}" review
 
       - id: fix-branch
         type: if
@@ -228,9 +224,7 @@ ${approve_adr_verdict}
   - id: pass-check
     type: shell
     run: >-
-      last=$$(ls -1 ${state_dir}/tasks/{{ inputs.task_id }}/review-*.md 2>/dev/null
-      | sort -V | tail -1);
-      if [ -n "$$last" ] && head -1 "$$last" | grep -q '^VERDICT: PASS'; then
+      if last=$$(python3 "${save_adr}" check-review "${state_dir}" "{{ inputs.task_id }}" review 2>/dev/null); then
       echo "REVIEW OK: final verdict PASS ($$last)";
       else
       echo "WARNING: review loop exhausted ${max_fix_iterations} iterations without 'VERDICT: PASS' (latest review: $${last:-none}); inspect the latest review file and the code";

@@ -33,7 +33,7 @@ def do_register(paths: Paths) -> None:
 def _uninstall_pip_package(package: str) -> bool:
     attempts: list[list[str]] = []
     python = deps.find_in_path("python3")
-    if python and deps._pip_works(python):
+    if python and deps.pip_works(python):
         attempts.append([python, "-m", "pip", "uninstall", "-y", package])
     pip3 = deps.find_in_path("pip3")
     if pip3:

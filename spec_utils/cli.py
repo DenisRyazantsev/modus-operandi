@@ -94,20 +94,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    # YAML parse errors are already wrapped into InstallError by
+    # config.load_config; everything else here is a user-facing failure.
     try:
         run_install(parse_args(argv))
-    except InstallError as exc:
+    except (InstallError, OSError, ValueError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    except (OSError, ValueError, KeyError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    except Exception as exc:
-        # yaml may be None (import failed) — guard before isinstance against a
-        # module that might not exist; anything that is not a YAML parse error
-        # is a real bug and must surface as a traceback.
-        if deps.yaml is not None and isinstance(exc, deps.yaml.YAMLError):
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
-        raise
     return 0
