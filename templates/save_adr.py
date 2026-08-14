@@ -21,7 +21,6 @@ import argparse
 import glob
 import os
 import re
-import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -102,8 +101,11 @@ def _ask_planner_for_slug(adr_path: Path, run_agent: str, task_id: str) -> None:
         "'---': a short 2-3 word ENGLISH summary of the ADR in lowercase kebab-case "
         "(e.g. 'slug: prod-validation-splits'). Change nothing else."
     )
-    cmd = run_agent + " planner " + shlex.quote(prompt) + " --task " + shlex.quote(task_id)
-    subprocess.run(cmd, shell=True, check=True)
+    # list-form invocation (no shell=True) so a run-agent.sh path containing
+    # spaces survives as a single argv element.
+    subprocess.run(
+        [run_agent, "planner", prompt, "--task", task_id], check=True
+    )
 
 
 def cmd_save(args: argparse.Namespace) -> None:
@@ -129,14 +131,25 @@ def cmd_save(args: argparse.Namespace) -> None:
         sys.exit(str(exc) + "; fix the slug field in " + str(adr_path))
 
     adr_dir = Path(args.adr_dir)
-    # Idempotency: if this task's ADR was already released, keep the same
-    # number and just record the path — a resumed/rerun task must not produce
-    # a duplicate ADR.
-    existing = sorted(adr_dir.glob(f"ADR-*-{slug}.md"))
-    if existing:
-        saved_path = str(existing[0])
-        print("adr already saved: " + saved_path)
+    saved_file = Path(args.state_dir) / "tasks" / args.task_id / "adr-saved.txt"
+    own = saved_file.read_text(encoding="utf-8").strip() if saved_file.exists() else ""
+    if own and Path(own).exists():
+        # Rerun/resume of the same task: its ADR was already released — keep the
+        # same number and record the path again (idempotency).
+        saved_path = own
+        print("adr already saved: " + own)
     else:
+        # No own release on record. A matching file can only belong to a
+        # DIFFERENT task that happens to use the same slug — reusing it would
+        # silently overwrite that task's ADR on the next sync. Fail loudly.
+        colliding = sorted(adr_dir.glob(f"ADR-*-{slug}.md"))
+        if colliding:
+            sys.exit(
+                "error: an ADR with slug '%s' already exists as %s but task '%s' "
+                "has no saved ADR of its own. The slug is used by another task; "
+                "change it in adr.md (e.g. '%s-2') or remove the colliding file "
+                "and resume the run" % (slug, colliding[0], args.task_id, slug)
+            )
         num = find_next_number(str(adr_dir))
         name = f"ADR-{num:04d}-{slug}.md"
         target = adr_dir / name
@@ -144,9 +157,7 @@ def cmd_save(args: argparse.Namespace) -> None:
         target.write_text(rewrite_heading(text, f"{num:04d}"), encoding="utf-8")
         print("saved adr: " + str(target))
         saved_path = str(target)
-    (Path(args.state_dir) / "tasks" / args.task_id / "adr-saved.txt").write_text(
-        saved_path, encoding="utf-8"
-    )
+    saved_file.write_text(saved_path, encoding="utf-8")
 
 
 def cmd_sync(args: argparse.Namespace) -> None:

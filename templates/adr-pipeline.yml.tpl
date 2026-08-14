@@ -193,20 +193,24 @@ ${approve_adr_verdict}
           'VERDICT: FIX' followed by actionable findings. The verdict must reflect the
           implemented code, not the ADR document." --task {{ inputs.task_id }}
 
-      - id: fix
-        type: shell
-        timeout: ${step_timeout}
-        run: >-
-          "${run_agent}" executor
-          "Read the latest ${state_dir}/tasks/{{ inputs.task_id }}/review-N.md and fix all its
-          findings. Then run the project's tests/linter if available." --task {{ inputs.task_id }}
-
       - id: verdict
         type: shell
         continue_on_error: true
         run: >-
           last=$$(ls -1 ${state_dir}/tasks/{{ inputs.task_id }}/review-*.md 2>/dev/null
           | sort -V | tail -1) && head -1 "$$last" | grep -q '^VERDICT: PASS'
+
+      - id: fix-branch
+        type: if
+        condition: "{{ steps.verdict.output.exit_code != 0 }}"
+        then:
+          - id: fix
+            type: shell
+            timeout: ${step_timeout}
+            run: >-
+              "${run_agent}" executor
+              "Read the latest ${state_dir}/tasks/{{ inputs.task_id }}/review-N.md and fix all its
+              findings. Then run the project's tests/linter if available." --task {{ inputs.task_id }}
 
   - id: sync-adr
     type: shell

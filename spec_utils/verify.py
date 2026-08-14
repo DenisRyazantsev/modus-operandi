@@ -23,9 +23,20 @@ def check_files(paths: Paths) -> list[str]:
 
 
 def check_workflow_syntax(paths: Paths) -> list[str]:
+    # ensure_specify() may end with the binary installed but off PATH (it only
+    # warns). Resolve specify explicitly so this check returns a readable error
+    # string instead of raising FileNotFoundError, which would abort
+    # verify_install() before the remaining checks can run.
+    specify = deps.find_in_path("specify")
+    if not specify:
+        _, binary = deps.latest_specify_version()
+        hint = f" (installed at {binary}, add it to PATH)" if binary else ""
+        return [
+            f"'specify' not found on PATH{hint}; add it to PATH and rerun install.py"
+        ]
     with tempfile.TemporaryDirectory() as tmp:
         result = deps.run(
-            ["specify", "workflow", "run", str(paths["workflow"]), "--json"],
+            [specify, "workflow", "run", str(paths["workflow"]), "--json"],
             cwd=tmp,
             check=False,
         )

@@ -53,11 +53,12 @@ def run_install(args: argparse.Namespace) -> None:
     for directory in (paths["agents"], paths["scripts"], paths["config_dir"]):
         directory.mkdir(parents=True, exist_ok=True)
     config.ensure_config(paths)
-    cfg = config.validate_config(
-        config.apply_defaults(config.load_config(paths["config"]))
-    )
+    raw = config.load_config(paths["config"])
+    cfg = config.validate_config(config.apply_defaults(raw))
     if args.update:
-        config.print_diff_new_options(paths["config"], cfg)
+        # Diff against the raw config, not the defaults-filled one: after
+        # apply_defaults() every key exists, so the diff would always be empty.
+        config.print_diff_new_options(paths["config"], raw)
     render.render_agents(cfg, paths)
     render.render_run_agent(cfg, paths)
     render.render_save_adr(paths)

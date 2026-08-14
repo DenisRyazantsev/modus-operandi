@@ -160,6 +160,51 @@ class CmdSaveTest(unittest.TestCase):
             self.save()
         self.assertIn("slug", str(cm.exception))
 
+    def test_rerun_same_task_reuses_own_file(self):
+        self.adr("---\nslug: prod-validation-splits\n---\n# ADR: Сплиты\n")
+        self.save()
+        self.adr("---\nslug: prod-validation-splits\n---\n# ADR: Сплиты v2\n")
+        self.save()
+        files = list((self.root / "architecture").glob("ADR-*.md"))
+        self.assertEqual(len(files), 1)
+
+    def test_same_slug_different_task_is_collision_not_reuse(self):
+        t2 = self.root / ".workflow" / "tasks" / "t2"
+        t2.mkdir()
+        self.adr("---\nslug: prod-validation-splits\n---\n# ADR: Сплиты t1\n")
+        self.save()
+        saved = self.root / "architecture" / "ADR-0001-prod-validation-splits.md"
+        (t2 / "adr.md").write_text(
+            "---\nslug: prod-validation-splits\n---\n# ADR: Сплиты t2\n",
+            encoding="utf-8",
+        )
+        with self.assertRaises(SystemExit) as cm:
+            save_adr.cmd_save(
+                argparse.Namespace(
+                    state_dir=str(self.root / ".workflow"),
+                    task_id="t2",
+                    adr_dir=str(self.root / "architecture"),
+                    run_agent="/nonexistent/run-agent.sh",
+                )
+            )
+        self.assertIn("used by another task", str(cm.exception))
+        self.assertFalse((t2 / "adr-saved.txt").exists())
+        self.assertIn("# ADR-0001: Сплиты t1", saved.read_text(encoding="utf-8"))
+
+    def test_ask_planner_uses_list_form(self):
+        recorded = {}
+
+        def fake_run(cmd, check=True):
+            recorded["cmd"] = cmd
+
+        with mock.patch("subprocess.run", side_effect=fake_run):
+            save_adr._ask_planner_for_slug(
+                Path("/tmp/t1/adr.md"), "/path with spaces/run-agent.sh", "t1"
+            )
+        self.assertEqual(recorded["cmd"][0], "/path with spaces/run-agent.sh")
+        self.assertEqual(recorded["cmd"][1], "planner")
+        self.assertEqual(recorded["cmd"][-2:], ["--task", "t1"])
+
 
 class CmdSyncTest(unittest.TestCase):
     def setUp(self):

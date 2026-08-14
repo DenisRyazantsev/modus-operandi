@@ -512,6 +512,51 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("executor", err)
         self.assertIn("save_adr.py", err)
 
+    def test_verify_workflow_syntax_specify_off_path(self):
+        self.assertEqual(self.install(), 0)
+        paths = config.build_paths(str(self.home))
+
+        def which_off_specify(name):
+            if name == "specify":
+                return None
+            return which_fake(name)
+
+        with (
+            mock.patch.object(
+                deps, "find_in_path", side_effect=which_off_specify
+            ),
+            mock.patch.object(
+                deps,
+                "latest_specify_version",
+                return_value=((0, 16), "/home/u/.local/bin/specify"),
+            ),
+            self.assertRaises(InstallError) as cm,
+        ):
+            verify.verify_install(paths)
+        err = str(cm.exception)
+        self.assertIn("'specify' not found on PATH", err)
+        self.assertIn("/home/u/.local/bin/specify", err)
+
+    def test_update_reports_new_options(self):
+        self.assertEqual(self.install(), 0)
+        self.write_config(
+            "models:\n"
+            "  planner:\n"
+            "    provider: p\n"
+            "    model: m\n"
+            "  executor:\n"
+            "    provider: p\n"
+            "    model: m\n"
+            "workflow: {}\n"
+        )
+        stdout = io.StringIO()
+        with mock.patch("sys.stdout", stdout):
+            rc = self.run_main(["--home", str(self.home), "--update"])[0]
+        self.assertEqual(rc, 0)
+        out = stdout.getvalue()
+        self.assertIn("new options available", out)
+        self.assertIn("workflow.max_srp_iterations", out)
+
     def install_with_capture(self):
         return self.run_main(["--home", str(self.home)])
 
