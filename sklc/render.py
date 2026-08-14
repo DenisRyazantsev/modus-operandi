@@ -1,0 +1,74 @@
+"""Rendering: install templates into the target home directory."""
+
+from __future__ import annotations
+
+from string import Template
+
+from . import TEMPLATES_DIR
+
+
+def render_file(template_path, target_path, mapping):
+    text = Template(template_path.read_text(encoding="utf-8")).substitute(mapping)
+    target_path.write_text(text, encoding="utf-8")
+
+
+def render_agents(cfg, paths):
+    planner = cfg["models"]["planner"]
+    executor = cfg["models"]["executor"]
+    render_file(
+        TEMPLATES_DIR / "planner.md.tpl",
+        paths["agents"] / "planner.md",
+        {
+            "planner_provider": planner["provider"],
+            "planner_model": planner["model"],
+            "planner_reasoning": planner["reasoning"],
+        },
+    )
+    render_file(
+        TEMPLATES_DIR / "executor.md.tpl",
+        paths["agents"] / "executor.md",
+        {
+            "executor_provider": executor["provider"],
+            "executor_model": executor["model"],
+            "executor_reasoning": executor["reasoning"],
+        },
+    )
+
+
+def render_run_agent(cfg, paths):
+    use_serve = cfg["workflow"]["use_serve"]
+    serve_attach = "--attach http://localhost:4096" if use_serve else ""
+    render_file(
+        TEMPLATES_DIR / "run-agent.sh.tpl",
+        paths["run_agent"],
+        {"serve_attach": serve_attach},
+    )
+    paths["run_agent"].chmod(0o755)
+
+
+def render_workflow(cfg, paths):
+    workflow = cfg["workflow"]
+    if workflow["human_gates"]:
+        verdict_decl = ""
+        approve_verdict = ""
+    else:
+        verdict_decl = (
+            "  adr_verdict:\n"
+            '    type: string\n'
+            '    enum: ["", approve, revise, reject]\n'
+            '    default: "approve"'
+        )
+        approve_verdict = "    verdict_input: adr_verdict"
+    render_file(
+        TEMPLATES_DIR / "adr-pipeline.yml.tpl",
+        paths["workflow"],
+        {
+            "run_agent": str(paths["run_agent"]),
+            "state_dir": workflow["state_dir"],
+            "adr_dir": workflow["adr_dir"],
+            "step_timeout": str(workflow["shell_timeout"]),
+            "verdict_inputs_decl": verdict_decl,
+            "approve_adr_verdict": approve_verdict,
+            "max_fix_iterations": str(workflow["max_fix_iterations"]),
+        },
+    )

@@ -15,7 +15,8 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import install
+from sklc import deps
+from sklc import cli as install
 
 
 class FakeResult:
@@ -65,7 +66,7 @@ class InstallerTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.home = Path(self.tmp.name)
         self.records = []
-        patcher = mock.patch.object(install, "run", side_effect=make_run(self.records))
+        patcher = mock.patch.object(deps, "run", side_effect=make_run(self.records))
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -74,7 +75,7 @@ class InstallerTest(unittest.TestCase):
 
     def run_main(self, argv, which=which_fake):
         stderr = io.StringIO()
-        with mock.patch.object(install, "find_in_path", side_effect=which):
+        with mock.patch.object(deps, "find_in_path", side_effect=which):
             with mock.patch("sys.stderr", stderr):
                 rc = install.main(argv)
         return rc, stderr.getvalue()
@@ -385,10 +386,10 @@ class InstallerTest(unittest.TestCase):
     def test_specify_candidates_finds_local_bin(self):
         (self.home / ".local" / "bin").mkdir(parents=True)
         (self.home / ".local" / "bin" / "specify").touch()
-        with mock.patch.object(install.Path, "home", return_value=self.home):
+        with mock.patch.object(deps.Path, "home", return_value=self.home):
             self.assertIn(
                 str(self.home / ".local/bin/specify"),
-                install._specify_candidates(),
+                deps._specify_candidates(),
             )
 
     def test_workflow_check_tolerates_stdout_message(self):
@@ -399,7 +400,7 @@ class InstallerTest(unittest.TestCase):
                 )
             return make_run()(cmd, cwd, env, check)
 
-        with mock.patch.object(install, "run", side_effect=run_stdout):
+        with mock.patch.object(deps, "run", side_effect=run_stdout):
             self.assertEqual(self.install(), 0)
 
     def test_workflow_check_tolerates_lowercase_message(self):
@@ -410,7 +411,7 @@ class InstallerTest(unittest.TestCase):
                 )
             return make_run()(cmd, cwd, env, check)
 
-        with mock.patch.object(install, "run", side_effect=run_lower):
+        with mock.patch.object(deps, "run", side_effect=run_lower):
             self.assertEqual(self.install(), 0)
 
     def test_uninstall_removes_files_keeps_config(self):
