@@ -85,8 +85,10 @@ ${approve_adr_verdict}
           slug = "-".join(w for w in slug.split("-") if w)[:60]
       adr_dir = "${adr_dir}"
       existing = glob.glob(os.path.join(adr_dir, "ADR-*-" + slug + ".md"))
+      saved_path = ""
       if existing:
           print("adr already saved: " + existing[0])
+          saved_path = existing[0]
       else:
           nums = [int(m.group(1)) for m in (re.search(r"ADR-(\d{4})-", f) for f in glob.glob(os.path.join(adr_dir, "ADR-*.md"))) if m]
           num = max(nums) + 1 if nums else 1
@@ -97,6 +99,9 @@ ${approve_adr_verdict}
           with open(target, "w", encoding="utf-8") as f:
               f.write(saved)
           print("saved adr: " + target)
+          saved_path = target
+      with open("${state_dir}/tasks/{{ inputs.task_id }}/adr-saved.txt", "w", encoding="utf-8") as f:
+          f.write(saved_path)
       PY
 
   - id: executor-questions
@@ -127,7 +132,10 @@ ${approve_adr_verdict}
       "${run_agent}" executor
       "Implement the feature per ${state_dir}/tasks/{{ inputs.task_id }}/adr.md and
       ${state_dir}/tasks/{{ inputs.task_id }}/answers.md (if present). Then run the project's
-      tests/linter if available." --task {{ inputs.task_id }}
+      tests/linter if available. If you must deviate from the ADR (e.g. it describes
+      something impossible or clearly suboptimal), write ${state_dir}/tasks/{{ inputs.task_id }}/deviation.md
+      recording: what the ADR says, what you did instead, and why. Do not create the file
+      when there is no deviation." --task {{ inputs.task_id }}
 
   - id: review-loop
     type: do-while
@@ -140,6 +148,10 @@ ${approve_adr_verdict}
         run: >-
           "${run_agent}" planner
           "Review the git changes against ${state_dir}/tasks/{{ inputs.task_id }}/adr.md.
+          First read ${state_dir}/tasks/{{ inputs.task_id }}/deviation.md if present: if it
+          records a justified deviation from the ADR, evaluate the code against the ADR as
+          amended by that deviation and do not report the deviation itself as a finding.
+          If the deviation file is missing or unjustified, report the mismatch as a finding.
           Run git status, then git diff HEAD (includes staged changes). Write
           ${state_dir}/tasks/{{ inputs.task_id }}/review-N.md (N is the next number after the
           existing review files) with the first line exactly 'VERDICT: PASS' or
@@ -160,6 +172,33 @@ ${approve_adr_verdict}
         run: >-
           last=$$(ls -1 ${state_dir}/tasks/{{ inputs.task_id }}/review-*.md 2>/dev/null
           | sort -V | tail -1) && head -1 "$$last" | grep -q '^VERDICT: PASS'
+
+  - id: sync-adr
+    type: shell
+    run: |
+      if [ -f "${state_dir}/tasks/{{ inputs.task_id }}/deviation.md" ]; then
+      "${run_agent}" planner "Read ${state_dir}/tasks/{{ inputs.task_id }}/deviation.md and ${state_dir}/tasks/{{ inputs.task_id }}/adr.md. Update adr.md so it reflects the recorded deviation: append an '## Amendments' section (do not rewrite the Decision) noting what changed and why." --task {{ inputs.task_id }}
+      python3 - <<'PY'
+      import os, re
+      p = "${state_dir}/tasks/{{ inputs.task_id }}/adr-saved.txt"
+      if not os.path.exists(p):
+          raise SystemExit("no adr-saved.txt")
+      target = open(p, encoding="utf-8").read().strip()
+      if not target or not os.path.exists(target):
+          print("warning: saved adr not found at " + target)
+      else:
+          m = re.search(r"ADR-(\d{4})-", target)
+          num = m.group(1) if m else "XXXX"
+          text = open("${state_dir}/tasks/{{ inputs.task_id }}/adr.md", encoding="utf-8").read()
+          saved = re.sub(r"^#\s*ADR(?:\s*-\s*\d+)?\s*:\s*(.+)$$", lambda m2: "# ADR-%s: %s" % (num, m2.group(1).strip()), text, count=1, flags=re.M)
+          with open(target, "w", encoding="utf-8") as f:
+              f.write(saved)
+          print("adr synced: " + target)
+      PY
+      rm -f "${state_dir}/tasks/{{ inputs.task_id }}/deviation.md"
+      else
+      echo "no deviation recorded"
+      fi
 
   - id: pass-check
     type: shell

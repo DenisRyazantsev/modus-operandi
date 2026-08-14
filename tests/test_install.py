@@ -252,6 +252,21 @@ class InstallerTest(unittest.TestCase):
         questions_index = workflow.index("- id: executor-questions")
         self.assertLess(save_index, questions_index)
 
+    def test_workflow_deviation_sync(self):
+        self.assertEqual(self.install(), 0)
+        workflow = (
+            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("- id: sync-adr", workflow)
+        self.assertIn("deviation.md", workflow)
+        self.assertIn("## Amendments", workflow)
+        self.assertIn("adr-saved.txt", workflow)
+        sync_index = workflow.index("- id: sync-adr")
+        pass_index = workflow.index("- id: pass-check")
+        review_loop_index = workflow.index("- id: review-loop")
+        self.assertLess(review_loop_index, sync_index)
+        self.assertLess(sync_index, pass_index)
+
     def test_workflow_adr_revise_loop(self):
         self.assertEqual(self.install(), 0)
         workflow = (

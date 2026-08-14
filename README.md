@@ -123,6 +123,25 @@ specify workflow status
 specify workflow resume <run_id>
 ```
 
+### Implementation deviations and spec sync
+
+The ADR is the source of truth, so a divergence between the plan and the code is
+resolved deliberately, not silently:
+
+1. **Record** — when the executor must deviate from the ADR (impossible constraint,
+   clearly better approach), it writes `.workflow/tasks/<task_id>/deviation.md`
+   with: what the ADR says, what it did instead, and why. No file, no deviation.
+2. **Review** — the reviewer reads `deviation.md` first. A justified deviation is
+   not a finding: the code is judged against the ADR as amended by the deviation.
+   A missing or unjustified deviation is reported as a finding and goes through
+   the normal fix loop.
+3. **Sync** — after the review loop passes, the `sync-adr` step amends `adr.md`
+   with an `## Amendments` section (recording what changed and why, without
+   rewriting the Decision) and writes the amended ADR over the saved
+   `architecture/ADR-XXXX-<title>.md` — same number, same decision, amended. The
+   file's git history plus the Amendments section are the durable trace (the
+   `.workflow/` artifacts are gitignored).
+
 With `human_gates: false` the gates auto-approve through `verdict_input` defaults; the
 workflow runs unattended. If the review loop exhausts `max_fix_iterations` without a
 `VERDICT: PASS`, the `pass-check` step fails the run — inspect the latest
@@ -176,7 +195,7 @@ opencode serve
 The workflow steps: `write-adr` → `adr-loop` (gate with approve/revise/reject →
 optional feedback revision) → `save-adr` → `executor-questions` →
 `planner-answers` → `implement` → `review-loop` (`do-while`: review → fix → verdict)
-→ `pass-check` → `copy-latest-review` → `final-gate` (gate).
+→ `sync-adr` → `pass-check` → `copy-latest-review` → `final-gate` (gate).
 
 The loop verdict checks the **latest** review file only (`sort -V`):
 `last=$(ls -1 .../review-*.md 2>/dev/null | sort -V | tail -1) && head -1 "$last" | grep -q '^VERDICT: PASS'`.
