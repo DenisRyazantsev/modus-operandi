@@ -229,21 +229,40 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("- id: fix-branch", workflow)
         self.assertNotIn("sort -V", workflow)
 
-    def test_workflow_task_id_is_required(self):
+    def test_workflow_task_id_is_optional(self):
         self.assertEqual(self.install(), 0)
         workflow = (
             self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
         ).read_text(encoding="utf-8")
         block = workflow.split("task_id:", 1)[1].split("steps:", 1)[0]
-        self.assertIn("required: true", block)
+        self.assertIn("required: false", block)
         self.assertNotIn("default:", block)
+
+    def test_workflow_generate_task_id_structure(self):
+        self.assertEqual(self.install(), 0)
+        workflow = (
+            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("- id: generate-task-id", workflow)
+        block = workflow.split("- id: generate-task-id", 1)[1].split(
+            "- id: write-adr", 1
+        )[0]
+        self.assertIn("run-agent.sh\" name", block)
+        self.assertIn("date +%Y%m%d-%H%M", block)
+        self.assertIn("ln -sfn", block)
+        self.assertIn("tasks/current", block)
+        validate_index = workflow.index("- id: validate-task-id")
+        generate_index = workflow.index("- id: generate-task-id")
+        write_index = workflow.index("- id: write-adr")
+        self.assertLess(validate_index, generate_index)
+        self.assertLess(generate_index, write_index)
 
     def test_workflow_gates_show_files(self):
         self.assertEqual(self.install(), 0)
         workflow = (
             self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
         ).read_text(encoding="utf-8")
-        self.assertIn("show_file: \".workflow/tasks/{{ inputs.task_id }}/adr.md\"", workflow)
+        self.assertIn("show_file: \".workflow/tasks/current/adr.md\"", workflow)
         self.assertNotIn("latest-review", workflow)
         self.assertNotIn("final-gate", workflow)
         self.assertNotIn("copy-latest-review", workflow)
@@ -360,11 +379,13 @@ class InstallerTest(unittest.TestCase):
         for step in ("write-adr", "adr-revise", "executor-questions",
                      "planner-answers", "implement", "review", "fix",
                      "sync-adr", "save-adr", "srp-review", "srp-fix",
+                     "bug-review", "bug-fix",
                      "comment-review", "comment-fix"):
             block = workflow.split(f"- id: {step}", 1)[1].split("\n  - id:", 1)[0]
             self.assertIn("timeout: 7200", block, step)
         for step in ("verdict", "pass-check", "adr-feedback-clear",
-                     "validate-task-id", "srp-verdict", "srp-pass-check",
+                     "validate-task-id", "generate-task-id", "srp-verdict", "srp-pass-check",
+                     "bug-verdict", "bug-pass-check",
                      "comment-verdict", "comment-pass-check"):
             block = workflow.split(f"- id: {step}", 1)[1]
             block = block.split("\n      - id:", 1)[0]

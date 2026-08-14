@@ -1,6 +1,6 @@
 ---
 description: Executor for the adr-pipeline workflow
-mode: subagent
+mode: primary
 model: ${executor_provider}/${executor_model}
 temperature: 0.1
 reasoningEffort: ${executor_reasoning}

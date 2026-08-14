@@ -94,8 +94,15 @@ specify workflow run adr-pipeline -i feature="describe the feature"
 ```
 
 Both commands create the task artifacts in `.workflow/tasks/<task_id>/` (add to your
-`.gitignore` — see `templates/gitignore.snippet`). Use `-i task_id=<name>` for a
-meaningful task id.
+`.gitignore` — see `templates/gitignore.snippet`).
+
+The task id is optional: when omitted, the first workflow step (`generate-task-id`)
+asks the executor to derive a short English kebab-case slug from the feature and
+appends a timestamp, so each run gets a human-readable id like
+`hello-world-function-20260814-1117` while all steps keep working through the
+`.workflow/tasks/current` symlink (sessions are stored per id in
+`.workflow/sessions-<task_id>.json`). Pass `-i task_id=<name>` only when you want a
+specific id (e.g. to resume a task by name).
 
 When the ADR gate approves, the `save-adr` step releases the ADR into
 `architecture/ADR-<XXXX>-<title>.md` (configured via `workflow.adr_dir`): the next
@@ -104,7 +111,8 @@ field from the ADR frontmatter — a short 2-3 word English summary in kebab-cas
 (e.g. `prod-validation-splits`). If the planner forgot the slug, `save-adr` asks it
 to add one (via the warm planner session) and only fails if it still refuses — there
 is no transliteration fallback, so filenames never contain non-English titles.
-Rerunning the same task keeps the ADR number — the file is not duplicated. The ADR
+Rerunning the same task id keeps the ADR number — the file is not duplicated
+(an auto-generated id produces a fresh task and a fresh ADR on every run). The ADR
 heading in the saved file is rewritten to `# ADR-<XXXX>: <title>`.
 
 ### Gates and resume
@@ -115,7 +123,7 @@ At the ADR gate you can choose `approve`, `revise`, or `reject`:
 
 - **approve** — proceed to the executor;
 - **revise** — the workflow asks you to write your feedback into
-  `.workflow/tasks/<task_id>/feedback.md`, then the planner updates the ADR
+  `.workflow/tasks/current/feedback.md`, then the planner updates the ADR
   accordingly and the gate re-opens with the revised ADR (up to 3 rounds);
 - **reject** — abort the run.
 
@@ -141,7 +149,7 @@ The ADR is the source of truth, so a divergence between the plan and the code is
 resolved deliberately, not silently:
 
 1. **Record** — when the executor must deviate from the ADR (impossible constraint,
-   clearly better approach), it writes `.workflow/tasks/<task_id>/deviation.md`
+   clearly better approach), it writes `.workflow/tasks/current/deviation.md`
    with: what the ADR says, what it did instead, and why. No file, no deviation.
 2. **Review** — the reviewer reads `deviation.md` first. A justified deviation is
    not a finding: the code is judged against the ADR as amended by the deviation.
@@ -160,9 +168,15 @@ the workflow runs unattended.
 ### Warm sessions and `--reset`
 
 `run-agent.sh` keeps one opencode session per role per task in
-`<state_dir>/sessions-<task_id>.json` (default `.workflow/`). Steps continue the same
-session, so the agents keep their context between steps. Rerunning the same
-`task_id` resumes the same sessions; a new `task_id` starts fresh ones.
+`<state_dir>/sessions-<task_id>.json` (default `.workflow/`). The task id is
+resolved from the `.workflow/tasks/current` symlink when `--task` is not passed, so
+the workflow itself never hardcodes it. Steps continue the same session, so the
+agents keep their context between steps. Resuming a run (same id) resumes the same
+sessions; a new run (new auto-generated id) starts fresh ones.
+
+The `run-agent.sh name "<feature>"` subcommand is a one-shot (no session) call that
+asks the executor for a short English kebab-case slug — it feeds
+`generate-task-id` when the task id is not given explicitly.
 
 Before each step, `run-agent.sh` kills any opencode process it previously recorded
 for that session (`<state_dir>/pids/`). This cleans up orphans left behind when a
@@ -173,9 +187,9 @@ Long sessions are eventually auto-compacted by opencode. When a session grows to
 large, drop it and hand the context over manually:
 
 ```
-run-agent.sh executor "summarize the task state into .workflow/tasks/<id>/handoff.md" --task <id>
+run-agent.sh executor "summarize the task state into .workflow/tasks/<id>/handoff.md"
 run-agent.sh executor --reset
-run-agent.sh executor "read handoff.md and continue" --task <id>
+run-agent.sh executor "read handoff.md and continue"
 ```
 
 ### `opencode serve` mode

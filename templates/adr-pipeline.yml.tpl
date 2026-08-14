@@ -13,26 +13,43 @@ inputs:
     prompt: "Describe what you want to build"
   task_id:
     type: string
-    required: true
-    prompt: "Short id for this task (used for artifacts and sessions)"
+    required: false
+    prompt: "Short id for this task (optional; generated from the feature otherwise)"
 ${verdict_inputs_decl}
 
 steps:
   - id: validate-task-id
     type: shell
     run: >-
-      if ! printf '%s' "{{ inputs.task_id }}" | grep -qE '^[A-Za-z0-9_-]+$$'; then
+      if [ -n "{{ inputs.task_id }}" ] && ! printf '%s' "{{ inputs.task_id }}" | grep -qE '^[A-Za-z0-9_-]+$$'; then
       echo "error: task_id '{{ inputs.task_id }}' contains unsupported characters; use only letters, digits, '_' or '-'" >&2; exit 1;
       fi
+
+  - id: generate-task-id
+    type: shell
+    run: >-
+      set -euo pipefail;
+      mkdir -p "${state_dir}/tasks";
+      if [ -n "{{ inputs.task_id }}" ]; then
+      tid="{{ inputs.task_id }}";
+      else
+      slug=$$("${run_agent}" name "{{ inputs.feature }}");
+      slug=$$(printf '%s' "$$slug" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$$//' | cut -c1-40);
+      [ -n "$$slug" ] || slug=task;
+      tid="$$slug-$$(date +%Y%m%d-%H%M)";
+      fi;
+      mkdir -p "${state_dir}/tasks/$$tid";
+      ln -sfn "$$tid" "${state_dir}/tasks/current";
+      echo "task id: $$tid";
 
   - id: write-adr
     type: shell
     timeout: ${step_timeout}
     run: >-
       "${run_agent}" planner
-      "Write an ADR for the following feature into ${state_dir}/tasks/{{ inputs.task_id }}/adr.md
+      "Write an ADR for the following feature into ${state_dir}/tasks/current/adr.md
       with sections: Context, Decision, Alternatives, Consequences, Acceptance Criteria.
-      Feature: {{ inputs.feature }}" --task {{ inputs.task_id }}
+      Feature: {{ inputs.feature }}"
 
   - id: adr-loop
     type: do-while
@@ -44,7 +61,7 @@ steps:
         message: "ADR is ready — approve, revise, or reject?"
         options: [approve, revise, reject]
         on_reject: abort
-        show_file: "${state_dir}/tasks/{{ inputs.task_id }}/adr.md"
+        show_file: "${state_dir}/tasks/current/adr.md"
 ${approve_adr_verdict}
       - id: adr-revise-branch
         type: if
@@ -53,7 +70,7 @@ ${approve_adr_verdict}
           - id: adr-feedback-gate
             type: gate
             message: >-
-              Write your feedback into ${state_dir}/tasks/{{ inputs.task_id }}/feedback.md,
+              Write your feedback into ${state_dir}/tasks/current/feedback.md,
               then choose continue. The planner will update adr.md accordingly.
             options: [continue, abort]
           - id: adr-revise
@@ -61,12 +78,12 @@ ${approve_adr_verdict}
             timeout: ${step_timeout}
             run: >-
               "${run_agent}" planner
-              "Read ${state_dir}/tasks/{{ inputs.task_id }}/feedback.md. If it contains
-              feedback, update ${state_dir}/tasks/{{ inputs.task_id }}/adr.md accordingly.
-              If it is empty or missing, do nothing." --task {{ inputs.task_id }}
+              "Read ${state_dir}/tasks/current/feedback.md. If it contains
+              feedback, update ${state_dir}/tasks/current/adr.md accordingly.
+              If it is empty or missing, do nothing."
           - id: adr-feedback-clear
             type: shell
-            run: "rm -f ${state_dir}/tasks/{{ inputs.task_id }}/feedback.md"
+            run: "rm -f ${state_dir}/tasks/current/feedback.md"
 
   - id: adr-unapproved
     type: if
@@ -80,7 +97,7 @@ ${approve_adr_verdict}
           into ${adr_dir}/, or abort the run.
         options: [approve, abort]
         on_reject: abort
-        show_file: "${state_dir}/tasks/{{ inputs.task_id }}/adr.md"
+        show_file: "${state_dir}/tasks/current/adr.md"
 
   - id: save-adr
     type: shell
@@ -93,33 +110,33 @@ ${approve_adr_verdict}
     timeout: ${step_timeout}
     run: >-
       "${run_agent}" executor
-      "Read ${state_dir}/tasks/{{ inputs.task_id }}/adr.md. If anything is ambiguous, write
-      ${state_dir}/tasks/{{ inputs.task_id }}/questions.md whose first line is exactly
+      "Read ${state_dir}/tasks/current/adr.md. If anything is ambiguous, write
+      ${state_dir}/tasks/current/questions.md whose first line is exactly
       'QUESTIONS: PRESENT' followed by your numbered questions, then stop. If everything is
-      clear, write ${state_dir}/tasks/{{ inputs.task_id }}/questions.md with the first line
-      exactly 'QUESTIONS: NONE'." --task {{ inputs.task_id }}
+      clear, write ${state_dir}/tasks/current/questions.md with the first line
+      exactly 'QUESTIONS: NONE'."
 
   - id: planner-answers
     type: shell
     timeout: ${step_timeout}
     run: >-
       "${run_agent}" planner
-      "Read ${state_dir}/tasks/{{ inputs.task_id }}/questions.md. If its first line is
-      'QUESTIONS: PRESENT', write ${state_dir}/tasks/{{ inputs.task_id }}/answers.md answering
+      "Read ${state_dir}/tasks/current/questions.md. If its first line is
+      'QUESTIONS: PRESENT', write ${state_dir}/tasks/current/answers.md answering
       each question line-by-line in the same order. If it is 'QUESTIONS: NONE', write nothing."
-      --task {{ inputs.task_id }}
+     
 
   - id: implement
     type: shell
     timeout: ${step_timeout}
     run: >-
       "${run_agent}" executor
-      "Implement the feature per ${state_dir}/tasks/{{ inputs.task_id }}/adr.md and
-      ${state_dir}/tasks/{{ inputs.task_id }}/answers.md (if present). Then run the project's
+      "Implement the feature per ${state_dir}/tasks/current/adr.md and
+      ${state_dir}/tasks/current/answers.md (if present). Then run the project's
       tests/linter if available. If you must deviate from the ADR (e.g. it describes
-      something impossible or clearly suboptimal), write ${state_dir}/tasks/{{ inputs.task_id }}/deviation.md
+      something impossible or clearly suboptimal), write ${state_dir}/tasks/current/deviation.md
       recording: what the ADR says, what you did instead, and why. Do not create the file
-      when there is no deviation." --task {{ inputs.task_id }}
+      when there is no deviation."
 
   - id: srp-loop
     type: do-while
@@ -136,10 +153,10 @@ ${approve_adr_verdict}
           responsibility, with no god classes/functions and no mixed concerns in one
           unit. Do NOT review ADR compliance, tests, or any other quality aspect
           (a later stage does that). Run git status, then git diff HEAD (includes
-          staged changes). Write ${state_dir}/tasks/{{ inputs.task_id }}/srp-review-N.md
+          staged changes). Write ${state_dir}/tasks/current/srp-review-N.md
           (N is the next number after the existing srp-review files) with the first
           line exactly 'SRP: PASS' or 'SRP: FIX' followed by actionable findings."
-          --task {{ inputs.task_id }}
+         
 
       - id: srp-verdict
         type: shell
@@ -156,9 +173,9 @@ ${approve_adr_verdict}
             timeout: ${step_timeout}
             run: >-
               "${run_agent}" executor
-              "Read the latest ${state_dir}/tasks/{{ inputs.task_id }}/srp-review-N.md
+              "Read the latest ${state_dir}/tasks/current/srp-review-N.md
               and fix all its SRP findings. Then run the project's tests/linter if
-              available." --task {{ inputs.task_id }}
+              available."
 
   - id: srp-pass-check
     type: shell
@@ -182,13 +199,13 @@ ${approve_adr_verdict}
           "Review the git changes for BUGS ONLY: logic errors, wrong conditions,
           off-by-one and edge cases, unhandled errors, races, broken control flow,
           wrong types/units, and discrepancies between the implemented behavior and
-          the acceptance criteria in ${state_dir}/tasks/{{ inputs.task_id }}/adr.md.
+          the acceptance criteria in ${state_dir}/tasks/current/adr.md.
           Do NOT review SRP violations, ADR-format compliance, or comment quality
           (later stages do that). Run git status, then git diff HEAD (includes
-          staged changes). Write ${state_dir}/tasks/{{ inputs.task_id }}/bug-review-N.md
+          staged changes). Write ${state_dir}/tasks/current/bug-review-N.md
           (N is the next number after the existing bug-review files) with the first
           line exactly 'BUGS: PASS' or 'BUGS: FIX' followed by actionable findings."
-          --task {{ inputs.task_id }}
+         
 
       - id: bug-verdict
         type: shell
@@ -205,9 +222,9 @@ ${approve_adr_verdict}
             timeout: ${step_timeout}
             run: >-
               "${run_agent}" executor
-              "Read the latest ${state_dir}/tasks/{{ inputs.task_id }}/bug-review-N.md
+              "Read the latest ${state_dir}/tasks/current/bug-review-N.md
               and fix all its bug findings. Then run the project's tests/linter if
-              available." --task {{ inputs.task_id }}
+              available."
 
   - id: bug-pass-check
     type: shell
@@ -228,16 +245,16 @@ ${approve_adr_verdict}
         timeout: ${step_timeout}
         run: >-
           "${run_agent}" planner
-          "Review the git changes against ${state_dir}/tasks/{{ inputs.task_id }}/adr.md.
-          First read ${state_dir}/tasks/{{ inputs.task_id }}/deviation.md if present: if it
+          "Review the git changes against ${state_dir}/tasks/current/adr.md.
+          First read ${state_dir}/tasks/current/deviation.md if present: if it
           records a justified deviation from the ADR, evaluate the code against the ADR as
           amended by that deviation and do not report the deviation itself as a finding.
           If the deviation file is missing or unjustified, report the mismatch as a finding.
           Run git status, then git diff HEAD (includes staged changes). Write
-          ${state_dir}/tasks/{{ inputs.task_id }}/review-N.md (N is the next number after the
+          ${state_dir}/tasks/current/review-N.md (N is the next number after the
           existing review files) with the first line exactly 'VERDICT: PASS' or
           'VERDICT: FIX' followed by actionable findings. The verdict must reflect the
-          implemented code, not the ADR document." --task {{ inputs.task_id }}
+          implemented code, not the ADR document."
 
       - id: verdict
         type: shell
@@ -254,18 +271,18 @@ ${approve_adr_verdict}
             timeout: ${step_timeout}
             run: >-
               "${run_agent}" executor
-              "Read the latest ${state_dir}/tasks/{{ inputs.task_id }}/review-N.md and fix all its
-              findings. Then run the project's tests/linter if available." --task {{ inputs.task_id }}
+              "Read the latest ${state_dir}/tasks/current/review-N.md and fix all its
+              findings. Then run the project's tests/linter if available."
 
   - id: sync-adr
     type: shell
     timeout: ${step_timeout}
     run: |
       set -euo pipefail
-      if [ -f "${state_dir}/tasks/{{ inputs.task_id }}/deviation.md" ]; then
-      "${run_agent}" planner "Read ${state_dir}/tasks/{{ inputs.task_id }}/deviation.md and ${state_dir}/tasks/{{ inputs.task_id }}/adr.md. Update adr.md so it reflects the recorded deviation: append an '## Amendments' section (do not rewrite the Decision) noting what changed and why." --task {{ inputs.task_id }}
+      if [ -f "${state_dir}/tasks/current/deviation.md" ]; then
+      "${run_agent}" planner "Read ${state_dir}/tasks/current/deviation.md and ${state_dir}/tasks/current/adr.md. Update adr.md so it reflects the recorded deviation: append an '## Amendments' section (do not rewrite the Decision) noting what changed and why."
       python3 "${save_adr}" sync "${state_dir}" "{{ inputs.task_id }}"
-      rm -f "${state_dir}/tasks/{{ inputs.task_id }}/deviation.md"
+      rm -f "${state_dir}/tasks/current/deviation.md"
       else
       echo "no deviation recorded"
       fi
@@ -302,7 +319,7 @@ ${approve_adr_verdict}
           exceptions, edge cases, business rules inside conditions, implicit
           invariants, strange optimizations, external constraints, known
           limitations/tech debt. Run git status, then git diff HEAD (includes
-          staged changes). Write ${state_dir}/tasks/{{ inputs.task_id }}/comment-review-N.md
+          staged changes). Write ${state_dir}/tasks/current/comment-review-N.md
           (N is the next number after the existing comment-review files) with the
           first line exactly 'VERDICT: PASS' or 'VERDICT: FIX'. If PASS, write
           nothing else. If FIX, list findings in this strict format, one per block:
@@ -310,7 +327,7 @@ ${approve_adr_verdict}
           Why a reader would be misled: <one sentence>
           Comment: <1-2 lines, WHY only, in English>
           Verdict: COMMENT | REFACTOR"
-          --task {{ inputs.task_id }}
+         
 
       - id: comment-verdict
         type: shell
@@ -327,11 +344,11 @@ ${approve_adr_verdict}
             timeout: ${step_timeout}
             run: >-
               "${run_agent}" executor
-              "Read the latest ${state_dir}/tasks/{{ inputs.task_id }}/comment-review-N.md
+              "Read the latest ${state_dir}/tasks/current/comment-review-N.md
               and apply all its findings: for each Verdict: COMMENT add the
               suggested why-comment to the code; for each Verdict: REFACTOR perform
               the rename/refactor instead of adding a comment. Then run the
-              project's tests/linter if available." --task {{ inputs.task_id }}
+              project's tests/linter if available."
 
   - id: comment-pass-check
     type: shell

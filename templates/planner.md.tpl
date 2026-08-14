@@ -1,6 +1,6 @@
 ---
 description: Planner and reviewer for the adr-pipeline workflow
-mode: subagent
+mode: primary
 model: ${planner_provider}/${planner_model}
 temperature: 0.3
 reasoningEffort: ${planner_reasoning}

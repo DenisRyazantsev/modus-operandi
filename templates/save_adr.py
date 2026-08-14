@@ -4,6 +4,10 @@
 Usage:
   save_adr.py save <state_dir> <task_id> <adr_dir> <run_agent>
   save_adr.py sync <state_dir> <task_id>
+  save_adr.py check-review <state_dir> <task_id> <kind>
+
+<task_id> may be empty: it is then resolved through the
+<state_dir>/tasks/current symlink (see generate-task-id in the workflow).
 
 save reads <state_dir>/tasks/<task_id>/adr.md, ensures its frontmatter has an
 English 'slug', and writes <adr_dir>/ADR-<XXXX>-<slug>.md with the next free
@@ -90,6 +94,24 @@ def rewrite_heading(text: str, num: str) -> str:
     )
 
 
+def resolve_task_dir(state_dir: str, task_id: str) -> Path:
+    # task_id is usually generated at runtime by the generate-task-id step and
+    # linked as <state_dir>/tasks/current -> tasks/<id>. When the workflow does
+    # not know the id (empty string), resolve it through that symlink so all
+    # steps agree on one id without templating it into every path.
+    tasks = Path(state_dir) / "tasks"
+    if task_id:
+        return tasks / task_id
+    current = tasks / "current"
+    task_dir = current.resolve()
+    if not task_dir.exists() or task_dir == current:
+        sys.exit(
+            f"error: {current} does not point to a task directory; run the "
+            "pipeline from the start or pass an explicit task_id"
+        )
+    return task_dir
+
+
 def _ask_planner_for_slug(adr_path: Path, run_agent: str, task_id: str) -> None:
     # The pipeline requires an English slug for the saved filename, but the
     # planner keeps forgetting to write it. Instead of failing the run, ask the
@@ -109,7 +131,8 @@ def _ask_planner_for_slug(adr_path: Path, run_agent: str, task_id: str) -> None:
 
 
 def cmd_save(args: argparse.Namespace) -> None:
-    adr_path = Path(args.state_dir) / "tasks" / args.task_id / "adr.md"
+    task_dir = resolve_task_dir(args.state_dir, args.task_id)
+    adr_path = task_dir / "adr.md"
     if not adr_path.exists():
         sys.exit(f"error: adr.md not found: {adr_path}")
     text = adr_path.read_text(encoding="utf-8")
@@ -131,7 +154,7 @@ def cmd_save(args: argparse.Namespace) -> None:
         sys.exit(str(exc) + "; fix the slug field in " + str(adr_path))
 
     adr_dir = Path(args.adr_dir)
-    saved_file = Path(args.state_dir) / "tasks" / args.task_id / "adr-saved.txt"
+    saved_file = task_dir / "adr-saved.txt"
     own = saved_file.read_text(encoding="utf-8").strip() if saved_file.exists() else ""
     if own and Path(own).exists():
         # Rerun/resume of the same task: its ADR was already released — keep the
@@ -146,7 +169,7 @@ def cmd_save(args: argparse.Namespace) -> None:
         if colliding:
             sys.exit(
                 f"error: an ADR with slug '{slug}' already exists as {colliding[0]} "
-                f"but task '{args.task_id}' has no saved ADR of its own. The slug is "
+                f"but task '{task_dir.name}' has no saved ADR of its own. The slug is "
                 f"used by another task; change it in adr.md (e.g. '{slug}-2') or "
                 "remove the colliding file and resume the run"
             )
@@ -161,7 +184,8 @@ def cmd_save(args: argparse.Namespace) -> None:
 
 
 def cmd_sync(args: argparse.Namespace) -> None:
-    saved_file = Path(args.state_dir) / "tasks" / args.task_id / "adr-saved.txt"
+    task_dir = resolve_task_dir(args.state_dir, args.task_id)
+    saved_file = task_dir / "adr-saved.txt"
     if not saved_file.exists():
         sys.exit("no adr-saved.txt")
     target = Path(saved_file.read_text(encoding="utf-8").strip())
@@ -170,9 +194,7 @@ def cmd_sync(args: argparse.Namespace) -> None:
         return
     m = re.search(r"ADR-(\d{4})-", str(target))
     num = m.group(1) if m else "XXXX"
-    text = (Path(args.state_dir) / "tasks" / args.task_id / "adr.md").read_text(
-        encoding="utf-8"
-    )
+    text = (task_dir / "adr.md").read_text(encoding="utf-8")
     target.write_text(rewrite_heading(text, num), encoding="utf-8")
     print("adr synced: " + str(target))
 
@@ -183,7 +205,7 @@ def cmd_check_review(args: argparse.Namespace) -> None:
     # otherwise (mirrors the old shell chain `ls | sort -V | tail -1 && head -1 |
     # grep`). Always prints the latest file path (or nothing) so the pass-check
     # steps can report it.
-    task_dir = Path(args.state_dir) / "tasks" / args.task_id
+    task_dir = resolve_task_dir(args.state_dir, args.task_id)
     # Files are named review-N.md, srp-review-N.md, bug-review-N.md and
     # comment-review-N.md.
     if args.kind == "srp":

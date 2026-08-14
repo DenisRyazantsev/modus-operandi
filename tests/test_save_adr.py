@@ -206,6 +206,58 @@ class CmdSaveTest(unittest.TestCase):
         self.assertEqual(recorded["cmd"][-2:], ["--task", "t1"])
 
 
+class ResolveTaskDirTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.tasks = self.root / ".workflow" / "tasks"
+        self.tasks.mkdir(parents=True)
+
+    def test_explicit_task_id(self):
+        task_dir = save_adr.resolve_task_dir(str(self.root / ".workflow"), "t1")
+        self.assertEqual(task_dir, self.tasks / "t1")
+
+    def test_empty_task_id_resolves_symlink(self):
+        (self.tasks / "mcc-split-20260814").mkdir()
+        (self.tasks / "current").symlink_to("mcc-split-20260814")
+        task_dir = save_adr.resolve_task_dir(str(self.root / ".workflow"), "")
+        self.assertEqual(task_dir, self.tasks / "mcc-split-20260814")
+        self.assertEqual(task_dir.name, "mcc-split-20260814")
+
+    def test_empty_task_id_without_symlink_fails(self):
+        with self.assertRaises(SystemExit):
+            save_adr.resolve_task_dir(str(self.root / ".workflow"), "")
+
+    def test_empty_task_id_broken_symlink_fails(self):
+        (self.tasks / "current").symlink_to("missing-task")
+        with self.assertRaises(SystemExit):
+            save_adr.resolve_task_dir(str(self.root / ".workflow"), "")
+
+    def test_save_via_symlink_is_idempotent(self):
+        (self.tasks / "auto-1").mkdir()
+        (self.tasks / "current").symlink_to("auto-1")
+        (self.tasks / "auto-1" / "adr.md").write_text(
+            "---\nslug: auto-feature\n---\n# ADR: Авто\n", encoding="utf-8"
+        )
+
+        def save_empty_id():
+            save_adr.cmd_save(
+                argparse.Namespace(
+                    state_dir=str(self.root / ".workflow"),
+                    task_id="",
+                    adr_dir=str(self.root / "architecture"),
+                    run_agent="/nonexistent/run-agent.sh",
+                )
+            )
+
+        save_empty_id()
+        save_empty_id()
+        files = list((self.root / "architecture").glob("ADR-*.md"))
+        self.assertEqual(len(files), 1)
+        self.assertTrue((self.tasks / "auto-1" / "adr-saved.txt").exists())
+
+
 class CmdSyncTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

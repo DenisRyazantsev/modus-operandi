@@ -2,6 +2,7 @@
 # run-agent.sh - session glue for the adr-pipeline workflow.
 #
 # Usage: run-agent.sh <role> "<prompt>" [--task <task-id>] [--reset]
+#        run-agent.sh name "<feature>"
 #
 # Keeps one warm opencode session per role (stored in <state_dir>/sessions.json)
 # and resumes it with `opencode run --session` between workflow steps, so the
@@ -10,13 +11,21 @@
 #   --task <id>   scopes the session record (informational, kept for future use)
 #   --reset       drop the stored session for the role and start a fresh one
 #
+# When --task is omitted, the id is taken from the <state_dir>/tasks/current
+# symlink that the workflow's generate-task-id step maintains.
+#
+# The 'name' role is a one-shot call (no session): it asks the executor to
+# derive a short kebab-case slug from a feature description and prints it, used
+# by generate-task-id to build a human-readable task id like mcc-split-20260814.
+#
 # Environment:
 #   SKLC_STATE_DIR  state directory (default: .workflow relative to cwd)
 set -euo pipefail
 
 usage() {
   echo "usage: $$0 <role> \"<prompt>\" [--task <task-id>] [--reset]" >&2
-  echo "       role must be 'planner' or 'executor'" >&2
+  echo "       $$0 name \"<feature>\"" >&2
+  echo "       role must be 'planner', 'executor' or 'name'" >&2
   exit 2
 }
 
@@ -24,7 +33,7 @@ usage() {
 ROLE="$$1"
 PROMPT="$$2"
 shift 2
-[ "$$ROLE" = "planner" ] || [ "$$ROLE" = "executor" ] || usage
+[ "$$ROLE" = "planner" ] || [ "$$ROLE" = "executor" ] || [ "$$ROLE" = "name" ] || usage
 
 TASK_ID=""
 RESET=0
@@ -36,13 +45,47 @@ while [ $$# -gt 0 ]; do
   esac
 done
 
+STATE_DIR="$${SKLC_STATE_DIR:-.workflow}"
+ATTACH_FLAG="${serve_attach}"
+
+if [ "$$ROLE" = "name" ]; then
+  # One-shot: no session, no pids. The executor is cheap and this is a trivial
+  # naming task; the slug feeds the task-id so it must be short and safe.
+  OUTPUT="$$(opencode run --agent executor --auto $$ATTACH_FLAG --format json "Reply with ONLY a short kebab-case slug (2-5 lowercase english words joined by hyphens, no quotes, no markdown, no explanation) describing this feature: $$PROMPT" 2>&1)" || RC=$$?
+  if [ "$${RC:-0}" -ne 0 ]; then
+    printf '%s\n' "$$OUTPUT" >&2
+    exit "$$RC"
+  fi
+  printf '%s\n' "$$OUTPUT" | python3 -c 'import json,sys
+texts = []
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        d = json.loads(line)
+    except Exception:
+        continue
+    p = d.get("part", {})
+    if d.get("type") == "text" and p.get("type") == "text" and p.get("text"):
+        texts.append(p["text"])
+sys.stdout.write(texts[-1] if texts else "")'
+  exit 0
+fi
+
+if [ -z "$$TASK_ID" ]; then
+  # The workflow generates the task id at runtime; recover it from the
+  # tasks/current symlink instead of templating the id into every prompt.
+  if [ -e "$$STATE_DIR/tasks/current" ]; then
+    TARGET="$$(readlink -f "$$STATE_DIR/tasks/current" 2>/dev/null || true)"
+    [ -n "$$TARGET" ] && TASK_ID="$$(basename "$$TARGET")"
+  fi
+fi
+
 if [ -n "$$TASK_ID" ] && ! printf '%s' "$$TASK_ID" | grep -qE '^[A-Za-z0-9_-]+$$'; then
   echo "error: invalid --task value '$$TASK_ID'; use only letters, digits, '_' or '-'" >&2
   exit 2
 fi
-
-STATE_DIR="$${SKLC_STATE_DIR:-.workflow}"
-ATTACH_FLAG="${serve_attach}"
 if [ -n "$$TASK_ID" ]; then
   SESSIONS_FILE="$$STATE_DIR/sessions-$$TASK_ID.json"
 else
