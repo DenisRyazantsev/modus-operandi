@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""save_adr.py - release or sync an ADR for the adr-pipeline workflow.
+
+Usage:
+  save_adr.py save <state_dir> <task_id> <adr_dir> <run_agent>
+  save_adr.py sync <state_dir> <task_id>
+
+save reads <state_dir>/tasks/<task_id>/adr.md, ensures its frontmatter has an
+English 'slug', and writes <adr_dir>/ADR-<XXXX>-<slug>.md with the next free
+number. If the slug is missing it asks the planner agent to add one and only
+fails if the planner still refuses. The saved path is written to
+<state_dir>/tasks/<task_id>/adr-saved.txt.
+
+sync rewrites the saved ADR's heading to the number already in its filename
+(used after the review loop amends adr.md).
+"""
+
+from __future__ import annotations
+
+import argparse
+import glob
+import os
+import re
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+
+HEADING_RE = re.compile(r"^#\s*ADR(?:\s*-\s*\d+)?\s*:\s*(.+)$", re.M)
+SLUG_MISSING_ERROR = (
+    "error: adr.md frontmatter has no 'slug' field. The slug is a short 2-3 word "
+    "ENGLISH summary in kebab-case (e.g. 'slug: prod-validation-splits') and "
+    "becomes the saved filename"
+)
+SLUG_ASCII_ERROR = (
+    "error: slug must contain ASCII letters (English), "
+    "e.g. 'slug: prod-validation-splits'"
+)
+
+
+def read_slug(text):
+    fm = text.split("---", 2)
+    if len(fm) < 3:
+        return None
+    m = re.search(r"^slug:\s*(\S+)", fm[1], re.M)
+    return m.group(1) if m else None
+
+
+def sanitize_slug(raw):
+    if not raw:
+        raise ValueError(SLUG_ASCII_ERROR)
+    ascii_slug = re.sub(r"[^a-z0-9-]", "-", raw.lower()).strip("-")
+    if not re.search(r"[a-z]", ascii_slug):
+        raise ValueError(SLUG_ASCII_ERROR)
+    words = [w[:60] for w in ascii_slug.split("-") if w]
+    slug = ""
+    for w in words:
+        if len(slug) + len(w) + (1 if slug else 0) > 60:
+            break
+        slug = w if not slug else slug + "-" + w
+    if not slug:
+        raise ValueError("error: slug is empty after sanitization")
+    return slug
+
+
+def find_next_number(adr_dir):
+    nums = [
+        int(m.group(1))
+        for m in (
+            re.search(r"ADR-(\d{4})-", f)
+            for f in glob.glob(os.path.join(adr_dir, "ADR-*.md"))
+        )
+        if m
+    ]
+    return max(nums) + 1 if nums else 1
+
+
+def rewrite_heading(text, num):
+    return re.sub(
+        HEADING_RE,
+        lambda m: "# ADR-%s: %s" % (num, m.group(1).strip()),
+        text,
+        count=1,
+    )
+
+
+def _ask_planner_for_slug(adr_path, run_agent, task_id):
+    prompt = (
+        "Read %s. Its YAML frontmatter (between the first two '---' lines) is "
+        "missing the 'slug' field. Add it on its own line right after the opening "
+        "'---': a short 2-3 word ENGLISH summary of the ADR in lowercase kebab-case "
+        "(e.g. 'slug: prod-validation-splits'). Change nothing else." % adr_path
+    )
+    cmd = run_agent + " planner " + shlex.quote(prompt) + " --task " + shlex.quote(task_id)
+    subprocess.run(cmd, shell=True, check=True)
+
+
+def cmd_save(args):
+    adr_path = Path(args.state_dir) / "tasks" / args.task_id / "adr.md"
+    if not adr_path.exists():
+        sys.exit("error: adr.md not found: %s" % adr_path)
+    text = adr_path.read_text(encoding="utf-8")
+    slug = read_slug(text)
+    if slug is None:
+        _ask_planner_for_slug(adr_path, args.run_agent, args.task_id)
+        text = adr_path.read_text(encoding="utf-8")
+        slug = read_slug(text)
+        if slug is None:
+            sys.exit(
+                "error: adr.md still has no 'slug' field after the planner was "
+                "asked to add it. Add a short 2-3 word ENGLISH summary in kebab-case "
+                "(e.g. 'slug: prod-validation-splits') to the frontmatter manually "
+                "and resume the run"
+            )
+    try:
+        slug = sanitize_slug(slug)
+    except ValueError as exc:
+        sys.exit(str(exc) + "; fix the slug field in " + str(adr_path))
+
+    adr_dir = Path(args.adr_dir)
+    existing = sorted(adr_dir.glob("ADR-*-%s.md" % slug))
+    if existing:
+        saved_path = str(existing[0])
+        print("adr already saved: " + saved_path)
+    else:
+        num = find_next_number(str(adr_dir))
+        name = "ADR-%04d-%s.md" % (num, slug)
+        target = adr_dir / name
+        adr_dir.mkdir(parents=True, exist_ok=True)
+        target.write_text(rewrite_heading(text, "%04d" % num), encoding="utf-8")
+        print("saved adr: " + str(target))
+        saved_path = str(target)
+    (Path(args.state_dir) / "tasks" / args.task_id / "adr-saved.txt").write_text(
+        saved_path, encoding="utf-8"
+    )
+
+
+def cmd_sync(args):
+    saved_file = Path(args.state_dir) / "tasks" / args.task_id / "adr-saved.txt"
+    if not saved_file.exists():
+        sys.exit("no adr-saved.txt")
+    target = Path(saved_file.read_text(encoding="utf-8").strip())
+    if not str(target) or not target.exists():
+        print("warning: saved adr not found at " + str(target))
+        return
+    m = re.search(r"ADR-(\d{4})-", str(target))
+    num = m.group(1) if m else "XXXX"
+    text = (Path(args.state_dir) / "tasks" / args.task_id / "adr.md").read_text(
+        encoding="utf-8"
+    )
+    target.write_text(rewrite_heading(text, num), encoding="utf-8")
+    print("adr synced: " + str(target))
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+    p_save = sub.add_parser("save")
+    p_save.add_argument("state_dir")
+    p_save.add_argument("task_id")
+    p_save.add_argument("adr_dir")
+    p_save.add_argument("run_agent")
+    p_sync = sub.add_parser("sync")
+    p_sync.add_argument("state_dir")
+    p_sync.add_argument("task_id")
+    args = parser.parse_args(argv)
+    if args.command == "save":
+        cmd_save(args)
+    else:
+        cmd_sync(args)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

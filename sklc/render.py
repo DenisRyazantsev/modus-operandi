@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from string import Template
 
 from . import TEMPLATES_DIR
@@ -46,6 +47,10 @@ def render_run_agent(cfg, paths):
     paths["run_agent"].chmod(0o755)
 
 
+def render_save_adr(paths):
+    shutil.copy2(TEMPLATES_DIR / "save_adr.py", paths["save_adr"])
+
+
 def render_workflow(cfg, paths):
     workflow = cfg["workflow"]
     if workflow["human_gates"]:
@@ -64,6 +69,7 @@ def render_workflow(cfg, paths):
         paths["workflow"],
         {
             "run_agent": str(paths["run_agent"]),
+            "save_adr": str(paths["save_adr"]),
             "state_dir": workflow["state_dir"],
             "adr_dir": workflow["adr_dir"],
             "step_timeout": str(workflow["shell_timeout"]),

@@ -89,6 +89,15 @@ def _in_venv():
     return sys.prefix != getattr(sys, "base_prefix", sys.prefix)
 
 
+def check_prerequisites():
+    if not find_in_path("python3"):
+        raise InstallError("python3 not found in PATH")
+    if not find_in_path("opencode"):
+        raise InstallError(
+            "opencode not found in PATH - install it first (https://opencode.ai/docs)"
+        )
+
+
 def _pip_works(python):
     result = run([python, "-m", "pip", "--version"], check=False)
     return result.returncode == 0

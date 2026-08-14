@@ -46,24 +46,22 @@ def run_install(args):
         return
 
     print("spec-kit-llm-client installer")
-    if not deps.find_in_path("python3"):
-        raise InstallError("python3 not found in PATH")
-    if not deps.find_in_path("opencode"):
-        raise InstallError(
-            "opencode not found in PATH - install it first (https://opencode.ai/docs)"
-        )
+    deps.check_prerequisites()
     deps.ensure_pyyaml()
     deps.ensure_specify()
     for directory in (paths["agents"], paths["scripts"], paths["sklc"]):
         directory.mkdir(parents=True, exist_ok=True)
     config.ensure_config(paths)
-    cfg = config.validate_config(config.load_config(paths["config"]))
+    cfg = config.validate_config(
+        config.apply_defaults(config.load_config(paths["config"]))
+    )
     if args.update:
         config.print_diff_new_options(paths["config"], cfg)
     render.render_agents(cfg, paths)
     render.render_run_agent(cfg, paths)
+    render.render_save_adr(paths)
     render.render_workflow(cfg, paths)
-    verify.validate_install(paths)
+    verify.verify_install(paths)
     print("installation verified")
     print_instructions(paths)
 

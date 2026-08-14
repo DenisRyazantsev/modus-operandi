@@ -17,6 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sklc import deps
 from sklc import cli as install
+from sklc import config, verify
+from sklc import InstallError
 
 
 class FakeResult:
@@ -98,6 +100,7 @@ class InstallerTest(unittest.TestCase):
             ".config/opencode/agent/planner.md",
             ".config/opencode/agent/executor.md",
             ".config/opencode/scripts/run-agent.sh",
+            ".config/opencode/scripts/save_adr.py",
             ".config/spec-kit-llm-client/config.yml",
             ".config/spec-kit-llm-client/config.example.yml",
             ".config/spec-kit-llm-client/adr-pipeline.yml",
@@ -247,15 +250,22 @@ class InstallerTest(unittest.TestCase):
             self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
         ).read_text(encoding="utf-8")
         self.assertIn("- id: save-adr", workflow)
-        self.assertIn('adr_dir = "architecture"', workflow)
-        self.assertIn('"ADR-%04d-%s.md"', workflow)
-        self.assertIn("slug:", workflow)
-        self.assertIn("has no 'slug' field", workflow)
-        self.assertIn("read_slug", workflow)
+        self.assertIn('save_adr.py" save', workflow)
+        self.assertIn('"architecture"', workflow)
+        self.assertIn("save_adr.py", workflow)
         self.assertNotIn("translit", workflow.lower().replace("transliteration", ""))
+        self.assertNotIn("adr.md still has no 'slug' field", workflow)
         save_index = workflow.index("- id: save-adr")
         questions_index = workflow.index("- id: executor-questions")
         self.assertLess(save_index, questions_index)
+        save_adr = (
+            self.home / ".config/opencode/scripts/save_adr.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("read_slug", save_adr)
+        self.assertIn("has no 'slug' field", save_adr)
+        self.assertIn("must contain ASCII letters", save_adr)
+        self.assertIn("w[:60]", save_adr)
+        self.assertNotIn("translit", save_adr.lower().replace("transliteration", ""))
 
     def test_workflow_deviation_sync(self):
         self.assertEqual(self.install(), 0)
@@ -265,11 +275,15 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("- id: sync-adr", workflow)
         self.assertIn("deviation.md", workflow)
         self.assertIn("## Amendments", workflow)
-        self.assertIn("adr-saved.txt", workflow)
         block = workflow.split("- id: sync-adr", 1)[1].split("\n  - id:", 1)[0]
         self.assertIn("set -euo pipefail", block)
-        self.assertLess(block.index("python3 - <<'PY'"), block.index("rm -f"))
+        self.assertIn('save_adr.py" sync', block)
+        self.assertLess(block.index('save_adr.py" sync'), block.index("rm -f"))
         self.assertIn("timeout: 7200", block)
+        save_adr = (
+            self.home / ".config/opencode/scripts/save_adr.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("adr-saved.txt", save_adr)
         sync_index = workflow.index("- id: sync-adr")
         pass_index = workflow.index("- id: pass-check")
         review_loop_index = workflow.index("- id: review-loop")
@@ -313,14 +327,15 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("--task) [ $# -ge 2 ] || usage", run_agent)
         self.assertIn("ps -p", run_agent)
         self.assertIn("grep -q '^opencode'", run_agent)
+        self.assertEqual(run_agent.count("session[iI][dD]"), 1)
 
     def test_slug_sanitization_error_messages(self):
         self.assertEqual(self.install(), 0)
-        workflow = (
-            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
+        save_adr = (
+            self.home / ".config/opencode/scripts/save_adr.py"
         ).read_text(encoding="utf-8")
-        self.assertIn("must contain ASCII letters", workflow)
-        self.assertIn("w[:60]", workflow)
+        self.assertIn("must contain ASCII letters", save_adr)
+        self.assertIn("w[:60]", save_adr)
 
     def test_workflow_adr_revise_loop(self):
         self.assertEqual(self.install(), 0)
@@ -422,6 +437,7 @@ class InstallerTest(unittest.TestCase):
             ".config/opencode/agent/planner.md",
             ".config/opencode/agent/executor.md",
             ".config/opencode/scripts/run-agent.sh",
+            ".config/opencode/scripts/save_adr.py",
             ".config/spec-kit-llm-client/adr-pipeline.yml",
             ".config/spec-kit-llm-client/config.example.yml",
         ):
@@ -439,6 +455,31 @@ class InstallerTest(unittest.TestCase):
             [cmd for cmd in self.records if "uninstall" in cmd and cmd[0] != "uv"],
             [],
         )
+
+    def test_verify_collects_all_errors(self):
+        paths = config.build_paths(str(self.home))
+        (self.home / ".config/opencode/agent").mkdir(parents=True)
+        run_agent = self.home / ".config/opencode/scripts/run-agent.sh"
+        run_agent.parent.mkdir(parents=True)
+        run_agent.touch()
+        run_agent.chmod(0o755)
+
+        def run_fake(cmd, cwd=None, env=None, check=True):
+            if cmd[1:3] == ["workflow", "run"]:
+                return FakeResult(
+                    1, "", "Error: Required input 'feature' not provided.\n"
+                )
+            if cmd[-3:] == ["opencode", "agent", "list"]:
+                return FakeResult(0, "build (primary)\n")
+            return FakeResult(0)
+
+        with mock.patch.object(deps, "run", side_effect=run_fake):
+            with self.assertRaises(InstallError) as cm:
+                verify.verify_install(paths)
+        err = str(cm.exception)
+        self.assertIn("planner", err)
+        self.assertIn("executor", err)
+        self.assertIn("save_adr.py", err)
 
     def install_with_capture(self):
         return self.run_main(["--home", str(self.home)])

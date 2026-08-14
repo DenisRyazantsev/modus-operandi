@@ -85,59 +85,8 @@ ${approve_adr_verdict}
   - id: save-adr
     type: shell
     timeout: ${step_timeout}
-    run: |
-      python3 - <<'PY'
-      import os, re, glob, subprocess, shlex
-      p = "${state_dir}/tasks/{{ inputs.task_id }}/adr.md"
-      if not os.path.exists(p):
-          raise SystemExit("adr.md not found")
-      def read_slug():
-          text = open(p, encoding="utf-8").read()
-          fm = text.split("---", 2)
-          if len(fm) < 3:
-              return None
-          m = re.search(r"^slug:\s*(\S+)", fm[1], re.M)
-          return m.group(1) if m else None
-      if read_slug() is None:
-          prompt = ("Read %s. Its YAML frontmatter (between the first two '---' lines) is missing the 'slug' field. Add it on its own line right after the opening '---': a short 2-3 word ENGLISH summary of the ADR in lowercase kebab-case (e.g. 'slug: prod-validation-splits'). Change nothing else." % p)
-          cmd = "${run_agent} planner " + shlex.quote(prompt) + " --task " + shlex.quote("{{ inputs.task_id }}")
-          subprocess.run(cmd, shell=True, check=True)
-          if read_slug() is None:
-              raise SystemExit("error: adr.md still has no 'slug' field after the planner was asked to add it. Add a short 2-3 word ENGLISH summary in kebab-case (e.g. 'slug: prod-validation-splits') to the frontmatter manually and resume the run")
-      slug = re.sub(r"[^a-z0-9-]", "-", read_slug().lower()).strip("-")
-      if not re.search(r"[a-z]", slug):
-          raise SystemExit("error: slug must contain ASCII letters (English), e.g. 'slug: prod-validation-splits'")
-      slug = "-".join(w for w in slug.split("-") if w)
-      words = slug.split("-")
-      slug = ""
-      for w in words:
-          w = w[:60]
-          if len(slug) + len(w) + (1 if slug else 0) > 60:
-              break
-          slug = w if not slug else slug + "-" + w
-      if not slug:
-          raise SystemExit("error: slug is empty after sanitization")
-      text = open(p, encoding="utf-8").read()
-      adr_dir = "${adr_dir}"
-      existing = glob.glob(os.path.join(adr_dir, "ADR-*-" + slug + ".md"))
-      saved_path = ""
-      if existing:
-          print("adr already saved: " + existing[0])
-          saved_path = existing[0]
-      else:
-          nums = [int(m.group(1)) for m in (re.search(r"ADR-(\d{4})-", f) for f in glob.glob(os.path.join(adr_dir, "ADR-*.md"))) if m]
-          num = max(nums) + 1 if nums else 1
-          name = "ADR-%04d-%s.md" % (num, slug)
-          target = os.path.join(adr_dir, name)
-          os.makedirs(adr_dir, exist_ok=True)
-          saved = re.sub(r"^#\s*ADR(?:\s*-\s*\d+)?\s*:\s*(.+)$$", lambda m: "# ADR-%04d: %s" % (num, m.group(1).strip()), text, count=1, flags=re.M)
-          with open(target, "w", encoding="utf-8") as f:
-              f.write(saved)
-          print("saved adr: " + target)
-          saved_path = target
-      with open("${state_dir}/tasks/{{ inputs.task_id }}/adr-saved.txt", "w", encoding="utf-8") as f:
-          f.write(saved_path)
-      PY
+    run: >-
+      python3 "${save_adr}" save "${state_dir}" "{{ inputs.task_id }}" "${adr_dir}" "${run_agent}"
 
   - id: executor-questions
     type: shell
@@ -215,23 +164,7 @@ ${approve_adr_verdict}
       set -euo pipefail
       if [ -f "${state_dir}/tasks/{{ inputs.task_id }}/deviation.md" ]; then
       "${run_agent}" planner "Read ${state_dir}/tasks/{{ inputs.task_id }}/deviation.md and ${state_dir}/tasks/{{ inputs.task_id }}/adr.md. Update adr.md so it reflects the recorded deviation: append an '## Amendments' section (do not rewrite the Decision) noting what changed and why." --task {{ inputs.task_id }}
-      python3 - <<'PY'
-      import os, re
-      p = "${state_dir}/tasks/{{ inputs.task_id }}/adr-saved.txt"
-      if not os.path.exists(p):
-          raise SystemExit("no adr-saved.txt")
-      target = open(p, encoding="utf-8").read().strip()
-      if not target or not os.path.exists(target):
-          print("warning: saved adr not found at " + target)
-      else:
-          m = re.search(r"ADR-(\d{4})-", target)
-          num = m.group(1) if m else "XXXX"
-          text = open("${state_dir}/tasks/{{ inputs.task_id }}/adr.md", encoding="utf-8").read()
-          saved = re.sub(r"^#\s*ADR(?:\s*-\s*\d+)?\s*:\s*(.+)$$", lambda m2: "# ADR-%s: %s" % (num, m2.group(1).strip()), text, count=1, flags=re.M)
-          with open(target, "w", encoding="utf-8") as f:
-              f.write(saved)
-          print("adr synced: " + target)
-      PY
+      python3 "${save_adr}" sync "${state_dir}" "{{ inputs.task_id }}"
       rm -f "${state_dir}/tasks/{{ inputs.task_id }}/deviation.md"
       else
       echo "no deviation recorded"

@@ -37,6 +37,7 @@ def build_paths(home):
         "config_example": base / ".config" / "spec-kit-llm-client" / "config.example.yml",
         "workflow": base / ".config" / "spec-kit-llm-client" / "adr-pipeline.yml",
         "run_agent": base / ".config" / "opencode" / "scripts" / "run-agent.sh",
+        "save_adr": base / ".config" / "opencode" / "scripts" / "save_adr.py",
     }
 
 
@@ -49,7 +50,11 @@ def ensure_config(paths):
 
 def load_config(path):
     with open(path, encoding="utf-8") as fh:
-        cfg = deps.yaml.safe_load(fh) or {}
+        return deps.yaml.safe_load(fh) or {}
+
+
+def apply_defaults(raw):
+    cfg = dict(raw or {})
     workflow = dict(DEFAULT_CONFIG["workflow"])
     workflow.update(cfg.get("workflow") or {})
     cfg["workflow"] = workflow

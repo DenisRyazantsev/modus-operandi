@@ -96,7 +96,7 @@ with open(p, "w") as f:
 }
 
 extract_session_id() {
-  sed -n 's/.*"sessionID":"\([^"]*\)".*/\1/p' | head -1
+  sed -n 's/.*"session[iI][dD]":"\([^"]*\)".*/\1/p' | head -1
 }
 
 SESSION_ID=""
@@ -112,9 +112,6 @@ if [ -z "$$SESSION_ID" ]; then
     exit "$$RC"
   fi
   SESSION_ID="$$(printf '%s\n' "$$OUTPUT" | extract_session_id)"
-  if [ -z "$$SESSION_ID" ]; then
-    SESSION_ID="$$(printf '%s\n' "$$OUTPUT" | sed -n 's/.*"sessionId":"\([^"]*\)".*/\1/p' | head -1)"
-  fi
   if [ -z "$$SESSION_ID" ]; then
     echo "error: could not extract a session id from opencode output" >&2
     exit 2
