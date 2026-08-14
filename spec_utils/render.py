@@ -88,3 +88,23 @@ def render_workflow(cfg: dict[str, Any], paths: Paths) -> None:
             "max_comment_iterations": str(workflow["max_comment_iterations"]),
         },
     )
+
+
+def render_review_workflow(cfg: dict[str, Any], paths: Paths) -> None:
+    # The review-only workflow has no inputs and no ADR stage: it diffs the
+    # working tree against the default branch and runs the same review loops.
+    workflow = cfg["workflow"]
+    render_file(
+        TEMPLATES_DIR / "review-pipeline.yml.tpl",
+        paths["review_workflow"],
+        {
+            "run_agent": str(paths["run_agent"]),
+            "save_adr": str(paths["save_adr"]),
+            "state_dir": workflow["state_dir"],
+            "step_timeout": str(workflow["shell_timeout"]),
+            "max_fix_iterations": str(workflow["max_fix_iterations"]),
+            "max_srp_iterations": str(workflow["max_srp_iterations"]),
+            "max_bug_iterations": str(workflow["max_bug_iterations"]),
+            "max_comment_iterations": str(workflow["max_comment_iterations"]),
+        },
+    )

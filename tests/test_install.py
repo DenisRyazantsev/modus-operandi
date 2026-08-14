@@ -141,8 +141,17 @@ class InstallerTest(unittest.TestCase):
             self.assertEqual(self.run_main(["--register"])[0], 0)
             self.assertEqual(self.run_main(["--register"])[0], 0)
         adds = [cmd for cmd in self.records if cmd[1:3] == ["workflow", "add"]]
-        self.assertEqual(len(adds), 2)
+        # Two --register invocations x two workflows (adr + review).
+        self.assertEqual(len(adds), 4)
+        self.assertEqual(
+            len([c for c in adds if "adr-pipeline.yml" in c[3]]), 2
+        )
+        self.assertEqual(
+            len([c for c in adds if "review-pipeline.yml" in c[3]]), 2
+        )
         self.assertTrue(workflow.exists())
+        review = self.home / ".config/spec-kit-llm-client/review-pipeline.yml"
+        self.assertTrue(review.exists())
 
     def test_register_requires_project(self):
         self.assertEqual(self.install(), 0)
@@ -266,6 +275,45 @@ class InstallerTest(unittest.TestCase):
         self.assertNotIn("latest-review", workflow)
         self.assertNotIn("final-gate", workflow)
         self.assertNotIn("copy-latest-review", workflow)
+
+    def test_review_workflow_structure(self):
+        self.assertEqual(self.install(), 0)
+        review = (
+            self.home / ".config/spec-kit-llm-client/review-pipeline.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn('id: "review-pipeline"', review)
+        self.assertIn("inputs: {}", review)
+        for step in ("generate-task-id", "detect-base-branch",
+                     "srp-loop", "bug-loop", "review-loop",
+                     "comment-review-loop", "report"):
+            self.assertIn(f"- id: {step}", review, step)
+        for kind in ("srp", "bugs", "review", "comment"):
+            self.assertIn(f'check-review ".workflow" "" {kind}', review, kind)
+        self.assertIn("git diff $base", review)
+        self.assertIn("refs/remotes/origin/HEAD", review)
+        self.assertIn("origin/main", review)
+        self.assertIn("origin/master", review)
+        self.assertIn("no changes against", review)
+        self.assertIn("base-branch.txt", review)
+        self.assertIn("git branch --show-current", review)
+        self.assertIn("date +%Y%m%d-%H%M", review)
+        self.assertIn("ln -sfn", review)
+        self.assertIn("review-report.md", review)
+        self.assertNotIn("adr.md", review)
+        self.assertNotIn("adr_dir", review)
+        self.assertNotIn("--task", review)
+
+    def test_review_workflow_order(self):
+        self.assertEqual(self.install(), 0)
+        review = (
+            self.home / ".config/spec-kit-llm-client/review-pipeline.yml"
+        ).read_text(encoding="utf-8")
+        order = [review.index(f"- id: {s}") for s in
+                 ("generate-task-id", "detect-base-branch", "srp-loop",
+                  "srp-pass-check", "bug-loop", "bug-pass-check",
+                  "review-loop", "pass-check", "comment-review-loop",
+                  "comment-pass-check", "report")]
+        self.assertEqual(order, sorted(order))
 
     def test_workflow_saves_adr_to_adr_dir(self):
         self.assertEqual(self.install(), 0)

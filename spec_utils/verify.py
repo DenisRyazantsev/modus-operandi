@@ -4,21 +4,26 @@ from __future__ import annotations
 
 import os
 import re
-import tempfile
 
 from . import InstallError, Paths, deps
 
 
 def check_files(paths: Paths) -> list[str]:
     errors: list[str] = []
-    for name in ("planner.md", "executor.md"):
-        agent = paths["agents"] / name
+    for agent_name in ("planner.md", "executor.md"):
+        agent = paths["agents"] / agent_name
         if not agent.exists():
             errors.append(f"generated agent missing: {agent}")
     if not paths["save_adr"].exists():
         errors.append("generated script missing: {}".format(paths["save_adr"]))
     if not os.access(paths["run_agent"], os.X_OK):
         errors.append("run-agent.sh is not executable: {}".format(paths["run_agent"]))
+    for _, path in (
+        ("adr-pipeline.yml", paths["workflow"]),
+        ("review-pipeline.yml", paths["review_workflow"]),
+    ):
+        if not path.exists():
+            errors.append(f"generated workflow missing: {path}")
     return errors
 
 
@@ -34,23 +39,23 @@ def check_workflow_syntax(paths: Paths) -> list[str]:
         return [
             f"'specify' not found on PATH{hint}; add it to PATH and rerun install.py"
         ]
-    with tempfile.TemporaryDirectory() as tmp:
-        result = deps.run(
-            [specify, "workflow", "run", str(paths["workflow"]), "--json"],
-            cwd=tmp,
-            check=False,
-        )
-        combined = ((result.stderr or "") + "\n" + (result.stdout or "")).lower()
-        # `specify workflow run` without -i is our syntax probe: a valid
-        # workflow must fail with "Required input ... not provided". Anything
-        # else (exit 0, a YAML error, an unknown step type) means the file is
-        # broken. Matching is case-insensitive and across stdout+stderr so the
-        # check survives wording/stream changes in specify-cli.
-        if result.returncode == 0 or "required input" not in combined:
-            return [
-                f"workflow syntax check failed:\n{(result.stderr or result.stdout).strip()}"
-            ]
-    return []
+    # `specify workflow info <path>` parses and renders the workflow graph
+    # without executing it. That is the syntax probe: a valid workflow exits 0.
+    # (The old probe ran `specify workflow run` expecting a "required input"
+    # error - it cannot be used for review-pipeline, which has no inputs, since
+    # the run would actually execute.)
+    errors: list[str] = []
+    for wf_name, path in (
+        ("adr-pipeline.yml", paths["workflow"]),
+        ("review-pipeline.yml", paths["review_workflow"]),
+    ):
+        result = deps.run([specify, "workflow", "info", str(path)], check=False)
+        if result.returncode != 0:
+            errors.append(
+                f"{wf_name} syntax check failed:\n"
+                + (result.stderr or result.stdout).strip()
+            )
+    return errors
 
 
 def check_agents_visible(paths: Paths) -> list[str]:

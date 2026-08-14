@@ -16,6 +16,19 @@ specify workflow run ~/.config/spec-kit-llm-client/adr-pipeline.yml -i feature="
 Full cycle: ADR → executor questions → planner answers → implementation → review → fixes until the reviewer says
 `VERDICT: PASS`.
 
+A second workflow, `review-pipeline`, does the review part alone: run it after
+your own edits and it reviews the uncommitted changes against the default branch
+(`origin/HEAD`, or `origin/main`/`origin/master`/`main`/`master`, whichever
+exists), fixes findings and writes a `review-report.md`:
+
+```
+specify workflow run review-pipeline
+```
+
+It has no inputs and no gates — keep the terminal open until it completes.
+The same review stages run in both workflows: SRP → bugs → general correctness →
+readability "traps", each loop fixing its findings until pass.
+
 ## Requirements
 
 - Linux/macOS
@@ -38,7 +51,7 @@ The installer:
 2. installs `specify-cli` (uv → pipx → pip) and PyYAML if missing;
 3. creates `~/.config/opencode/agent/{planner,executor}.md`,
    `~/.config/opencode/scripts/run-agent.sh` and
-   `~/.config/spec-kit-llm-client/{config.yml,adr-pipeline.yml}`;
+   `~/.config/spec-kit-llm-client/{config.yml,adr-pipeline.yml,review-pipeline.yml}`;
 4. validates everything (agents visible to opencode, workflow accepted by the
    spec-kit engine, `run-agent.sh` executable).
 

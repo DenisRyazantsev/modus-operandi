@@ -21,6 +21,8 @@ def print_instructions(paths: Paths) -> None:
         "       python3 {} --register\n"
         "     and then:\n"
         "       specify workflow run adr-pipeline -i feature=\"...\"\n"
+        "     or review your own uncommitted changes:\n"
+        "       specify workflow run review-pipeline\n"
         "  3. If the run pauses at a gate, review and resume with:\n"
         "       specify workflow resume <run_id>\n".format(
             paths["config"], paths["workflow"], REPO_ROOT / "install.py"
@@ -63,6 +65,7 @@ def run_install(args: argparse.Namespace) -> None:
     render.render_run_agent(cfg, paths)
     render.render_save_adr(paths)
     render.render_workflow(cfg, paths)
+    render.render_review_workflow(cfg, paths)
     verify.verify_install(paths)
     print("installation verified")
     print_instructions(paths)
