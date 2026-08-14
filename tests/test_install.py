@@ -15,7 +15,16 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from spec_utils import InstallError, paths, proc, tool_discovery, verify, versions, yaml_loader
+from spec_utils import (
+    REPO_ROOT,
+    InstallError,
+    paths,
+    proc,
+    tool_discovery,
+    verify,
+    versions,
+    yaml_loader,
+)
 from spec_utils import cli as install
 
 
@@ -101,6 +110,8 @@ class InstallerTest(unittest.TestCase):
             ".config/opencode/agent/executor.md",
             ".config/opencode/scripts/run-agent.sh",
             ".config/opencode/scripts/name-task.sh",
+            ".config/opencode/scripts/run-pipeline.py",
+            ".config/opencode/scripts/victory.wav",
             ".config/opencode/scripts/save_adr.py",
             ".config/opencode/scripts/check_review.py",
             ".config/opencode/scripts/task_utils.py",
@@ -392,8 +403,21 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("LiveMonitor", text)
         self.assertIn('strftime("%H:%M:%S")', text)
         self.assertIn(".workflow/logs", text)
+        self.assertIn("=== run statistics ===", text)
+        self.assertIn("opencode", text)
+        self.assertIn("export", text)
+        # The wrapper references the shipped victory.wav by its absolute path.
+        wav = self.home / ".config/opencode/scripts/victory.wav"
+        self.assertIn(str(wav), text)
         self.assertNotIn("PYEOF", text)
         self.assertNotIn("#!/usr/bin/env bash", text)
+
+    def test_victory_wav_shipped_next_to_wrapper(self):
+        self.assertEqual(self.install(), 0)
+        wav = self.home / ".config/opencode/scripts/victory.wav"
+        self.assertTrue(wav.is_file())
+        shipped = REPO_ROOT / "architecture" / "assets" / "victory.wav"
+        self.assertEqual(wav.read_bytes(), shipped.read_bytes())
 
     def test_workflow_saves_adr_to_adr_dir(self):
         self.assertEqual(self.install(), 0)
@@ -831,6 +855,8 @@ class InstallerTest(unittest.TestCase):
             ".config/opencode/agent/executor.md",
             ".config/opencode/scripts/run-agent.sh",
             ".config/opencode/scripts/name-task.sh",
+            ".config/opencode/scripts/run-pipeline.py",
+            ".config/opencode/scripts/victory.wav",
             ".config/opencode/scripts/save_adr.py",
             ".config/opencode/scripts/check_review.py",
             ".config/opencode/scripts/task_utils.py",

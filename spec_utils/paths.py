@@ -20,6 +20,7 @@ def build_paths(home: str | Path) -> Paths:
         "run_agent": base / ".config" / "opencode" / "scripts" / "run-agent.sh",
         "name_task": base / ".config" / "opencode" / "scripts" / "name-task.sh",
         "run_pipeline": base / ".config" / "opencode" / "scripts" / "run-pipeline.py",
+        "victory_wav": base / ".config" / "opencode" / "scripts" / "victory.wav",
         "save_adr": base / ".config" / "opencode" / "scripts" / "save_adr.py",
         "check_review": base / ".config" / "opencode" / "scripts" / "check_review.py",
         "task_utils": base / ".config" / "opencode" / "scripts" / "task_utils.py",

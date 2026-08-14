@@ -7,7 +7,7 @@ from pathlib import Path
 from string import Template
 from typing import Any
 
-from . import TEMPLATES_DIR, Paths
+from . import REPO_ROOT, TEMPLATES_DIR, Paths
 
 
 def render_file(
@@ -60,15 +60,26 @@ def render_run_agent(cfg: dict[str, Any], paths: Paths) -> None:
 
 def render_run_pipeline(cfg: dict[str, Any], paths: Paths) -> None:
     # Wrapper that streams specify output with timestamps, prints step results
-    # as they complete and tails the per-role agent logs. The agent logs live
-    # under the configured state_dir, matching run-agent.sh's SKLC_STATE_DIR
-    # default.
+    # as they complete, tails the per-role agent logs, prints a run-statistics
+    # block after the run and plays a victory sound. The agent logs live under
+    # the configured state_dir, matching run-agent.sh's SKLC_STATE_DIR
+    # default; the sound file is shipped next to the installed wrapper and
+    # referenced by its absolute path.
     render_file(
         TEMPLATES_DIR / "run_pipeline.py.tpl",
         paths["run_pipeline"],
-        {"state_dir": cfg["workflow"]["state_dir"]},
+        {
+            "state_dir": cfg["workflow"]["state_dir"],
+            "sound_path": str(paths["victory_wav"]),
+        },
     )
     paths["run_pipeline"].chmod(0o755)
+
+
+def render_victory_wav(paths: Paths) -> None:
+    # Static asset shipped next to the installed run-pipeline.py; the rendered
+    # wrapper references it through the absolute path rendered as sound_path.
+    shutil.copy2(REPO_ROOT / "architecture" / "assets" / "victory.wav", paths["victory_wav"])
 
 
 def render_name_task(cfg: dict[str, Any], paths: Paths) -> None:

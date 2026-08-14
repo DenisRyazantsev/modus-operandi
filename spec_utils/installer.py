@@ -39,6 +39,7 @@ def install(paths: Paths, update: bool) -> None:
     render.render_run_agent(cfg, paths)
     render.render_name_task(cfg, paths)
     render.render_run_pipeline(cfg, paths)
+    render.render_victory_wav(paths)
     render.render_adr_scripts(paths)
     render.render_workflow(cfg, paths)
     render.render_review_workflow(cfg, paths)

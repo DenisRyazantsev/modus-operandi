@@ -15,6 +15,7 @@ def do_uninstall(paths: Paths, yes: bool) -> None:
         paths["run_agent"],
         paths["name_task"],
         paths["run_pipeline"],
+        paths["victory_wav"],
         paths["save_adr"],
         paths["check_review"],
         paths["task_utils"],

@@ -12,6 +12,12 @@ While specify waits for interactive input on a human gate (its menu window
 buffered instead of printed, so the window is not flooded; the buffer is
 flushed as soon as the engine moves past the gate or the wrapper exits.
 
+When the run finishes (success, failure or abort alike) the wrapper prints a
+`=== run statistics ===` block: the wall-clock run time and the token/cost
+usage of the planner and executor sessions, queried from opencode by session
+id. It also plays a single victory.wav signal on gate-open, on success and
+on failure; the sound and the statistics never change the exit code.
+
 Usage: run-pipeline.py <workflow-id-or-path> [extra specify args...]
   run-pipeline.py review-pipeline
   run-pipeline.py adr-pipeline -i feature="..."
@@ -22,8 +28,10 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -32,6 +40,11 @@ from pathlib import Path
 # pending, queued, unset) means the step is still in progress and must not be
 # reported as a finished event.
 TERMINAL_STATUSES = frozenset({"completed", "failed", "skipped"})
+
+# Absolute path of the victory.wav signal, shipped by the installer next to
+# the installed wrapper and referenced here via the path passed at render
+# time.
+SOUND_FILE = Path("${sound_path}")
 
 
 def stamp() -> str:
@@ -471,6 +484,189 @@ class LiveMonitor:
             self._flush_buffer()
 
 
+def fmt_thousands(n: int | float) -> str:
+    """Format a token count with space thousand separators: 321213 -> '321 213'."""
+    return "{:,}".format(int(n)).replace(",", " ")
+
+
+def fmt_duration(seconds: float) -> str:
+    """Format elapsed seconds as HH:MM:SS (e.g. 6301 -> '01:45:01')."""
+    total = max(0, int(seconds))
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    return "{:02d}:{:02d}:{:02d}".format(hours, minutes, secs)
+
+
+def notify() -> None:
+    """Play the single victory.wav signal, for every event.
+
+    Called when a human-gate menu opens, on a successful run and on a failed
+    run alike — one sound for all events, never different signals. Playback
+    is non-blocking (the player process is not waited for) and degrades
+    quietly: no sound file, no system player or a non-TTY stdout simply skip
+    the call, so the exit code and the wrapper's output are never affected.
+    """
+    try:
+        if not getattr(sys.stdout, "isatty", lambda: False)():
+            return
+        if not SOUND_FILE.is_file():
+            return
+        if sys.platform == "darwin":
+            player = shutil.which("afplay")
+        elif sys.platform.startswith("win"):
+            import winsound  # Windows only
+
+            winsound.PlaySound(
+                str(SOUND_FILE), winsound.SND_FILENAME | winsound.SND_ASYNC
+            )
+            return
+        else:
+            player = shutil.which("paplay") or shutil.which("aplay")
+        if not player:
+            return
+        subprocess.Popen(
+            [player, str(SOUND_FILE)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception:
+        # Quiet degradation: a sound problem must never fail the run.
+        pass
+
+
+def read_session_ids(state_dir: Path) -> dict[str, str]:
+    """Map role -> session id from <state_dir>/sessions-<task-id>.json.
+
+    The task id is taken from the <state_dir>/tasks/current symlink that the
+    workflow's generate-task-id step maintains; a missing or broken symlink
+    yields no ids. Only roles with a non-empty id are returned.
+    """
+    try:
+        task_id = (state_dir / "tasks" / "current").resolve().name
+    except OSError:
+        return {}
+    if not task_id:
+        return {}
+    try:
+        data = json.loads(
+            (state_dir / "sessions-{}.json".format(task_id)).read_text(
+                encoding="utf-8"
+            )
+        )
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        role: data[role]
+        for role in ("planner", "executor")
+        if isinstance(data.get(role), str) and data[role]
+    }
+
+
+def export_session_info(session_id: str) -> dict | None:
+    """Return the `info` dict of `opencode export <sessionID>`, or None.
+
+    opencode prints the session export as JSON on stdout ("Exporting
+    session: …" goes to stderr). The output is captured into a temporary
+    file instead of a pipe: opencode (<= 1.18.x) can exit before its piped
+    stdout is fully flushed once the session is larger than the pipe buffer,
+    silently truncating the JSON. With a file the full output is available;
+    a truncated run usually fails to parse, so the export is retried once.
+    Any remaining failure — opencode missing, a non-zero exit, unparseable
+    output — returns None and the caller degrades to zero/dash values
+    instead of failing the run.
+    """
+    for _ in range(2):
+        try:
+            with tempfile.TemporaryFile(mode="w+b") as out:
+                result = subprocess.run(
+                    ["opencode", "export", session_id],
+                    stdout=out,
+                    stderr=subprocess.DEVNULL,
+                    timeout=120,
+                )
+                if result.returncode != 0:
+                    return None
+                out.seek(0)
+                try:
+                    info = json.loads(out.read().decode("utf-8"))["info"]
+                except Exception:
+                    continue  # truncated/invalid export: retry once
+                return info if isinstance(info, dict) else None
+        except Exception:
+            return None
+    return None
+
+
+def collect_usage(state_dir: Path) -> dict[str, int | float]:
+    """Aggregate token usage and cost across the planner and executor sessions.
+
+    Sums info.tokens.{input,output,reasoning}, info.tokens.cache.{read,write}
+    and info.cost of both roles into one dict; a role with no session id or a
+    failed export contributes nothing. No live token accumulator is involved:
+    opencode reports the full usage of each saved session itself.
+    """
+    totals: dict[str, int | float] = {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "cost": 0.0,
+    }
+    for session_id in read_session_ids(state_dir).values():
+        info = export_session_info(session_id)
+        if info is None:
+            continue
+        tokens = info.get("tokens")
+        if isinstance(tokens, dict):
+            totals["input"] += int(tokens.get("input") or 0)
+            totals["output"] += int(tokens.get("output") or 0)
+            totals["reasoning"] += int(tokens.get("reasoning") or 0)
+            cache = tokens.get("cache")
+            if isinstance(cache, dict):
+                totals["cache_read"] += int(cache.get("read") or 0)
+                totals["cache_write"] += int(cache.get("write") or 0)
+        cost = info.get("cost")
+        if isinstance(cost, (int, float)):
+            totals["cost"] += float(cost)
+    return totals
+
+
+def print_run_statistics(state_dir: Path, elapsed: float) -> None:
+    """Print the final `=== run statistics ===` block.
+
+    Printed after the run on every completion path (success, failure, abort).
+    Token counts use space thousand separators; wall time is HH:MM:SS.
+    Missing session data degrades to zeros — the wrapper never fails here.
+    """
+    usage = collect_usage(state_dir)
+    print()
+    print("=== run statistics ===")
+    print("wall time: {}".format(fmt_duration(elapsed)))
+    print(
+        "tokens: input {} · output {} · reasoning {}".format(
+            fmt_thousands(usage["input"]),
+            fmt_thousands(usage["output"]),
+            fmt_thousands(usage["reasoning"]),
+        )
+    )
+    print(
+        "cache: read {} · write {}".format(
+            fmt_thousands(usage["cache_read"]),
+            fmt_thousands(usage["cache_write"]),
+        )
+    )
+    # `$$` is string.Template's escape for a literal dollar sign: the doubled
+    # dollar sign is intentional, not a mistake, because the rendered file
+    # must contain the runtime cost line with a single dollar sign before
+    # the two-decimal format spec. A single dollar sign here would make
+    # Template.substitute raise "Invalid placeholder in string".
+    print("cost: $${:.2f}".format(usage["cost"]))
+
+
 def main() -> int:
     argv = sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help"):
@@ -485,6 +681,9 @@ def main() -> int:
     # monitor recognizes the current run as the run dir that appears now.
     prior_runs = existing_run_ids(state_root)
     monitor = LiveMonitor(state_root, prior_runs)
+    # Wall-clock run time is measured directly around the child process; it
+    # covers every completion path (success, failure, abort).
+    t0 = time.monotonic()
     proc = subprocess.Popen(
         ["specify", "workflow", "run", source, *extra],
         stdout=subprocess.PIPE,
@@ -508,6 +707,9 @@ def main() -> int:
                 # a fast answer could already have moved current_step_id.
                 # Echo of the menu lines themselves is unchanged below.
                 monitor.gate.open(monitor.discover_and_read_state())
+                # The human is needed: play the same signal used for a
+                # finished run (success or failure alike).
+                notify()
             print("[{}] {}".format(stamp(), line), flush=True)
             if not run_id:
                 run_id = run_id_from_text(line)
@@ -520,6 +722,7 @@ def main() -> int:
         # "run failed (exit None)". wait() is a no-op when the process
         # already exited.
         proc.wait()
+        t1 = time.monotonic()
         # Stop and join the monitor thread first: finish() below would
         # otherwise race _run()'s poll() on the shared _seen_steps state and
         # can duplicate a step's output.
@@ -543,6 +746,11 @@ def main() -> int:
                     stamp(), run_id or monitor.run_id
                 )
             )
+    # The statistics block prints on every completion path and never fails:
+    # missing session data or a failed `opencode export` degrade to zeros.
+    print_run_statistics(Path.cwd() / "${state_dir}", t1 - t0)
+    # One victory.wav signal for every event: gate open, success, failure.
+    notify()
     return rc
 
 
