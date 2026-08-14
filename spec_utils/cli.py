@@ -6,8 +6,20 @@ import argparse
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
-from . import REPO_ROOT, InstallError, Paths, actions, config, deps, render, verify
+from . import (
+    CONFIG_EXAMPLE,
+    REPO_ROOT,
+    InstallError,
+    Paths,
+    config,
+    deps,
+    register,
+    render,
+    uninstall,
+    verify,
+)
 
 
 def print_instructions(paths: Paths) -> None:
@@ -32,9 +44,32 @@ def print_instructions(paths: Paths) -> None:
     )
 
 
-def run_install(args: argparse.Namespace) -> None:
-    home = Path(args.home).expanduser() if args.home else Path.home()
-    paths = config.build_paths(home)
+def collect_keys(data: Any, prefix: str = "") -> set[str]:
+    keys: set[str] = set()
+    for key, value in (data or {}).items():
+        full = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(value, dict):
+            keys.update(collect_keys(value, full))
+        else:
+            keys.add(full)
+    return keys
+
+
+def print_diff_new_options(config_path: str | Path, cfg: dict[str, Any]) -> None:
+    # --update feature: compare the example config against the user's raw
+    # config (before apply_defaults, which fills every key) and report the
+    # options the user is not setting yet.
+    example = deps.yaml.safe_load(CONFIG_EXAMPLE.read_text(encoding="utf-8")) or {}
+    new = collect_keys(example) - collect_keys(cfg)
+    if new:
+        print(f"new options available (not yet set in {config_path}):")
+        for key in sorted(new):
+            print(f"  {key}")
+
+
+def validate_args(args: argparse.Namespace) -> None:
+    # Parse-time flag-combination rules; run_install itself assumes a valid
+    # combination.
     if args.register:
         if args.home:
             raise InstallError("--register cannot be combined with --home")
@@ -42,12 +77,18 @@ def run_install(args: argparse.Namespace) -> None:
             raise InstallError(
                 "--register cannot be combined with --uninstall/--update"
             )
-        actions.do_register(paths)
-        return
     if args.uninstall and args.update:
         raise InstallError("--uninstall cannot be combined with --update")
+
+
+def run_install(args: argparse.Namespace) -> None:
+    home = Path(args.home).expanduser() if args.home else Path.home()
+    paths = config.build_paths(home)
+    if args.register:
+        register.do_register(paths)
+        return
     if args.uninstall:
-        actions.do_uninstall(paths, args.yes)
+        uninstall.do_uninstall(paths, args.yes)
         return
 
     print("spec-kit-llm-client installer")
@@ -62,11 +103,12 @@ def run_install(args: argparse.Namespace) -> None:
     if args.update:
         # Diff against the raw config, not the defaults-filled one: after
         # apply_defaults() every key exists, so the diff would always be empty.
-        config.print_diff_new_options(paths["config"], raw)
+        print_diff_new_options(paths["config"], raw)
     render.render_agents(cfg, paths)
     render.render_run_agent(cfg, paths)
+    render.render_name_task(cfg, paths)
     render.render_run_pipeline(paths)
-    render.render_save_adr(paths)
+    render.render_adr_scripts(paths)
     render.render_workflow(cfg, paths)
     render.render_review_workflow(cfg, paths)
     verify.verify_install(paths)
@@ -103,7 +145,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     # YAML parse errors are already wrapped into InstallError by
     # config.load_config; everything else here is a user-facing failure.
     try:
-        run_install(parse_args(argv))
+        args = parse_args(argv)
+        validate_args(args)
+        run_install(args)
     except (InstallError, OSError, ValueError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

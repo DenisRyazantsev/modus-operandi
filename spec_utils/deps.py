@@ -41,6 +41,8 @@ __all__ = [
     "check_prerequisites",
     "ensure_pyyaml",
     "ensure_specify",
+    "uninstall_specify",
+    "uninstall_pyyaml",
 ]
 
 MIN_SPECIFY_VERSION = (0, 16)
@@ -228,3 +230,33 @@ def ensure_specify() -> None:
         "could not install specify-cli; install uv "
         "(https://docs.astral.sh/uv/) and rerun"
     )
+
+
+def uninstall_specify() -> bool:
+    # Teardown counterpart of ensure_specify(): only the uv-tool install is
+    # removed (pip/pipx installs are left alone as they may serve other
+    # projects).
+    uv = find_in_path("uv")
+    if not uv or not get_specify_version():
+        return False
+    result = run([uv, "tool", "uninstall", "specify-cli"], check=False)
+    return result.returncode == 0
+
+
+def uninstall_pyyaml() -> bool:
+    # Teardown counterpart of ensure_pyyaml(): tries the same install
+    # locations in order — the current python's pip, then pip3, then pip3
+    # --user — and succeeds on the first one that works.
+    attempts: list[list[str]] = []
+    python = find_in_path("python3")
+    if python and pip_works(python):
+        attempts.append([python, "-m", "pip", "uninstall", "-y", "pyyaml"])
+    pip3 = find_in_path("pip3")
+    if pip3:
+        attempts.append([pip3, "uninstall", "-y", "pyyaml"])
+        attempts.append([pip3, "uninstall", "-y", "--user", "pyyaml"])
+    for cmd in attempts:
+        result = run(cmd, check=False)
+        if result.returncode == 0:
+            return True
+    return False

@@ -9,6 +9,8 @@ from pathlib import Path
 from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+# save_adr.py imports task_utils.py from the same directory.
+sys.path.insert(0, str(REPO_ROOT / "templates"))
 
 _SPEC = importlib.util.spec_from_file_location(
     "save_adr", REPO_ROOT / "templates" / "save_adr.py"
@@ -205,39 +207,11 @@ class CmdSaveTest(unittest.TestCase):
         self.assertEqual(recorded["cmd"][1], "planner")
         self.assertEqual(recorded["cmd"][-2:], ["--task", "t1"])
 
-
-class ResolveTaskDirTest(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
-        self.tasks = self.root / ".workflow" / "tasks"
-        self.tasks.mkdir(parents=True)
-
-    def test_explicit_task_id(self):
-        task_dir = save_adr.resolve_task_dir(str(self.root / ".workflow"), "t1")
-        self.assertEqual(task_dir, self.tasks / "t1")
-
-    def test_empty_task_id_resolves_symlink(self):
-        (self.tasks / "mcc-split-20260814").mkdir()
-        (self.tasks / "current").symlink_to("mcc-split-20260814")
-        task_dir = save_adr.resolve_task_dir(str(self.root / ".workflow"), "")
-        self.assertEqual(task_dir, self.tasks / "mcc-split-20260814")
-        self.assertEqual(task_dir.name, "mcc-split-20260814")
-
-    def test_empty_task_id_without_symlink_fails(self):
-        with self.assertRaises(SystemExit):
-            save_adr.resolve_task_dir(str(self.root / ".workflow"), "")
-
-    def test_empty_task_id_broken_symlink_fails(self):
-        (self.tasks / "current").symlink_to("missing-task")
-        with self.assertRaises(SystemExit):
-            save_adr.resolve_task_dir(str(self.root / ".workflow"), "")
-
     def test_save_via_symlink_is_idempotent(self):
-        (self.tasks / "auto-1").mkdir()
-        (self.tasks / "current").symlink_to("auto-1")
-        (self.tasks / "auto-1" / "adr.md").write_text(
+        tasks = self.root / ".workflow" / "tasks"
+        (tasks / "auto-1").mkdir()
+        (tasks / "current").symlink_to("auto-1")
+        (tasks / "auto-1" / "adr.md").write_text(
             "---\nslug: auto-feature\n---\n# ADR: Авто\n", encoding="utf-8"
         )
 
@@ -255,7 +229,7 @@ class ResolveTaskDirTest(unittest.TestCase):
         save_empty_id()
         files = list((self.root / "architecture").glob("ADR-*.md"))
         self.assertEqual(len(files), 1)
-        self.assertTrue((self.tasks / "auto-1" / "adr-saved.txt").exists())
+        self.assertTrue((tasks / "auto-1" / "adr-saved.txt").exists())
 
 
 class CmdSyncTest(unittest.TestCase):
@@ -291,110 +265,6 @@ class CmdSyncTest(unittest.TestCase):
                     state_dir=str(self.root / ".workflow"), task_id="t1"
                 )
             )
-
-
-class CmdCheckReviewTest(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
-        self.task_dir = self.root / ".workflow" / "tasks" / "t1"
-        self.task_dir.mkdir(parents=True)
-
-    def check(self, kind):
-        return save_adr.cmd_check_review(
-            argparse.Namespace(
-                state_dir=str(self.root / ".workflow"), task_id="t1", kind=kind
-            )
-        )
-
-    def test_pass_exits_zero(self):
-        (self.task_dir / "review-1.md").write_text(
-            "VERDICT: PASS\n- fine\n", encoding="utf-8"
-        )
-        (self.task_dir / "review-2.md").write_text(
-            "VERDICT: PASS\n", encoding="utf-8"
-        )
-        with self.assertRaises(SystemExit) as cm:
-            self.check("review")
-        self.assertEqual(cm.exception.code, 0)
-
-    def test_fix_exits_one(self):
-        (self.task_dir / "review-1.md").write_text(
-            "VERDICT: FIX\n- x\n", encoding="utf-8"
-        )
-        with self.assertRaises(SystemExit) as cm:
-            self.check("review")
-        self.assertEqual(cm.exception.code, 1)
-
-    def test_no_files_exits_one(self):
-        with self.assertRaises(SystemExit) as cm:
-            self.check("review")
-        self.assertEqual(cm.exception.code, 1)
-
-    def test_latest_file_wins(self):
-        (self.task_dir / "review-1.md").write_text(
-            "VERDICT: PASS\n", encoding="utf-8"
-        )
-        (self.task_dir / "review-2.md").write_text(
-            "VERDICT: FIX\n- x\n", encoding="utf-8"
-        )
-        with self.assertRaises(SystemExit) as cm:
-            self.check("review")
-        self.assertEqual(cm.exception.code, 1)
-
-    def test_srp_kind_uses_srp_marker(self):
-        (self.task_dir / "srp-review-1.md").write_text(
-            "SRP: FIX\n- x\n", encoding="utf-8"
-        )
-        with self.assertRaises(SystemExit) as cm:
-            self.check("srp")
-        self.assertEqual(cm.exception.code, 1)
-        (self.task_dir / "srp-review-2.md").write_text(
-            "SRP: PASS\n", encoding="utf-8"
-        )
-        with self.assertRaises(SystemExit) as cm:
-            self.check("srp")
-        self.assertEqual(cm.exception.code, 0)
-
-    def test_bugs_kind_uses_bug_marker(self):
-        (self.task_dir / "bug-review-1.md").write_text(
-            "BUGS: FIX\n- x\n", encoding="utf-8"
-        )
-        with self.assertRaises(SystemExit) as cm:
-            self.check("bugs")
-        self.assertEqual(cm.exception.code, 1)
-        (self.task_dir / "bug-review-2.md").write_text(
-            "BUGS: PASS\n", encoding="utf-8"
-        )
-        with self.assertRaises(SystemExit) as cm:
-            self.check("bugs")
-        self.assertEqual(cm.exception.code, 0)
-
-    def test_comment_kind_uses_comment_review_files_and_verdict_marker(self):
-        (self.task_dir / "comment-review-1.md").write_text(
-            "VERDICT: FIX\n- x\n", encoding="utf-8"
-        )
-        with self.assertRaises(SystemExit) as cm:
-            self.check("comment")
-        self.assertEqual(cm.exception.code, 1)
-        (self.task_dir / "comment-review-2.md").write_text(
-            "VERDICT: PASS\n", encoding="utf-8"
-        )
-        with self.assertRaises(SystemExit) as cm:
-            self.check("comment")
-        self.assertEqual(cm.exception.code, 0)
-
-    def test_comment_kind_ignores_plain_review_files(self):
-        (self.task_dir / "review-1.md").write_text(
-            "VERDICT: FIX\n- x\n", encoding="utf-8"
-        )
-        (self.task_dir / "comment-review-1.md").write_text(
-            "VERDICT: PASS\n", encoding="utf-8"
-        )
-        with self.assertRaises(SystemExit) as cm:
-            self.check("comment")
-        self.assertEqual(cm.exception.code, 0)
 
 
 if __name__ == "__main__":

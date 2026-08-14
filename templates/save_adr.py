@@ -4,7 +4,6 @@
 Usage:
   save_adr.py save <state_dir> <task_id> <adr_dir> <run_agent>
   save_adr.py sync <state_dir> <task_id>
-  save_adr.py check-review <state_dir> <task_id> <kind>
 
 <task_id> may be empty: it is then resolved through the
 <state_dir>/tasks/current symlink (see generate-task-id in the workflow).
@@ -17,6 +16,9 @@ fails if the planner still refuses. The saved path is written to
 
 sync rewrites the saved ADR's heading to the number already in its filename
 (used after the review loop amends adr.md).
+
+The review-loop verdict gate lives in check_review.py; both scripts share
+task_utils.py (task-dir resolution).
 """
 
 from __future__ import annotations
@@ -28,6 +30,8 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+
+from task_utils import resolve_task_dir
 
 HEADING_RE = re.compile(r"^#\s*ADR(?:\s*-\s*\d+)?\s*:\s*(.+)$", re.M)
 SLUG_MISSING_ERROR = (
@@ -92,24 +96,6 @@ def rewrite_heading(text: str, num: str) -> str:
         text,
         count=1,
     )
-
-
-def resolve_task_dir(state_dir: str, task_id: str) -> Path:
-    # task_id is usually generated at runtime by the generate-task-id step and
-    # linked as <state_dir>/tasks/current -> tasks/<id>. When the workflow does
-    # not know the id (empty string), resolve it through that symlink so all
-    # steps agree on one id without templating it into every path.
-    tasks = Path(state_dir) / "tasks"
-    if task_id:
-        return tasks / task_id
-    current = tasks / "current"
-    task_dir = current.resolve()
-    if not task_dir.exists() or task_dir == current:
-        sys.exit(
-            f"error: {current} does not point to a task directory; run the "
-            "pipeline from the start or pass an explicit task_id"
-        )
-    return task_dir
 
 
 def _ask_planner_for_slug(adr_path: Path, run_agent: str, task_id: str) -> None:
@@ -199,37 +185,6 @@ def cmd_sync(args: argparse.Namespace) -> None:
     print("adr synced: " + str(target))
 
 
-def cmd_check_review(args: argparse.Namespace) -> None:
-    # Shared verdict helper for the review loops (review, srp and comment kinds):
-    # exits 0 when the LATEST <kind>-review-N.md starts with its PASS marker, 1
-    # otherwise (mirrors the old shell chain `ls | sort -V | tail -1 && head -1 |
-    # grep`). Always prints the latest file path (or nothing) so the pass-check
-    # steps can report it.
-    task_dir = resolve_task_dir(args.state_dir, args.task_id)
-    # Files are named review-N.md, srp-review-N.md, bug-review-N.md and
-    # comment-review-N.md.
-    if args.kind == "srp":
-        prefix = "srp-review"
-        marker = "SRP: PASS"
-    elif args.kind == "bugs":
-        prefix = "bug-review"
-        marker = "BUGS: PASS"
-    elif args.kind == "comment":
-        prefix = "comment-review"
-        marker = "VERDICT: PASS"
-    else:
-        prefix = "review"
-        marker = "VERDICT: PASS"
-    files = sorted(task_dir.glob(f"{prefix}-*.md"))
-    latest = files[-1] if files else None
-    if latest is not None:
-        print(str(latest))
-    ok = latest is not None and latest.read_text(
-        encoding="utf-8"
-    ).splitlines()[0].strip() == marker
-    sys.exit(0 if ok else 1)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -241,17 +196,11 @@ def main(argv: list[str] | None = None) -> int:
     p_sync = sub.add_parser("sync")
     p_sync.add_argument("state_dir")
     p_sync.add_argument("task_id")
-    p_check = sub.add_parser("check-review")
-    p_check.add_argument("state_dir")
-    p_check.add_argument("task_id")
-    p_check.add_argument("kind", choices=("review", "srp", "bugs", "comment"))
     args = parser.parse_args(argv)
     if args.command == "save":
         cmd_save(args)
-    elif args.command == "sync":
-        cmd_sync(args)
     else:
-        cmd_check_review(args)
+        cmd_sync(args)
     return 0
 
 

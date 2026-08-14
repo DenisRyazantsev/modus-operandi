@@ -57,8 +57,22 @@ def render_run_pipeline(paths: Paths) -> None:
     paths["run_pipeline"].chmod(0o755)
 
 
-def render_save_adr(paths: Paths) -> None:
-    shutil.copy2(TEMPLATES_DIR / "save_adr.py", paths["save_adr"])
+def render_name_task(cfg: dict[str, Any], paths: Paths) -> None:
+    use_serve = cfg["workflow"]["use_serve"]
+    serve_attach = "--attach http://localhost:4096" if use_serve else ""
+    render_file(
+        TEMPLATES_DIR / "name-task.sh.tpl",
+        paths["name_task"],
+        {"serve_attach": serve_attach},
+    )
+    paths["name_task"].chmod(0o755)
+
+
+def render_adr_scripts(paths: Paths) -> None:
+    # save_adr.py and check_review.py both import task_utils.py, so the three
+    # scripts must be copied together to stay importable from scripts/.
+    for key in ("task_utils", "check_review", "save_adr"):
+        shutil.copy2(TEMPLATES_DIR / f"{key}.py", paths[key])
 
 
 def render_workflow(cfg: dict[str, Any], paths: Paths) -> None:
@@ -82,7 +96,9 @@ def render_workflow(cfg: dict[str, Any], paths: Paths) -> None:
         paths["workflow"],
         {
             "run_agent": str(paths["run_agent"]),
+            "name_task": str(paths["name_task"]),
             "save_adr": str(paths["save_adr"]),
+            "check_review": str(paths["check_review"]),
             "state_dir": workflow["state_dir"],
             "adr_dir": workflow["adr_dir"],
             "step_timeout": str(workflow["shell_timeout"]),
@@ -106,7 +122,7 @@ def render_review_workflow(cfg: dict[str, Any], paths: Paths) -> None:
         paths["review_workflow"],
         {
             "run_agent": str(paths["run_agent"]),
-            "save_adr": str(paths["save_adr"]),
+            "check_review": str(paths["check_review"]),
             "state_dir": workflow["state_dir"],
             "step_timeout": str(workflow["shell_timeout"]),
             "max_fix_iterations": str(workflow["max_fix_iterations"]),

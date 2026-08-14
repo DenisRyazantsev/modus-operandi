@@ -100,7 +100,10 @@ class InstallerTest(unittest.TestCase):
             ".config/opencode/agent/planner.md",
             ".config/opencode/agent/executor.md",
             ".config/opencode/scripts/run-agent.sh",
+            ".config/opencode/scripts/name-task.sh",
             ".config/opencode/scripts/save_adr.py",
+            ".config/opencode/scripts/check_review.py",
+            ".config/opencode/scripts/task_utils.py",
             ".config/spec-kit-llm-client/config.yml",
             ".config/spec-kit-llm-client/config.example.yml",
             ".config/spec-kit-llm-client/adr-pipeline.yml",
@@ -109,6 +112,9 @@ class InstallerTest(unittest.TestCase):
             self.assertTrue((self.home / rel).exists(), rel)
         self.assertTrue(
             os.access(self.home / ".config/opencode/scripts/run-agent.sh", os.X_OK)
+        )
+        self.assertTrue(
+            os.access(self.home / ".config/opencode/scripts/name-task.sh", os.X_OK)
         )
 
     def test_reinstall_preserves_user_config(self):
@@ -231,7 +237,8 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("do-while", workflow)
         self.assertIn('condition: "{{ steps.verdict.output.exit_code != 0 }}"', workflow)
         self.assertIn("continue_on_error: true", workflow)
-        self.assertIn("check-review", workflow)
+        self.assertIn("check_review.py", workflow)
+        self.assertIn('check_review.py" check-review', workflow)
         self.assertIn('check-review ".workflow" "{{ inputs.task_id }}" review', workflow)
         self.assertIn("REVIEW OK: final verdict PASS", workflow)
         self.assertIn("WARNING: review loop exhausted", workflow)
@@ -256,7 +263,8 @@ class InstallerTest(unittest.TestCase):
         block = workflow.split("- id: generate-task-id", 1)[1].split(
             "- id: write-adr", 1
         )[0]
-        self.assertIn("run-agent.sh\" name", block)
+        self.assertIn("name-task.sh", block)
+        self.assertNotIn("run-agent.sh\" name", block)
         self.assertIn("date +%Y%m%d-%H%M", block)
         self.assertIn("ln -sfn", block)
         self.assertIn("tasks/current", block)
@@ -414,6 +422,17 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("ps -p", run_agent)
         self.assertIn("grep -q '^opencode'", run_agent)
         self.assertEqual(run_agent.count("session[iI][dD]"), 1)
+        self.assertNotIn("'name'", run_agent)
+
+    def test_name_task_script_rendered(self):
+        self.assertEqual(self.install(), 0)
+        name_task = (
+            self.home / ".config/opencode/scripts/name-task.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("kebab-case", name_task)
+        self.assertIn("executor", name_task)
+        self.assertIn("opencode run", name_task)
+        self.assertNotIn("SESSION", name_task)
 
     def test_slug_sanitization_error_messages(self):
         self.assertEqual(self.install(), 0)
@@ -606,7 +625,10 @@ class InstallerTest(unittest.TestCase):
             ".config/opencode/agent/planner.md",
             ".config/opencode/agent/executor.md",
             ".config/opencode/scripts/run-agent.sh",
+            ".config/opencode/scripts/name-task.sh",
             ".config/opencode/scripts/save_adr.py",
+            ".config/opencode/scripts/check_review.py",
+            ".config/opencode/scripts/task_utils.py",
             ".config/spec-kit-llm-client/adr-pipeline.yml",
             ".config/spec-kit-llm-client/config.example.yml",
         ):
@@ -651,6 +673,7 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("planner", err)
         self.assertIn("executor", err)
         self.assertIn("save_adr.py", err)
+        self.assertIn("check_review.py", err)
 
     def test_verify_workflow_syntax_specify_off_path(self):
         self.assertEqual(self.install(), 0)

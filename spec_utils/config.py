@@ -47,12 +47,19 @@ def build_paths(home: str | Path) -> Paths:
         / "spec-kit-llm-client"
         / "review-pipeline.yml",
         "run_agent": base / ".config" / "opencode" / "scripts" / "run-agent.sh",
+        "name_task": base / ".config" / "opencode" / "scripts" / "name-task.sh",
         "run_pipeline": base
         / ".config"
         / "opencode"
         / "scripts"
         / "run-pipeline.sh",
         "save_adr": base / ".config" / "opencode" / "scripts" / "save_adr.py",
+        "check_review": base
+        / ".config"
+        / "opencode"
+        / "scripts"
+        / "check_review.py",
+        "task_utils": base / ".config" / "opencode" / "scripts" / "task_utils.py",
     }
 
 
@@ -137,23 +144,3 @@ def validate_config(cfg: dict[str, Any]) -> dict[str, Any]:
     if errors:
         raise InstallError("invalid config.yml:\n  " + "\n  ".join(errors))
     return cfg
-
-
-def collect_keys(data: Any, prefix: str = "") -> set[str]:
-    keys: set[str] = set()
-    for key, value in (data or {}).items():
-        full = f"{prefix}.{key}" if prefix else str(key)
-        if isinstance(value, dict):
-            keys.update(collect_keys(value, full))
-        else:
-            keys.add(full)
-    return keys
-
-
-def print_diff_new_options(config_path: str | Path, cfg: dict[str, Any]) -> None:
-    example = deps.yaml.safe_load(CONFIG_EXAMPLE.read_text(encoding="utf-8")) or {}
-    new = collect_keys(example) - collect_keys(cfg)
-    if new:
-        print(f"new options available (not yet set in {config_path}):")
-        for key in sorted(new):
-            print(f"  {key}")

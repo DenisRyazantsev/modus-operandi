@@ -33,7 +33,7 @@ steps:
       if [ -n "{{ inputs.task_id }}" ]; then
       tid="{{ inputs.task_id }}";
       else
-      slug=$$("${run_agent}" name "{{ inputs.feature }}");
+      slug=$$("${name_task}" "{{ inputs.feature }}");
       slug=$$(printf '%s' "$$slug" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$$//' | cut -c1-40);
       [ -n "$$slug" ] || slug=task;
       tid="$$slug-$$(date +%Y%m%d-%H%M)";
@@ -162,7 +162,7 @@ ${approve_adr_verdict}
         type: shell
         continue_on_error: true
         run: >-
-          python3 "${save_adr}" check-review "${state_dir}" "{{ inputs.task_id }}" srp
+          python3 "${check_review}" check-review "${state_dir}" "{{ inputs.task_id }}" srp
 
       - id: srp-fix-branch
         type: if
@@ -180,7 +180,7 @@ ${approve_adr_verdict}
   - id: srp-pass-check
     type: shell
     run: >-
-      if last=$$(python3 "${save_adr}" check-review "${state_dir}" "{{ inputs.task_id }}" srp 2>/dev/null); then
+      if last=$$(python3 "${check_review}" check-review "${state_dir}" "{{ inputs.task_id }}" srp 2>/dev/null); then
       echo "SRP REVIEW OK: final verdict PASS ($$last)";
       else
       echo "WARNING: SRP review loop exhausted ${max_srp_iterations} iterations without 'SRP: PASS' (latest review: $${last:-none}); inspect the latest srp-review file and the code";
@@ -211,7 +211,7 @@ ${approve_adr_verdict}
         type: shell
         continue_on_error: true
         run: >-
-          python3 "${save_adr}" check-review "${state_dir}" "{{ inputs.task_id }}" bugs
+          python3 "${check_review}" check-review "${state_dir}" "{{ inputs.task_id }}" bugs
 
       - id: bug-fix-branch
         type: if
@@ -229,7 +229,7 @@ ${approve_adr_verdict}
   - id: bug-pass-check
     type: shell
     run: >-
-      if last=$$(python3 "${save_adr}" check-review "${state_dir}" "{{ inputs.task_id }}" bugs 2>/dev/null); then
+      if last=$$(python3 "${check_review}" check-review "${state_dir}" "{{ inputs.task_id }}" bugs 2>/dev/null); then
       echo "BUGS REVIEW OK: final verdict PASS ($$last)";
       else
       echo "WARNING: bug review loop exhausted ${max_bug_iterations} iterations without 'BUGS: PASS' (latest review: $${last:-none}); inspect the latest bug-review file and the code";
@@ -260,7 +260,7 @@ ${approve_adr_verdict}
         type: shell
         continue_on_error: true
         run: >-
-          python3 "${save_adr}" check-review "${state_dir}" "{{ inputs.task_id }}" review
+          python3 "${check_review}" check-review "${state_dir}" "{{ inputs.task_id }}" review
 
       - id: fix-branch
         type: if
@@ -290,7 +290,7 @@ ${approve_adr_verdict}
   - id: pass-check
     type: shell
     run: >-
-      if last=$$(python3 "${save_adr}" check-review "${state_dir}" "{{ inputs.task_id }}" review 2>/dev/null); then
+      if last=$$(python3 "${check_review}" check-review "${state_dir}" "{{ inputs.task_id }}" review 2>/dev/null); then
       echo "REVIEW OK: final verdict PASS ($$last)";
       else
       echo "WARNING: review loop exhausted ${max_fix_iterations} iterations without 'VERDICT: PASS' (latest review: $${last:-none}); inspect the latest review file and the code";
@@ -333,7 +333,7 @@ ${approve_adr_verdict}
         type: shell
         continue_on_error: true
         run: >-
-          python3 "${save_adr}" check-review "${state_dir}" "{{ inputs.task_id }}" comment
+          python3 "${check_review}" check-review "${state_dir}" "{{ inputs.task_id }}" comment
 
       - id: comment-fix-branch
         type: if
@@ -353,7 +353,7 @@ ${approve_adr_verdict}
   - id: comment-pass-check
     type: shell
     run: >-
-      if last=$$(python3 "${save_adr}" check-review "${state_dir}" "{{ inputs.task_id }}" comment 2>/dev/null); then
+      if last=$$(python3 "${check_review}" check-review "${state_dir}" "{{ inputs.task_id }}" comment 2>/dev/null); then
       echo "COMMENT REVIEW OK: final verdict PASS ($$last)";
       else
       echo "WARNING: comment review loop exhausted ${max_comment_iterations} iterations without 'VERDICT: PASS' (latest review: $${last:-none}); inspect the latest comment-review file and the code";

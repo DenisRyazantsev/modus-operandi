@@ -70,7 +70,8 @@ The installer:
 1. checks prerequisites (python3, opencode, network when needed);
 2. installs `specify-cli` (uv → pipx → pip) and PyYAML if missing;
 3. creates `~/.config/opencode/agent/{planner,executor}.md`,
-   `~/.config/opencode/scripts/run-agent.sh` and
+   `~/.config/opencode/scripts/` (`run-agent.sh`, `name-task.sh`,
+   `save_adr.py`, `check_review.py`, `task_utils.py`) and
    `~/.config/spec-kit-llm-client/{config.yml,adr-pipeline.yml,review-pipeline.yml}`;
 4. validates everything (agents visible to opencode, workflow accepted by the
    spec-kit engine, `run-agent.sh` executable).
@@ -207,7 +208,7 @@ the workflow itself never hardcodes it. Steps continue the same session, so the
 agents keep their context between steps. Resuming a run (same id) resumes the same
 sessions; a new run (new auto-generated id) starts fresh ones.
 
-The `run-agent.sh name "<feature>"` subcommand is a one-shot (no session) call that
+The `name-task.sh "<feature>"` script is a one-shot (no session) call that
 asks the executor for a short English kebab-case slug — it feeds
 `generate-task-id` when the task id is not given explicitly.
 
@@ -277,8 +278,10 @@ the executor applies the findings until it passes or
 review files (`srp-review-N.md`, `bug-review-N.md`, `review-N.md`,
 `comment-review-N.md`) so the loops and verdicts never interfere.
 
-The loop verdict checks the **latest** review file only (`sort -V`):
-`last=$(ls -1 .../review-*.md 2>/dev/null | sort -V | tail -1) && head -1 "$last" | grep -q '^VERDICT: PASS'`.
+The loop verdict checks the **latest** review file only — the installed
+`check_review.py` script (`~/.config/opencode/scripts/check_review.py`) picks
+the highest `*-review-N.md` and exits 0 only when its first line is the PASS
+marker for that kind.
 
 ## Security notes
 
@@ -323,11 +326,24 @@ yes). Projects where you ran `--register` keep their installed copy — remove i
 ```
 install.py                  entry point
 config.example.yml          reference config (English comments)
+spec_utils/
+  cli.py                    argument parsing, flag validation, --update diff
+  config.py                 paths, defaults, config.yml loading and validation
+  deps.py                   python/uv/pip/specify/pyyaml install AND uninstall
+  register.py               --register: install workflows into a Spec Kit project
+  uninstall.py              --uninstall: remove installed files and dependencies
+  render.py                 render agents, scripts and workflows
+  verify.py                 validate the installed pipeline
 templates/
   planner.md.tpl            planner agent (strong model)
   executor.md.tpl           executor agent (cheap model)
   adr-pipeline.yml.tpl      spec-kit workflow
-  run-agent.sh.tpl          session glue
+  review-pipeline.yml.tpl   review-only workflow
+  run-agent.sh.tpl          session glue (planner/executor roles)
+  name-task.sh.tpl          one-shot task-slug generator (generate-task-id)
+  save_adr.py               release/sync an ADR (save, sync)
+  check_review.py           verdict gate for the review loops (review/srp/bugs/comment)
+  task_utils.py             shared helpers (task-dir resolution)
   gitignore.snippet         recommended .gitignore lines
 tests/test_install.py       smoke tests (unittest, all through --home)
 ```
