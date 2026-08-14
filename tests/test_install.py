@@ -265,11 +265,61 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("deviation.md", workflow)
         self.assertIn("## Amendments", workflow)
         self.assertIn("adr-saved.txt", workflow)
+        block = workflow.split("- id: sync-adr", 1)[1].split("\n  - id:", 1)[0]
+        self.assertIn("set -euo pipefail", block)
+        self.assertLess(block.index("python3 - <<'PY'"), block.index("rm -f"))
+        self.assertIn("timeout: 7200", block)
         sync_index = workflow.index("- id: sync-adr")
         pass_index = workflow.index("- id: pass-check")
         review_loop_index = workflow.index("- id: review-loop")
         self.assertLess(review_loop_index, sync_index)
         self.assertLess(sync_index, pass_index)
+
+    def test_workflow_approval_gate_after_loop(self):
+        self.assertEqual(self.install(), 0)
+        workflow = (
+            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("- id: adr-unapproved", workflow)
+        self.assertIn("- id: adr-approval-gate", workflow)
+        self.assertIn("options: [approve, abort]", workflow)
+        block = workflow.split("- id: adr-unapproved", 1)[1].split("\n  - id:", 1)[0]
+        self.assertIn("{{ steps.adr-gate.output.choice != 'approve' }}", block)
+        loop_index = workflow.index("- id: adr-loop")
+        unapproved_index = workflow.index("- id: adr-unapproved")
+        save_index = workflow.index("- id: save-adr")
+        self.assertLess(loop_index, unapproved_index)
+        self.assertLess(unapproved_index, save_index)
+
+    def test_workflow_validate_task_id(self):
+        self.assertEqual(self.install(), 0)
+        workflow = (
+            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("- id: validate-task-id", workflow)
+        self.assertIn("'^[A-Za-z0-9_-]+$'", workflow)
+        self.assertLess(workflow.index("validate-task-id"), workflow.index("write-adr"))
+        run_agent = (
+            self.home / ".config/opencode/scripts/run-agent.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("^[A-Za-z0-9_-]+$", run_agent)
+
+    def test_run_agent_guards(self):
+        self.assertEqual(self.install(), 0)
+        run_agent = (
+            self.home / ".config/opencode/scripts/run-agent.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("--task) [ $# -ge 2 ] || usage", run_agent)
+        self.assertIn("ps -p", run_agent)
+        self.assertIn("grep -q '^opencode'", run_agent)
+
+    def test_slug_sanitization_error_messages(self):
+        self.assertEqual(self.install(), 0)
+        workflow = (
+            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("must contain ASCII letters", workflow)
+        self.assertIn("w[:60]", workflow)
 
     def test_workflow_adr_revise_loop(self):
         self.assertEqual(self.install(), 0)
@@ -288,10 +338,14 @@ class InstallerTest(unittest.TestCase):
             self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
         ).read_text(encoding="utf-8")
         for step in ("write-adr", "adr-revise", "executor-questions",
-                     "planner-answers", "implement", "review", "fix"):
+                     "planner-answers", "implement", "review", "fix",
+                     "sync-adr", "save-adr"):
             block = workflow.split("- id: %s" % step, 1)[1].split("\n  - id:", 1)[0]
             self.assertIn("timeout: 7200", block, step)
-        self.assertNotIn("timeout", workflow.split("- id: verdict", 1)[1])
+        for step in ("verdict", "pass-check", "adr-feedback-clear",
+                     "validate-task-id"):
+            block = workflow.split("- id: %s" % step, 1)[1].split("\n  - id:", 1)[0]
+            self.assertNotIn("timeout", block, step)
 
     def test_placeholder_config_is_rejected(self):
         self.assertEqual(self.install(), 0)
@@ -308,6 +362,82 @@ class InstallerTest(unittest.TestCase):
         rc, err = self.install_with_capture()
         self.assertEqual(rc, 1)
         self.assertIn("placeholder", err)
+
+    def test_malformed_config_reports_error_not_traceback(self):
+        self.assertEqual(self.install(), 0)
+        self.write_config("models: [\n")
+        rc, err = self.install_with_capture()
+        self.assertEqual(rc, 1)
+        self.assertIn("error:", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_flag_conflicts_rejected(self):
+        cases = [
+            ["--uninstall", "--update"],
+            ["--register", "--uninstall"],
+            ["--register", "--update"],
+        ]
+        for extra in cases:
+            rc, err = self.run_main(["--home", str(self.home), *extra])
+            self.assertEqual(rc, 1, extra)
+            self.assertIn("error:", err)
+
+    def test_specify_candidates_finds_local_bin(self):
+        (self.home / ".local" / "bin").mkdir(parents=True)
+        (self.home / ".local" / "bin" / "specify").touch()
+        with mock.patch.object(install.Path, "home", return_value=self.home):
+            self.assertIn(
+                str(self.home / ".local/bin/specify"),
+                install._specify_candidates(),
+            )
+
+    def test_workflow_check_tolerates_stdout_message(self):
+        def run_stdout(cmd, cwd=None, env=None, check=True):
+            if cmd[1:3] == ["workflow", "run"]:
+                return FakeResult(
+                    1, "Error: Required input 'feature' not provided.\n", ""
+                )
+            return make_run()(cmd, cwd, env, check)
+
+        with mock.patch.object(install, "run", side_effect=run_stdout):
+            self.assertEqual(self.install(), 0)
+
+    def test_workflow_check_tolerates_lowercase_message(self):
+        def run_lower(cmd, cwd=None, env=None, check=True):
+            if cmd[1:3] == ["workflow", "run"]:
+                return FakeResult(
+                    1, "", "error: required input 'feature' not provided.\n"
+                )
+            return make_run()(cmd, cwd, env, check)
+
+        with mock.patch.object(install, "run", side_effect=run_lower):
+            self.assertEqual(self.install(), 0)
+
+    def test_uninstall_removes_files_keeps_config(self):
+        self.assertEqual(self.install(), 0)
+        rc, _ = self.run_main(["--home", str(self.home), "--uninstall", "--yes"])
+        self.assertEqual(rc, 0)
+        for rel in (
+            ".config/opencode/agent/planner.md",
+            ".config/opencode/agent/executor.md",
+            ".config/opencode/scripts/run-agent.sh",
+            ".config/spec-kit-llm-client/adr-pipeline.yml",
+            ".config/spec-kit-llm-client/config.example.yml",
+        ):
+            self.assertFalse((self.home / rel).exists(), rel)
+        self.assertTrue(
+            (self.home / ".config/spec-kit-llm-client/config.yml").exists()
+        )
+
+    def test_uninstall_prompts_declined_on_eof(self):
+        self.assertEqual(self.install(), 0)
+        with mock.patch("builtins.input", side_effect=EOFError):
+            rc, _ = self.run_main(["--home", str(self.home), "--uninstall"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            [cmd for cmd in self.records if "uninstall" in cmd and cmd[0] != "uv"],
+            [],
+        )
 
     def install_with_capture(self):
         return self.run_main(["--home", str(self.home)])

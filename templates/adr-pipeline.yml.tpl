@@ -18,6 +18,13 @@ inputs:
 ${verdict_inputs_decl}
 
 steps:
+  - id: validate-task-id
+    type: shell
+    run: >-
+      if ! printf '%s' "{{ inputs.task_id }}" | grep -qE '^[A-Za-z0-9_-]+$$'; then
+      echo "error: task_id '{{ inputs.task_id }}' contains unsupported characters; use only letters, digits, '_' or '-'" >&2; exit 1;
+      fi
+
   - id: write-adr
     type: shell
     timeout: ${step_timeout}
@@ -61,6 +68,20 @@ ${approve_adr_verdict}
             type: shell
             run: "rm -f ${state_dir}/tasks/{{ inputs.task_id }}/feedback.md"
 
+  - id: adr-unapproved
+    type: if
+    condition: "{{ steps.adr-gate.output.choice != 'approve' }}"
+    then:
+      - id: adr-approval-gate
+        type: gate
+        message: >-
+          The ADR was not approved within the review rounds (last choice:
+          {{ steps.adr-gate.output.choice }}). Approve it to save the ADR
+          into ${adr_dir}/, or abort the run.
+        options: [approve, abort]
+        on_reject: abort
+        show_file: "${state_dir}/tasks/{{ inputs.task_id }}/adr.md"
+
   - id: save-adr
     type: shell
     timeout: ${step_timeout}
@@ -84,10 +105,13 @@ ${approve_adr_verdict}
           if read_slug() is None:
               raise SystemExit("error: adr.md still has no 'slug' field after the planner was asked to add it. Add a short 2-3 word ENGLISH summary in kebab-case (e.g. 'slug: prod-validation-splits') to the frontmatter manually and resume the run")
       slug = re.sub(r"[^a-z0-9-]", "-", read_slug().lower()).strip("-")
+      if not re.search(r"[a-z]", slug):
+          raise SystemExit("error: slug must contain ASCII letters (English), e.g. 'slug: prod-validation-splits'")
       slug = "-".join(w for w in slug.split("-") if w)
       words = slug.split("-")
       slug = ""
       for w in words:
+          w = w[:60]
           if len(slug) + len(w) + (1 if slug else 0) > 60:
               break
           slug = w if not slug else slug + "-" + w
@@ -186,7 +210,9 @@ ${approve_adr_verdict}
 
   - id: sync-adr
     type: shell
+    timeout: ${step_timeout}
     run: |
+      set -euo pipefail
       if [ -f "${state_dir}/tasks/{{ inputs.task_id }}/deviation.md" ]; then
       "${run_agent}" planner "Read ${state_dir}/tasks/{{ inputs.task_id }}/deviation.md and ${state_dir}/tasks/{{ inputs.task_id }}/adr.md. Update adr.md so it reflects the recorded deviation: append an '## Amendments' section (do not rewrite the Decision) noting what changed and why." --task {{ inputs.task_id }}
       python3 - <<'PY'

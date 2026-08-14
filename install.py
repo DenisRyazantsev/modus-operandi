@@ -79,6 +79,19 @@ def parse_specify_version(text):
     return (int(m.group(1)), int(m.group(2)))
 
 
+def _specify_candidates():
+    exe = "specify.exe" if os.name == "nt" else "specify"
+    candidates = []
+    for base in (
+        Path.home() / ".local" / "bin",
+        Path.home() / ".local" / "share" / "uv" / "tools" / "specify-cli" / "bin",
+    ):
+        candidate = base / exe
+        if candidate.exists():
+            candidates.append(str(candidate))
+    return candidates
+
+
 def get_specify_version():
     path = find_in_path("specify")
     if not path:
@@ -87,6 +100,19 @@ def get_specify_version():
     if result.returncode != 0:
         return None
     return parse_specify_version(result.stdout)
+
+
+def latest_specify_version():
+    for path in _specify_candidates() + [find_in_path("specify")]:
+        if not path:
+            continue
+        result = run([path, "--version"], check=False)
+        if result.returncode != 0:
+            continue
+        version = parse_specify_version(result.stdout)
+        if version:
+            return version, path
+    return None, None
 
 
 def _in_venv():
@@ -152,18 +178,35 @@ def ensure_specify():
         if not path:
             continue
         if tool == "uv":
-            run([path, "tool", "install", "specify-cli"])
+            result = run([path, "tool", "install", "specify-cli"], check=False)
         elif tool == "pipx":
-            run([path, "install", "specify-cli"])
+            result = run([path, "install", "specify-cli"], check=False)
         else:
-            run([path, "install", "--user", "specify-cli"])
+            result = run([path, "install", "--user", "specify-cli"], check=False)
+        if result.returncode != 0:
+            continue
         if get_specify_version():
+            return
+        version, binary = latest_specify_version()
+        if version and version >= MIN_SPECIFY_VERSION:
+            print(
+                "warning: specify-cli installed at %s but not on PATH; "
+                "add it to PATH (e.g. ~/.local/bin)" % binary
+            )
             return
     python = find_in_path("python3")
     if python and _pip_works(python):
-        run([python, "-m", "pip", "install", "--user", "specify-cli"])
-        if get_specify_version():
-            return
+        result = run([python, "-m", "pip", "install", "--user", "specify-cli"], check=False)
+        if result.returncode == 0:
+            if get_specify_version():
+                return
+            version, binary = latest_specify_version()
+            if version and version >= MIN_SPECIFY_VERSION:
+                print(
+                    "warning: specify-cli installed at %s but not on PATH; "
+                    "add it to PATH (e.g. ~/.local/bin)" % binary
+                )
+                return
     raise InstallError(
         "could not install specify-cli; install uv "
         "(https://docs.astral.sh/uv/) and rerun"
@@ -199,7 +242,7 @@ def ensure_config(paths):
     shutil.copy2(CONFIG_EXAMPLE, paths["config_example"])
     if not paths["config"].exists():
         shutil.copy2(CONFIG_EXAMPLE, paths["config"])
-        print("created %s - edit it and rerun install.py" % paths["config"])
+        print("created %s with defaults (edit it to change models)" % paths["config"])
 
 
 def load_config(path):
@@ -328,7 +371,8 @@ def validate_install(paths):
             cwd=tmp,
             check=False,
         )
-        if result.returncode == 0 or "Required input" not in result.stderr:
+        combined = ((result.stderr or "") + "\n" + (result.stdout or "")).lower()
+        if result.returncode == 0 or "required input" not in combined:
             raise InstallError(
                 "workflow syntax check failed:\n%s"
                 % ((result.stderr or result.stdout).strip())
@@ -363,7 +407,7 @@ def print_instructions(paths):
         "       specify workflow run adr-pipeline -i feature=\"...\"\n"
         "  3. If the run pauses at a gate, review and resume with:\n"
         "       specify workflow resume <run_id>\n"
-        % (paths["config"], paths["workflow"], Path(sys.argv[0]).name)
+        % (paths["config"], paths["workflow"], REPO_ROOT / "install.py")
     )
 
 
@@ -389,6 +433,22 @@ def confirm(prompt):
         return False
 
 
+def _uninstall_pip_package(package):
+    attempts = []
+    python = find_in_path("python3")
+    if python and _pip_works(python):
+        attempts.append([python, "-m", "pip", "uninstall", "-y", package])
+    pip3 = find_in_path("pip3")
+    if pip3:
+        attempts.append([pip3, "uninstall", "-y", package])
+        attempts.append([pip3, "uninstall", "-y", "--user", package])
+    for cmd in attempts:
+        result = run(cmd, check=False)
+        if result.returncode == 0:
+            return True
+    return False
+
+
 def do_uninstall(paths, yes):
     removed = []
     for path in (
@@ -403,15 +463,18 @@ def do_uninstall(paths, yes):
             removed.append(str(path))
     if removed:
         print("removed:\n  " + "\n  ".join(removed))
+    for directory in (paths["agents"], paths["scripts"], paths["sklc"]):
+        try:
+            directory.rmdir()
+        except OSError:
+            pass
     print("kept your configuration: %s" % paths["config"])
     if yes or confirm("uninstall specify-cli? [y/N] "):
         uv = find_in_path("uv")
         if uv and get_specify_version():
             run([uv, "tool", "uninstall", "specify-cli"], check=False)
     if yes or confirm("uninstall PyYAML? [y/N] "):
-        pip = find_in_path("pip3")
-        if pip:
-            run([pip, "uninstall", "-y", "pyyaml"], check=False)
+        _uninstall_pip_package("pyyaml")
 
 
 def collect_keys(data, prefix=""):
@@ -440,8 +503,14 @@ def run_install(args):
     if args.register:
         if args.home:
             raise InstallError("--register cannot be combined with --home")
+        if args.uninstall or args.update:
+            raise InstallError(
+                "--register cannot be combined with --uninstall/--update"
+            )
         do_register(paths)
         return
+    if args.uninstall and args.update:
+        raise InstallError("--uninstall cannot be combined with --update")
     if args.uninstall:
         do_uninstall(paths, args.yes)
         return
@@ -500,6 +569,14 @@ def main(argv=None):
     except InstallError as exc:
         print("error: %s" % exc, file=sys.stderr)
         return 1
+    except (OSError, ValueError, KeyError) as exc:
+        print("error: %s" % exc, file=sys.stderr)
+        return 1
+    except Exception as exc:
+        if yaml is not None and isinstance(exc, yaml.YAMLError):
+            print("error: %s" % exc, file=sys.stderr)
+            return 1
+        raise
     return 0
 
 

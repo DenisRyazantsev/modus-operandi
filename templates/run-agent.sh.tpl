@@ -30,11 +30,16 @@ TASK_ID=""
 RESET=0
 while [ $$# -gt 0 ]; do
   case "$$1" in
-    --task) TASK_ID="$$2"; shift 2 ;;
+    --task) [ $$# -ge 2 ] || usage; TASK_ID="$$2"; shift 2 ;;
     --reset) RESET=1; shift ;;
     *) usage ;;
   esac
 done
+
+if [ -n "$$TASK_ID" ] && ! printf '%s' "$$TASK_ID" | grep -qE '^[A-Za-z0-9_-]+$$'; then
+  echo "error: invalid --task value '$$TASK_ID'; use only letters, digits, '_' or '-'" >&2
+  exit 2
+fi
 
 STATE_DIR="$${SKLC_STATE_DIR:-.workflow}"
 ATTACH_FLAG="${serve_attach}"
@@ -57,8 +62,10 @@ fi
 if [ -f "$$PID_FILE" ]; then
   OLD_PID="$$(cat "$$PID_FILE" 2>/dev/null || true)"
   if [ -n "$$OLD_PID" ] && kill -0 "$$OLD_PID" 2>/dev/null; then
-    echo "warning: killing stale opencode process $$OLD_PID for role '$$ROLE'" >&2
-    kill "$$OLD_PID" 2>/dev/null || true
+    if ps -p "$$OLD_PID" -o comm= 2>/dev/null | grep -q '^opencode'; then
+      echo "warning: killing stale opencode process $$OLD_PID for role '$$ROLE'" >&2
+      kill "$$OLD_PID" 2>/dev/null || true
+    fi
   fi
   rm -f "$$PID_FILE"
 fi
