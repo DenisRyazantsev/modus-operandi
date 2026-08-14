@@ -169,6 +169,55 @@ ${approve_adr_verdict}
       echo "WARNING: SRP review loop exhausted ${max_srp_iterations} iterations without 'SRP: PASS' (latest review: $${last:-none}); inspect the latest srp-review file and the code";
       fi
 
+  - id: bug-loop
+    type: do-while
+    max_iterations: ${max_bug_iterations}
+    condition: "{{ steps.bug-verdict.output.exit_code != 0 }}"
+    steps:
+      - id: bug-review
+        type: shell
+        timeout: ${step_timeout}
+        run: >-
+          "${run_agent}" planner
+          "Review the git changes for BUGS ONLY: logic errors, wrong conditions,
+          off-by-one and edge cases, unhandled errors, races, broken control flow,
+          wrong types/units, and discrepancies between the implemented behavior and
+          the acceptance criteria in ${state_dir}/tasks/{{ inputs.task_id }}/adr.md.
+          Do NOT review SRP violations, ADR-format compliance, or comment quality
+          (later stages do that). Run git status, then git diff HEAD (includes
+          staged changes). Write ${state_dir}/tasks/{{ inputs.task_id }}/bug-review-N.md
+          (N is the next number after the existing bug-review files) with the first
+          line exactly 'BUGS: PASS' or 'BUGS: FIX' followed by actionable findings."
+          --task {{ inputs.task_id }}
+
+      - id: bug-verdict
+        type: shell
+        continue_on_error: true
+        run: >-
+          python3 "${save_adr}" check-review "${state_dir}" "{{ inputs.task_id }}" bugs
+
+      - id: bug-fix-branch
+        type: if
+        condition: "{{ steps.bug-verdict.output.exit_code != 0 }}"
+        then:
+          - id: bug-fix
+            type: shell
+            timeout: ${step_timeout}
+            run: >-
+              "${run_agent}" executor
+              "Read the latest ${state_dir}/tasks/{{ inputs.task_id }}/bug-review-N.md
+              and fix all its bug findings. Then run the project's tests/linter if
+              available." --task {{ inputs.task_id }}
+
+  - id: bug-pass-check
+    type: shell
+    run: >-
+      if last=$$(python3 "${save_adr}" check-review "${state_dir}" "{{ inputs.task_id }}" bugs 2>/dev/null); then
+      echo "BUGS REVIEW OK: final verdict PASS ($$last)";
+      else
+      echo "WARNING: bug review loop exhausted ${max_bug_iterations} iterations without 'BUGS: PASS' (latest review: $${last:-none}); inspect the latest bug-review file and the code";
+      fi
+
   - id: review-loop
     type: do-while
     max_iterations: ${max_fix_iterations}
@@ -228,4 +277,67 @@ ${approve_adr_verdict}
       echo "REVIEW OK: final verdict PASS ($$last)";
       else
       echo "WARNING: review loop exhausted ${max_fix_iterations} iterations without 'VERDICT: PASS' (latest review: $${last:-none}); inspect the latest review file and the code";
+      fi
+
+  - id: comment-review-loop
+    type: do-while
+    max_iterations: ${max_comment_iterations}
+    condition: "{{ steps.comment-verdict.output.exit_code != 0 }}"
+    steps:
+      - id: comment-review
+        type: shell
+        timeout: ${step_timeout}
+        run: >-
+          "${run_agent}" planner
+          "Review the git changes for readability 'traps' ONLY: places that are
+          correct but would mislead a reader, NOT bugs. Act as a senior code
+          reviewer opening this file for the first time: find only the spots where
+          a reader would make a wrong assumption about what the code does and why
+          it is written this way. Comment only the WHY, never the WHAT; apply the
+          Chesterton's fence test (don't suggest removing things you don't yet
+          understand); prefer a rename/refactor over a comment; judge against a
+          typical reader of this codebase; if there are no findings return an empty
+          list (noise is worse than silence). Check these triggers in order: magic
+          numbers/constants, workarounds/hacks, non-standard API use, swallowed
+          exceptions, edge cases, business rules inside conditions, implicit
+          invariants, strange optimizations, external constraints, known
+          limitations/tech debt. Run git status, then git diff HEAD (includes
+          staged changes). Write ${state_dir}/tasks/{{ inputs.task_id }}/comment-review-N.md
+          (N is the next number after the existing comment-review files) with the
+          first line exactly 'VERDICT: PASS' or 'VERDICT: FIX'. If PASS, write
+          nothing else. If FIX, list findings in this strict format, one per block:
+          <file:line>
+          Why a reader would be misled: <one sentence>
+          Comment: <1-2 lines, WHY only, in English>
+          Verdict: COMMENT | REFACTOR"
+          --task {{ inputs.task_id }}
+
+      - id: comment-verdict
+        type: shell
+        continue_on_error: true
+        run: >-
+          python3 "${save_adr}" check-review "${state_dir}" "{{ inputs.task_id }}" comment
+
+      - id: comment-fix-branch
+        type: if
+        condition: "{{ steps.comment-verdict.output.exit_code != 0 }}"
+        then:
+          - id: comment-fix
+            type: shell
+            timeout: ${step_timeout}
+            run: >-
+              "${run_agent}" executor
+              "Read the latest ${state_dir}/tasks/{{ inputs.task_id }}/comment-review-N.md
+              and apply all its findings: for each Verdict: COMMENT add the
+              suggested why-comment to the code; for each Verdict: REFACTOR perform
+              the rename/refactor instead of adding a comment. Then run the
+              project's tests/linter if available." --task {{ inputs.task_id }}
+
+  - id: comment-pass-check
+    type: shell
+    run: >-
+      if last=$$(python3 "${save_adr}" check-review "${state_dir}" "{{ inputs.task_id }}" comment 2>/dev/null); then
+      echo "COMMENT REVIEW OK: final verdict PASS ($$last)";
+      else
+      echo "WARNING: comment review loop exhausted ${max_comment_iterations} iterations without 'VERDICT: PASS' (latest review: $${last:-none}); inspect the latest comment-review file and the code";
       fi

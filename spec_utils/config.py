@@ -12,6 +12,8 @@ from . import CONFIG_EXAMPLE, InstallError, Paths, deps
 DEFAULT_STATE_DIR = ".workflow"
 DEFAULT_MAX_FIX_ITERATIONS = 5
 DEFAULT_MAX_SRP_ITERATIONS = 5
+DEFAULT_MAX_BUG_ITERATIONS = 5
+DEFAULT_MAX_COMMENT_ITERATIONS = 5
 DEFAULT_SHELL_TIMEOUT = 7200
 DEFAULT_REASONING = "max"
 DEFAULT_ADR_DIR = "architecture"
@@ -21,6 +23,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "state_dir": DEFAULT_STATE_DIR,
         "max_fix_iterations": DEFAULT_MAX_FIX_ITERATIONS,
         "max_srp_iterations": DEFAULT_MAX_SRP_ITERATIONS,
+        "max_bug_iterations": DEFAULT_MAX_BUG_ITERATIONS,
+        "max_comment_iterations": DEFAULT_MAX_COMMENT_ITERATIONS,
         "shell_timeout": DEFAULT_SHELL_TIMEOUT,
         "adr_dir": DEFAULT_ADR_DIR,
         "human_gates": True,
@@ -101,6 +105,16 @@ def validate_config(cfg: dict[str, Any]) -> dict[str, Any]:
         or workflow["max_srp_iterations"] < 1
     ):
         errors.append("workflow.max_srp_iterations must be an integer >= 1")
+    if (
+        not isinstance(workflow.get("max_bug_iterations"), int)
+        or workflow["max_bug_iterations"] < 1
+    ):
+        errors.append("workflow.max_bug_iterations must be an integer >= 1")
+    if (
+        not isinstance(workflow.get("max_comment_iterations"), int)
+        or workflow["max_comment_iterations"] < 1
+    ):
+        errors.append("workflow.max_comment_iterations must be an integer >= 1")
     if not isinstance(workflow.get("shell_timeout"), int) or workflow["shell_timeout"] < 1:
         errors.append("workflow.shell_timeout must be a positive number of seconds")
     if not re.fullmatch(r"[A-Za-z0-9_./-]+", str(workflow.get("state_dir", ""))):

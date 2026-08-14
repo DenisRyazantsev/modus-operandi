@@ -15,6 +15,8 @@ class ApplyDefaultsTest(unittest.TestCase):
         self.assertEqual(cfg["workflow"]["state_dir"], ".workflow")
         self.assertEqual(cfg["workflow"]["max_fix_iterations"], 5)
         self.assertEqual(cfg["workflow"]["max_srp_iterations"], 5)
+        self.assertEqual(cfg["workflow"]["max_bug_iterations"], 5)
+        self.assertEqual(cfg["workflow"]["max_comment_iterations"], 5)
         self.assertEqual(cfg["workflow"]["shell_timeout"], 7200)
         self.assertEqual(cfg["workflow"]["adr_dir"], "architecture")
         self.assertTrue(cfg["workflow"]["human_gates"])

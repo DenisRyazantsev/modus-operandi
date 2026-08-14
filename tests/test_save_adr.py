@@ -305,6 +305,45 @@ class CmdCheckReviewTest(unittest.TestCase):
             self.check("srp")
         self.assertEqual(cm.exception.code, 0)
 
+    def test_bugs_kind_uses_bug_marker(self):
+        (self.task_dir / "bug-review-1.md").write_text(
+            "BUGS: FIX\n- x\n", encoding="utf-8"
+        )
+        with self.assertRaises(SystemExit) as cm:
+            self.check("bugs")
+        self.assertEqual(cm.exception.code, 1)
+        (self.task_dir / "bug-review-2.md").write_text(
+            "BUGS: PASS\n", encoding="utf-8"
+        )
+        with self.assertRaises(SystemExit) as cm:
+            self.check("bugs")
+        self.assertEqual(cm.exception.code, 0)
+
+    def test_comment_kind_uses_comment_review_files_and_verdict_marker(self):
+        (self.task_dir / "comment-review-1.md").write_text(
+            "VERDICT: FIX\n- x\n", encoding="utf-8"
+        )
+        with self.assertRaises(SystemExit) as cm:
+            self.check("comment")
+        self.assertEqual(cm.exception.code, 1)
+        (self.task_dir / "comment-review-2.md").write_text(
+            "VERDICT: PASS\n", encoding="utf-8"
+        )
+        with self.assertRaises(SystemExit) as cm:
+            self.check("comment")
+        self.assertEqual(cm.exception.code, 0)
+
+    def test_comment_kind_ignores_plain_review_files(self):
+        (self.task_dir / "review-1.md").write_text(
+            "VERDICT: FIX\n- x\n", encoding="utf-8"
+        )
+        (self.task_dir / "comment-review-1.md").write_text(
+            "VERDICT: PASS\n", encoding="utf-8"
+        )
+        with self.assertRaises(SystemExit) as cm:
+            self.check("comment")
+        self.assertEqual(cm.exception.code, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

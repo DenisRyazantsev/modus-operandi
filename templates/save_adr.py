@@ -178,19 +178,30 @@ def cmd_sync(args: argparse.Namespace) -> None:
 
 
 def cmd_check_review(args: argparse.Namespace) -> None:
-    # Shared verdict helper for the review loops (review and srp kinds): exits 0
-    # when the LATEST <kind>-review-N.md starts with its PASS marker, 1 otherwise
-    # (mirrors the old shell chain `ls | sort -V | tail -1 && head -1 | grep`).
-    # Always prints the latest file path (or nothing) so the pass-check steps can
-    # report it.
+    # Shared verdict helper for the review loops (review, srp and comment kinds):
+    # exits 0 when the LATEST <kind>-review-N.md starts with its PASS marker, 1
+    # otherwise (mirrors the old shell chain `ls | sort -V | tail -1 && head -1 |
+    # grep`). Always prints the latest file path (or nothing) so the pass-check
+    # steps can report it.
     task_dir = Path(args.state_dir) / "tasks" / args.task_id
-    # Files are named review-N.md and srp-review-N.md respectively.
-    prefix = "srp-review" if args.kind == "srp" else "review"
+    # Files are named review-N.md, srp-review-N.md, bug-review-N.md and
+    # comment-review-N.md.
+    if args.kind == "srp":
+        prefix = "srp-review"
+        marker = "SRP: PASS"
+    elif args.kind == "bugs":
+        prefix = "bug-review"
+        marker = "BUGS: PASS"
+    elif args.kind == "comment":
+        prefix = "comment-review"
+        marker = "VERDICT: PASS"
+    else:
+        prefix = "review"
+        marker = "VERDICT: PASS"
     files = sorted(task_dir.glob(f"{prefix}-*.md"))
     latest = files[-1] if files else None
     if latest is not None:
         print(str(latest))
-    marker = "SRP: PASS" if args.kind == "srp" else "VERDICT: PASS"
     ok = latest is not None and latest.read_text(
         encoding="utf-8"
     ).splitlines()[0].strip() == marker
@@ -211,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
     p_check = sub.add_parser("check-review")
     p_check.add_argument("state_dir")
     p_check.add_argument("task_id")
-    p_check.add_argument("kind", choices=("review", "srp"))
+    p_check.add_argument("kind", choices=("review", "srp", "bugs", "comment"))
     args = parser.parse_args(argv)
     if args.command == "save":
         cmd_save(args)

@@ -63,6 +63,9 @@ models:
 workflow:
   state_dir: .workflow         # task artifact directory inside a project
   max_fix_iterations: 5        # review-fix loop ceiling
+  max_srp_iterations: 5        # SRP review-fix loop ceiling
+  max_bug_iterations: 5        # bug review-fix loop ceiling
+  max_comment_iterations: 5    # comment (readability) review-fix loop ceiling
   shell_timeout: 7200          # per-step timeout in seconds for agent steps (2h)
   adr_dir: architecture        # directory where approved ADRs are saved
   human_gates: true            # false = gates auto-approve (non-interactive)
@@ -195,22 +198,37 @@ opencode serve
 | `feedback.md` | user | planner | written at the revise gate; cleared after the revision |
 | `review-N.md` | planner | executor, planner | first line exactly `VERDICT: PASS` or `VERDICT: FIX` |
 | `srp-review-N.md` | planner | executor, planner | first line exactly `SRP: PASS` or `SRP: FIX` |
+| `bug-review-N.md` | planner | executor, planner | first line exactly `BUGS: PASS` or `BUGS: FIX` |
+| `comment-review-N.md` | planner | executor, planner | first line exactly `VERDICT: PASS` or `VERDICT: FIX` |
 
 The workflow steps: `write-adr` → `adr-loop` (gate with approve/revise/reject →
 optional feedback revision) → `save-adr` → `executor-questions` →
 `planner-answers` → `implement` → `srp-loop` (`do-while`: SRP review → verdict →
 fix, only for single-responsibility violations) → `srp-pass-check` (reports
-`SRP REVIEW OK` or a `WARNING`) → `review-loop` (`do-while`: review → fix →
+`SRP REVIEW OK` or a `WARNING`) → `bug-loop` (`do-while`: bug review → verdict →
+fix, only for bugs) → `bug-pass-check` (reports `BUGS REVIEW OK` or a `WARNING`)
+→ `review-loop` (`do-while`: review → fix →
 verdict) → `sync-adr` → `pass-check` (reports `REVIEW OK` or
-`WARNING: review loop exhausted`).
+`WARNING: review loop exhausted`) → `comment-review-loop` (`do-while`: comment
+review → verdict → fix, only for readability "traps" — comments about the *why*,
+not bugs) → `comment-pass-check` (reports `COMMENT REVIEW OK` or a `WARNING`).
 
-The review runs in two stages. First `srp-loop` checks the git changes strictly
+The review runs in four stages. First `srp-loop` checks the git changes strictly
 for single-responsibility violations (god classes/functions, mixed concerns);
 the executor fixes the findings and the SRP review repeats until it passes or
 `workflow.max_srp_iterations` is exhausted (a `WARNING` is printed and the run
-continues). Then the main `review-loop` checks the code against the ADR as
-before. Each stage uses its own numbered review files (`srp-review-N.md` vs
-`review-N.md`) so the loops and verdicts never interfere.
+continues). Next `bug-loop` checks the changes strictly for bugs — logic errors,
+wrong conditions, edge cases, unhandled errors, races, and discrepancies between
+the implemented behavior and the acceptance criteria in `adr.md`; fixes repeat
+until `workflow.max_bug_iterations` is exhausted. Then the main `review-loop`
+checks the code against the ADR as before. Finally, after `sync-adr` and
+`pass-check`, `comment-review-loop` checks
+the changes for readability "traps" only — correct but misleading code that
+deserves a *why* comment (never a *what* description) or a rename/refactor — and
+the executor applies the findings until it passes or
+`workflow.max_comment_iterations` is exhausted. Each stage uses its own numbered
+review files (`srp-review-N.md`, `bug-review-N.md`, `review-N.md`,
+`comment-review-N.md`) so the loops and verdicts never interfere.
 
 The loop verdict checks the **latest** review file only (`sort -V`):
 `last=$(ls -1 .../review-*.md 2>/dev/null | sort -V | tail -1) && head -1 "$last" | grep -q '^VERDICT: PASS'`.

@@ -84,5 +84,7 @@ def render_workflow(cfg: dict[str, Any], paths: Paths) -> None:
             "approve_adr_verdict": approve_verdict,
             "max_fix_iterations": str(workflow["max_fix_iterations"]),
             "max_srp_iterations": str(workflow["max_srp_iterations"]),
+            "max_bug_iterations": str(workflow["max_bug_iterations"]),
+            "max_comment_iterations": str(workflow["max_comment_iterations"]),
         },
     )

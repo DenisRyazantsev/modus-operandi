@@ -359,11 +359,13 @@ class InstallerTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         for step in ("write-adr", "adr-revise", "executor-questions",
                      "planner-answers", "implement", "review", "fix",
-                     "sync-adr", "save-adr", "srp-review", "srp-fix"):
+                     "sync-adr", "save-adr", "srp-review", "srp-fix",
+                     "comment-review", "comment-fix"):
             block = workflow.split(f"- id: {step}", 1)[1].split("\n  - id:", 1)[0]
             self.assertIn("timeout: 7200", block, step)
         for step in ("verdict", "pass-check", "adr-feedback-clear",
-                     "validate-task-id", "srp-verdict", "srp-pass-check"):
+                     "validate-task-id", "srp-verdict", "srp-pass-check",
+                     "comment-verdict", "comment-pass-check"):
             block = workflow.split(f"- id: {step}", 1)[1]
             block = block.split("\n      - id:", 1)[0]
             block = block.split("\n  - id:", 1)[0]
@@ -393,6 +395,58 @@ class InstallerTest(unittest.TestCase):
         review_index = workflow.index("- id: review-loop")
         self.assertLess(implement_index, srp_index)
         self.assertLess(srp_check_index, review_index)
+
+    def test_workflow_bug_loop_structure(self):
+        self.assertEqual(self.install(), 0)
+        workflow = (
+            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("- id: bug-loop", workflow)
+        self.assertIn("- id: bug-review", workflow)
+        self.assertIn("- id: bug-verdict", workflow)
+        self.assertIn("- id: bug-fix-branch", workflow)
+        self.assertIn("- id: bug-fix", workflow)
+        self.assertIn("- id: bug-pass-check", workflow)
+        self.assertIn('check-review ".workflow" "{{ inputs.task_id }}" bugs', workflow)
+        self.assertIn("BUGS REVIEW OK: final verdict PASS", workflow)
+        self.assertIn("WARNING: bug review loop exhausted", workflow)
+        self.assertIn("{{ steps.bug-verdict.output.exit_code != 0 }}", workflow)
+        block = workflow.split("- id: bug-loop", 1)[1].split("\n  - id:", 1)[0]
+        self.assertIn("max_iterations: 5", block)
+        self.assertIn("BUGS: FIX", block)
+        self.assertIn("bug-review-N.md", block)
+        self.assertIn("- id: bug-fix-branch", block)
+        srp_check_index = workflow.index("- id: srp-pass-check")
+        bug_index = workflow.index("- id: bug-loop")
+        review_index = workflow.index("- id: review-loop")
+        self.assertLess(srp_check_index, bug_index)
+        self.assertLess(bug_index, review_index)
+
+    def test_workflow_comment_review_loop_structure(self):
+        self.assertEqual(self.install(), 0)
+        workflow = (
+            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("- id: comment-review-loop", workflow)
+        self.assertIn("- id: comment-review", workflow)
+        self.assertIn("- id: comment-verdict", workflow)
+        self.assertIn("- id: comment-fix", workflow)
+        self.assertIn("- id: comment-pass-check", workflow)
+        self.assertIn(
+            'check-review ".workflow" "{{ inputs.task_id }}" comment', workflow
+        )
+        self.assertIn("COMMENT REVIEW OK: final verdict PASS", workflow)
+        self.assertIn("WARNING: comment review loop exhausted", workflow)
+        self.assertIn("{{ steps.comment-verdict.output.exit_code != 0 }}", workflow)
+        block = workflow.split("- id: comment-review-loop", 1)[1].split("\n  - id:", 1)[0]
+        self.assertIn("max_iterations: 5", block)
+        self.assertIn("VERDICT: FIX", block)
+        self.assertIn("Why a reader would be misled:", block)
+        self.assertIn("Verdict: COMMENT | REFACTOR", block)
+        self.assertIn("- id: comment-fix-branch", block)
+        pass_check_index = workflow.index("- id: pass-check")
+        comment_index = workflow.index("- id: comment-review-loop")
+        self.assertLess(pass_check_index, comment_index)
 
     def test_placeholder_config_is_rejected(self):
         self.assertEqual(self.install(), 0)
