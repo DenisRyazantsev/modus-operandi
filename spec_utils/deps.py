@@ -14,6 +14,12 @@ from typing import Any
 
 from . import InstallError
 
+# PyYAML is optional at import time (the installer can install it later via
+# ensure_pyyaml()).  We load it through importlib so the module-level name can
+# be annotated as Any and later rebound to the real module — a plain
+# `try: import yaml / except ImportError: yaml = None` is a type error under
+# strict mypy (a module type is not assignable to None), and rebinding works
+# here because every consumer reads deps.yaml at call time.
 yaml: Any
 try:
     yaml = importlib.import_module("yaml")
@@ -75,6 +81,10 @@ def parse_specify_version(text: str | None) -> tuple[int, int] | None:
 
 
 def _specify_candidates() -> list[str]:
+    # uv tool / pipx / pip --user install binaries into ~/.local/bin (uv keeps
+    # the real copy under ~/.local/share/uv/tools/.../bin). Those paths are NOT
+    # always on PATH, so after an install we must probe them explicitly —
+    # otherwise a successful install would look like a failure.
     exe = "specify.exe" if os.name == "nt" else "specify"
     candidates: list[str] = []
     for base in (
@@ -98,6 +108,10 @@ def get_specify_version() -> tuple[int, int] | None:
 
 
 def latest_specify_version() -> tuple[tuple[int, int] | None, str | None]:
+    # Returns (version, path) of the newest specify-cli found anywhere we could
+    # have installed it — on PATH or in the explicit ~/.local locations. Used by
+    # ensure_specify() to detect an install that succeeded but is invisible to
+    # shutil.which() (binary not on PATH).
     paths = [p for p in _specify_candidates() + [find_in_path("specify")] if p]
     for path in paths:
         result = run([path, "--version"], check=False)

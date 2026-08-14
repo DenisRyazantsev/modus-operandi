@@ -58,9 +58,12 @@ def render_save_adr(paths: Paths) -> None:
 def render_workflow(cfg: dict[str, Any], paths: Paths) -> None:
     workflow = cfg["workflow"]
     if workflow["human_gates"]:
+        # Interactive mode: the ADR gate prompts the human (approve/revise/reject).
         verdict_decl = ""
         approve_verdict = ""
     else:
+        # Non-interactive mode: gate verdict is read from a workflow input that
+        # defaults to "approve", so the run never pauses at the ADR gate.
         verdict_decl = (
             "  adr_verdict:\n"
             '    type: string\n'

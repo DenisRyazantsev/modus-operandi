@@ -50,7 +50,7 @@ def run_install(args: argparse.Namespace) -> None:
     deps.check_prerequisites()
     deps.ensure_pyyaml()
     deps.ensure_specify()
-    for directory in (paths["agents"], paths["scripts"], paths["sklc"]):
+    for directory in (paths["agents"], paths["scripts"], paths["config_dir"]):
         directory.mkdir(parents=True, exist_ok=True)
     config.ensure_config(paths)
     cfg = config.validate_config(
@@ -102,6 +102,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except Exception as exc:
+        # yaml may be None (import failed) — guard before isinstance against a
+        # module that might not exist; anything that is not a YAML parse error
+        # is a real bug and must surface as a traceback.
         if deps.yaml is not None and isinstance(exc, deps.yaml.YAMLError):
             print(f"error: {exc}", file=sys.stderr)
             return 1

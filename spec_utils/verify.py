@@ -30,6 +30,11 @@ def check_workflow_syntax(paths: Paths) -> list[str]:
             check=False,
         )
         combined = ((result.stderr or "") + "\n" + (result.stdout or "")).lower()
+        # `specify workflow run` without -i is our syntax probe: a valid
+        # workflow must fail with "Required input ... not provided". Anything
+        # else (exit 0, a YAML error, an unknown step type) means the file is
+        # broken. Matching is case-insensitive and across stdout+stderr so the
+        # check survives wording/stream changes in specify-cli.
         if result.returncode == 0 or "required input" not in combined:
             return [
                 f"workflow syntax check failed:\n{(result.stderr or result.stdout).strip()}"

@@ -61,7 +61,7 @@ def do_uninstall(paths: Paths, yes: bool) -> None:
             removed.append(str(path))
     if removed:
         print("removed:\n  " + "\n  ".join(removed))
-    for directory in (paths["agents"], paths["scripts"], paths["sklc"]):
+    for directory in (paths["agents"], paths["scripts"], paths["config_dir"]):
         with contextlib.suppress(OSError):
             directory.rmdir()
     print("kept your configuration: {}".format(paths["config"]))

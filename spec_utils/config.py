@@ -34,7 +34,7 @@ def build_paths(home: str | Path) -> Paths:
     return {
         "agents": base / ".config" / "opencode" / "agent",
         "scripts": base / ".config" / "opencode" / "scripts",
-        "sklc": base / ".config" / "spec-kit-llm-client",
+        "config_dir": base / ".config" / "spec-kit-llm-client",
         "config": base / ".config" / "spec-kit-llm-client" / "config.yml",
         "config_example": base / ".config" / "spec-kit-llm-client" / "config.example.yml",
         "workflow": base / ".config" / "spec-kit-llm-client" / "adr-pipeline.yml",

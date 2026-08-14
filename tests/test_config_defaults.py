@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sklc import config
+from spec_utils import config
 
 
 class ApplyDefaultsTest(unittest.TestCase):

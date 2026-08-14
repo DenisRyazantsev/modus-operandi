@@ -18,7 +18,7 @@ Options:
 
 import sys
 
-from sklc.cli import main
+from spec_utils.cli import main
 
 if __name__ == "__main__":
     sys.exit(main())

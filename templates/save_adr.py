@@ -49,9 +49,14 @@ def read_slug(text: str) -> str | None:
 def sanitize_slug(raw: str) -> str:
     if not raw:
         raise ValueError(SLUG_ASCII_ERROR)
+    # Collapse everything non-latin into '-' first so a fully non-ASCII slug
+    # becomes empty and trips the check below instead of producing a weird
+    # filename. A slug must contain at least one English letter.
     ascii_slug = re.sub(r"[^a-z0-9-]", "-", raw.lower()).strip("-")
     if not re.search(r"[a-z]", ascii_slug):
         raise ValueError(SLUG_ASCII_ERROR)
+    # Truncate by whole words to 60 chars; a single oversized word is cut
+    # itself rather than making the whole slug empty.
     words = [w[:60] for w in ascii_slug.split("-") if w]
     slug = ""
     for w in words:
@@ -76,6 +81,8 @@ def find_next_number(adr_dir: str) -> int:
 
 
 def rewrite_heading(text: str, num: str) -> str:
+    # Replaces "# ADR: <title>" or "# ADR-0003: <title>" with the canonical
+    # "# ADR-<num>: <title>", keeping the title (usually Russian) intact.
     return re.sub(
         HEADING_RE,
         lambda m: f"# ADR-{num}: {m.group(1).strip()}",
@@ -85,6 +92,10 @@ def rewrite_heading(text: str, num: str) -> str:
 
 
 def _ask_planner_for_slug(adr_path: Path, run_agent: str, task_id: str) -> None:
+    # The pipeline requires an English slug for the saved filename, but the
+    # planner keeps forgetting to write it. Instead of failing the run, ask the
+    # warm planner session to add the missing field; fail only if it still
+    # refuses (handled by the caller).
     prompt = (
         f"Read {adr_path}. Its YAML frontmatter (between the first two '---' lines) is "
         "missing the 'slug' field. Add it on its own line right after the opening "
@@ -118,6 +129,9 @@ def cmd_save(args: argparse.Namespace) -> None:
         sys.exit(str(exc) + "; fix the slug field in " + str(adr_path))
 
     adr_dir = Path(args.adr_dir)
+    # Idempotency: if this task's ADR was already released, keep the same
+    # number and just record the path — a resumed/rerun task must not produce
+    # a duplicate ADR.
     existing = sorted(adr_dir.glob(f"ADR-*-{slug}.md"))
     if existing:
         saved_path = str(existing[0])

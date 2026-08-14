@@ -15,8 +15,8 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sklc import InstallError, config, deps, verify
-from sklc import cli as install
+from spec_utils import InstallError, config, deps, verify
+from spec_utils import cli as install
 
 
 class FakeResult:
