@@ -43,6 +43,7 @@ DEFAULT_STATE_DIR = ".workflow"
 DEFAULT_MAX_FIX_ITERATIONS = 5
 DEFAULT_SHELL_TIMEOUT = 7200
 DEFAULT_REASONING = "max"
+DEFAULT_ADR_DIR = "architecture"
 
 
 class InstallError(Exception):
@@ -187,6 +188,7 @@ DEFAULT_CONFIG = {
         "state_dir": DEFAULT_STATE_DIR,
         "max_fix_iterations": DEFAULT_MAX_FIX_ITERATIONS,
         "shell_timeout": DEFAULT_SHELL_TIMEOUT,
+        "adr_dir": DEFAULT_ADR_DIR,
         "human_gates": True,
         "use_serve": False,
     }
@@ -234,6 +236,8 @@ def validate_config(cfg):
         errors.append("workflow.shell_timeout must be a positive number of seconds")
     if not re.fullmatch(r"[A-Za-z0-9_./-]+", str(workflow.get("state_dir", ""))):
         errors.append("workflow.state_dir contains unsupported characters")
+    if not re.fullmatch(r"[A-Za-z0-9_./-]+", str(workflow.get("adr_dir", ""))):
+        errors.append("workflow.adr_dir contains unsupported characters")
     if not isinstance(workflow.get("human_gates"), bool):
         errors.append("workflow.human_gates must be a boolean")
     if not isinstance(workflow.get("use_serve"), bool):
@@ -307,6 +311,7 @@ def render_workflow(cfg, paths):
         {
             "run_agent": str(paths["run_agent"]),
             "state_dir": workflow["state_dir"],
+            "adr_dir": workflow["adr_dir"],
             "step_timeout": str(workflow["shell_timeout"]),
             "verdict_inputs_decl": verdict_decl,
             "approve_adr_verdict": approve_verdict,

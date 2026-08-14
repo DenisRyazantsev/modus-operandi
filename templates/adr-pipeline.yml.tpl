@@ -61,6 +61,44 @@ ${approve_adr_verdict}
             type: shell
             run: "rm -f ${state_dir}/tasks/{{ inputs.task_id }}/feedback.md"
 
+  - id: save-adr
+    type: shell
+    run: |
+      python3 - <<'PY'
+      import os, re, glob
+      p = "${state_dir}/tasks/{{ inputs.task_id }}/adr.md"
+      if not os.path.exists(p):
+          raise SystemExit("adr.md not found")
+      text = open(p, encoding="utf-8").read()
+      fm = text.split("---", 2)
+      slug = None
+      if len(fm) >= 3:
+          m = re.search(r"^slug:\s*(\S+)", fm[1], re.M)
+          if m:
+              slug = re.sub(r"[^a-z0-9-]", "-", m.group(1).lower()).strip("-")
+      if not slug:
+          m = re.search(r"^#\s*ADR(?:\s*-\s*\d+)?\s*:\s*(.+)$$", text, re.M)
+          title = m.group(1).strip() if m else "adr"
+          tr = {"а":"a","б":"b","в":"v","г":"g","д":"d","е":"e","ё":"yo","ж":"zh","з":"z","и":"i","й":"y","к":"k","л":"l","м":"m","н":"n","о":"o","п":"p","р":"r","с":"s","т":"t","у":"u","ф":"f","х":"h","ц":"ts","ч":"ch","ш":"sh","щ":"sch","ъ":"","ы":"y","ь":"","э":"e","ю":"yu","я":"ya"}
+          title = "".join(tr.get(c.lower(), c if c.isalnum() else "-") for c in title)
+          slug = re.sub(r"-+", "-", title).strip("-").lower()
+          slug = "-".join(w for w in slug.split("-") if w)[:60]
+      adr_dir = "${adr_dir}"
+      existing = glob.glob(os.path.join(adr_dir, "ADR-*-" + slug + ".md"))
+      if existing:
+          print("adr already saved: " + existing[0])
+      else:
+          nums = [int(m.group(1)) for m in (re.search(r"ADR-(\d{4})-", f) for f in glob.glob(os.path.join(adr_dir, "ADR-*.md"))) if m]
+          num = max(nums) + 1 if nums else 1
+          name = "ADR-%04d-%s.md" % (num, slug)
+          target = os.path.join(adr_dir, name)
+          os.makedirs(adr_dir, exist_ok=True)
+          saved = re.sub(r"^#\s*ADR(?:\s*-\s*\d+)?\s*:\s*(.+)$$", lambda m: "# ADR-%04d: %s" % (num, m.group(1).strip()), text, count=1, flags=re.M)
+          with open(target, "w", encoding="utf-8") as f:
+              f.write(saved)
+          print("saved adr: " + target)
+      PY
+
   - id: executor-questions
     type: shell
     timeout: ${step_timeout}

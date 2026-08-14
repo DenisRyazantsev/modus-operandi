@@ -64,6 +64,7 @@ workflow:
   state_dir: .workflow         # task artifact directory inside a project
   max_fix_iterations: 5        # review-fix loop ceiling
   shell_timeout: 7200          # per-step timeout in seconds for agent steps (2h)
+  adr_dir: architecture        # directory where approved ADRs are saved
   human_gates: true            # false = gates auto-approve (non-interactive)
   use_serve: false             # true = run-agent.sh passes --attach http://localhost:4096
 ```
@@ -91,7 +92,15 @@ specify workflow run adr-pipeline -i feature="describe the feature"
 
 Both commands create the task artifacts in `.workflow/tasks/<task_id>/` (add to your
 `.gitignore` — see `templates/gitignore.snippet`). Use `-i task_id=<name>` for a
-meaningful task id (default: `task`).
+meaningful task id.
+
+When the ADR gate approves, the `save-adr` step releases the ADR into
+`architecture/ADR-<XXXX>-<title>.md` (configured via `workflow.adr_dir`): the next
+free number after the existing `ADR-*.md` files (0001, 0002, ...) and a short
+English `slug` that the planner writes in the ADR frontmatter (2-3 words, kebab-case,
+e.g. `prod-validation-splits`). If the slug is missing, it falls back to a
+transliterated title. Rerunning the same task keeps the ADR number — the file is not
+duplicated. The ADR heading in the saved file is rewritten to `# ADR-<XXXX>: <title>`.
 
 ### Gates and resume
 
@@ -165,9 +174,9 @@ opencode serve
 | `review-N.md` | planner | executor, planner | first line exactly `VERDICT: PASS` or `VERDICT: FIX` |
 
 The workflow steps: `write-adr` → `adr-loop` (gate with approve/revise/reject →
-optional feedback revision) → `executor-questions` →
+optional feedback revision) → `save-adr` → `executor-questions` →
 `planner-answers` → `implement` → `review-loop` (`do-while`: review → fix → verdict)
-→ `pass-check` → `final-gate` (gate).
+→ `pass-check` → `copy-latest-review` → `final-gate` (gate).
 
 The loop verdict checks the **latest** review file only (`sort -V`):
 `last=$(ls -1 .../review-*.md 2>/dev/null | sort -V | tail -1) && head -1 "$last" | grep -q '^VERDICT: PASS'`.

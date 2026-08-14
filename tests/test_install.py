@@ -239,6 +239,19 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("latest-review-{{ inputs.task_id }}.md", workflow)
         self.assertIn('show_file: ".workflow/tasks/latest-review-{{ inputs.task_id }}.md"', workflow)
 
+    def test_workflow_saves_adr_to_adr_dir(self):
+        self.assertEqual(self.install(), 0)
+        workflow = (
+            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("- id: save-adr", workflow)
+        self.assertIn('adr_dir = "architecture"', workflow)
+        self.assertIn('"ADR-%04d-%s.md"', workflow)
+        self.assertIn("slug:", workflow)
+        save_index = workflow.index("- id: save-adr")
+        questions_index = workflow.index("- id: executor-questions")
+        self.assertLess(save_index, questions_index)
+
     def test_workflow_adr_revise_loop(self):
         self.assertEqual(self.install(), 0)
         workflow = (
