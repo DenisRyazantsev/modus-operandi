@@ -63,9 +63,11 @@ if [ -n "$$TASK_ID" ]; then
 else
   SESSIONS_FILE="$$STATE_DIR/sessions.json"
 fi
-PID_FILE="$$STATE_DIR/pids/$$(basename "$$SESSIONS_FILE").pid"
+PID_FILE="$$STATE_DIR/pids/$$(basename "$$SESSIONS_FILE").$$ROLE.pid"
+LOG_DIR="$$STATE_DIR/logs"
+LOG_FILE="$$LOG_DIR/$$(basename "$$SESSIONS_FILE" .json)-$$ROLE.jsonl"
 
-mkdir -p "$$STATE_DIR/pids"
+mkdir -p "$$STATE_DIR/pids" "$$LOG_DIR"
 if ! touch "$$SESSIONS_FILE"; then
   echo "error: cannot write $$SESSIONS_FILE" >&2
   exit 2
@@ -121,19 +123,30 @@ fi
 
 if [ -z "$$SESSION_ID" ]; then
   RC=0
-  OUTPUT="$$(opencode run --agent "$$ROLE" --auto $$ATTACH_FLAG --format json "$$PROMPT" 2>&1)" || RC=$$?
-  printf '%s\n' "$$OUTPUT"
+  # Stream opencode into a log file instead of a command substitution: the
+  # JSON event stream is large, and capturing it through a pipe made opencode
+  # die with SIGPIPE (exit 141) mid-run. A file also keeps a durable per-role
+  # log the user can inspect after a failed step.
+  opencode run --agent "$$ROLE" --auto $$ATTACH_FLAG --format json "$$PROMPT" > "$$LOG_FILE" 2>&1 || RC=$$?
+  cat "$$LOG_FILE"
   if [ "$$RC" -ne 0 ]; then
+    echo "run-agent: opencode exited $$RC; full log: $$LOG_FILE" >&2
     exit "$$RC"
   fi
-  SESSION_ID="$$(printf '%s\n' "$$OUTPUT" | extract_session_id)"
+  SESSION_ID="$$(extract_session_id < "$$LOG_FILE")"
   if [ -z "$$SESSION_ID" ]; then
     echo "error: could not extract a session id from opencode output" >&2
     exit 2
   fi
   save_session "$$SESSION_ID"
 else
-  opencode run --session "$$SESSION_ID" --agent "$$ROLE" --auto $$ATTACH_FLAG --format json "$$PROMPT"
+  RC=0
+  opencode run --session "$$SESSION_ID" --agent "$$ROLE" --auto $$ATTACH_FLAG --format json "$$PROMPT" > "$$LOG_FILE" 2>&1 || RC=$$?
+  cat "$$LOG_FILE"
+  if [ "$$RC" -ne 0 ]; then
+    echo "run-agent: opencode exited $$RC; full log: $$LOG_FILE" >&2
+    exit "$$RC"
+  fi
 fi
 
 echo "SESSION:$$SESSION_ID"

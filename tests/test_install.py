@@ -421,6 +421,10 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("--task) [ $# -ge 2 ] || usage", run_agent)
         self.assertIn("ps -p", run_agent)
         self.assertIn("grep -q '^opencode'", run_agent)
+        self.assertIn("> \"$LOG_FILE\" 2>&1", run_agent)
+        self.assertIn("cat \"$LOG_FILE\"", run_agent)
+        self.assertIn("full log: $LOG_FILE", run_agent)
+        self.assertNotIn("OUTPUT=\"$(opencode", run_agent)
         self.assertEqual(run_agent.count("session[iI][dD]"), 1)
         self.assertNotIn("'name'", run_agent)
 
