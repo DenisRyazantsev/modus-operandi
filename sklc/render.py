@@ -76,5 +76,6 @@ def render_workflow(cfg, paths):
             "verdict_inputs_decl": verdict_decl,
             "approve_adr_verdict": approve_verdict,
             "max_fix_iterations": str(workflow["max_fix_iterations"]),
+            "max_srp_iterations": str(workflow["max_srp_iterations"]),
         },
     )

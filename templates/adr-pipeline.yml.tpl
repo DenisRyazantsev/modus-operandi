@@ -121,6 +121,57 @@ ${approve_adr_verdict}
       recording: what the ADR says, what you did instead, and why. Do not create the file
       when there is no deviation." --task {{ inputs.task_id }}
 
+  - id: srp-loop
+    type: do-while
+    max_iterations: ${max_srp_iterations}
+    condition: "{{ steps.srp-verdict.output.exit_code != 0 }}"
+    steps:
+      - id: srp-review
+        type: shell
+        timeout: ${step_timeout}
+        run: >-
+          "${run_agent}" planner
+          "Review the git changes for SRP violations ONLY: the single-responsibility
+          principle — every class, function and module must have one clear
+          responsibility, with no god classes/functions and no mixed concerns in one
+          unit. Do NOT review ADR compliance, tests, or any other quality aspect
+          (a later stage does that). Run git status, then git diff HEAD (includes
+          staged changes). Write ${state_dir}/tasks/{{ inputs.task_id }}/srp-review-N.md
+          (N is the next number after the existing srp-review files) with the first
+          line exactly 'SRP: PASS' or 'SRP: FIX' followed by actionable findings."
+          --task {{ inputs.task_id }}
+
+      - id: srp-verdict
+        type: shell
+        continue_on_error: true
+        run: >-
+          last=$$(ls -1 ${state_dir}/tasks/{{ inputs.task_id }}/srp-review-*.md 2>/dev/null
+          | sort -V | tail -1) && head -1 "$$last" | grep -q '^SRP: PASS'
+
+      - id: srp-fix-branch
+        type: if
+        condition: "{{ steps.srp-verdict.output.exit_code != 0 }}"
+        then:
+          - id: srp-fix
+            type: shell
+            timeout: ${step_timeout}
+            run: >-
+              "${run_agent}" executor
+              "Read the latest ${state_dir}/tasks/{{ inputs.task_id }}/srp-review-N.md
+              and fix all its SRP findings. Then run the project's tests/linter if
+              available." --task {{ inputs.task_id }}
+
+  - id: srp-pass-check
+    type: shell
+    run: >-
+      last=$$(ls -1 ${state_dir}/tasks/{{ inputs.task_id }}/srp-review-*.md 2>/dev/null
+      | sort -V | tail -1);
+      if [ -n "$$last" ] && head -1 "$$last" | grep -q '^SRP: PASS'; then
+      echo "SRP REVIEW OK: final verdict PASS ($$last)";
+      else
+      echo "WARNING: SRP review loop exhausted ${max_srp_iterations} iterations without 'SRP: PASS' (latest review: $${last:-none}); inspect the latest srp-review file and the code";
+      fi
+
   - id: review-loop
     type: do-while
     max_iterations: ${max_fix_iterations}

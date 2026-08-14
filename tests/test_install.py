@@ -355,13 +355,41 @@ class InstallerTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         for step in ("write-adr", "adr-revise", "executor-questions",
                      "planner-answers", "implement", "review", "fix",
-                     "sync-adr", "save-adr"):
+                     "sync-adr", "save-adr", "srp-review", "srp-fix"):
             block = workflow.split("- id: %s" % step, 1)[1].split("\n  - id:", 1)[0]
             self.assertIn("timeout: 7200", block, step)
         for step in ("verdict", "pass-check", "adr-feedback-clear",
-                     "validate-task-id"):
-            block = workflow.split("- id: %s" % step, 1)[1].split("\n  - id:", 1)[0]
+                     "validate-task-id", "srp-verdict", "srp-pass-check"):
+            block = workflow.split("- id: %s" % step, 1)[1]
+            block = block.split("\n      - id:", 1)[0]
+            block = block.split("\n  - id:", 1)[0]
             self.assertNotIn("timeout", block, step)
+
+    def test_workflow_srp_loop_structure(self):
+        self.assertEqual(self.install(), 0)
+        workflow = (
+            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("- id: srp-loop", workflow)
+        self.assertIn("- id: srp-review", workflow)
+        self.assertIn("- id: srp-verdict", workflow)
+        self.assertIn("- id: srp-fix", workflow)
+        self.assertIn("- id: srp-pass-check", workflow)
+        self.assertIn("'^SRP: PASS'", workflow)
+        self.assertIn("SRP REVIEW OK: final verdict PASS", workflow)
+        self.assertIn("WARNING: SRP review loop exhausted", workflow)
+        self.assertIn("{{ steps.srp-verdict.output.exit_code != 0 }}", workflow)
+        block = workflow.split("- id: srp-loop", 1)[1].split("\n  - id:", 1)[0]
+        self.assertIn("max_iterations: 5", block)
+        self.assertIn("srp-review-*.md", block)
+        self.assertIn("SRP: FIX", block)
+        self.assertIn("- id: srp-fix-branch", block)
+        implement_index = workflow.index("- id: implement")
+        srp_index = workflow.index("- id: srp-loop")
+        srp_check_index = workflow.index("- id: srp-pass-check")
+        review_index = workflow.index("- id: review-loop")
+        self.assertLess(implement_index, srp_index)
+        self.assertLess(srp_check_index, review_index)
 
     def test_placeholder_config_is_rejected(self):
         self.assertEqual(self.install(), 0)

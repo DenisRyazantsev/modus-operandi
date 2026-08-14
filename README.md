@@ -194,11 +194,23 @@ opencode serve
 | `answers.md` | planner | executor | written only when `QUESTIONS: PRESENT` |
 | `feedback.md` | user | planner | written at the revise gate; cleared after the revision |
 | `review-N.md` | planner | executor, planner | first line exactly `VERDICT: PASS` or `VERDICT: FIX` |
+| `srp-review-N.md` | planner | executor, planner | first line exactly `SRP: PASS` or `SRP: FIX` |
 
 The workflow steps: `write-adr` → `adr-loop` (gate with approve/revise/reject →
 optional feedback revision) → `save-adr` → `executor-questions` →
-`planner-answers` → `implement` → `review-loop` (`do-while`: review → fix → verdict)
-→ `sync-adr` → `pass-check` (reports `REVIEW OK` or `WARNING: review loop exhausted`).
+`planner-answers` → `implement` → `srp-loop` (`do-while`: SRP review → verdict →
+fix, only for single-responsibility violations) → `srp-pass-check` (reports
+`SRP REVIEW OK` or a `WARNING`) → `review-loop` (`do-while`: review → fix →
+verdict) → `sync-adr` → `pass-check` (reports `REVIEW OK` or
+`WARNING: review loop exhausted`).
+
+The review runs in two stages. First `srp-loop` checks the git changes strictly
+for single-responsibility violations (god classes/functions, mixed concerns);
+the executor fixes the findings and the SRP review repeats until it passes or
+`workflow.max_srp_iterations` is exhausted (a `WARNING` is printed and the run
+continues). Then the main `review-loop` checks the code against the ADR as
+before. Each stage uses its own numbered review files (`srp-review-N.md` vs
+`review-N.md`) so the loops and verdicts never interfere.
 
 The loop verdict checks the **latest** review file only (`sort -V`):
 `last=$(ls -1 .../review-*.md 2>/dev/null | sort -V | tail -1) && head -1 "$last" | grep -q '^VERDICT: PASS'`.
