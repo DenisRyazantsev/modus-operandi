@@ -42,12 +42,13 @@ specify hides a failing step's stdout/stderr; use the installed wrapper to see
 them after a failure:
 
 ```
-~/.config/opencode/scripts/run-pipeline.sh review-pipeline
-~/.config/opencode/scripts/run-pipeline.sh adr-pipeline -i feature="..."
+~/.config/opencode/scripts/run-pipeline.py review-pipeline
+~/.config/opencode/scripts/run-pipeline.py adr-pipeline -i feature="..."
 ```
 
-On failure it re-reads the run state (`.specify/workflows/runs/<id>/`) and prints
-the failing steps' output plus the resume command.
+It prefixes every line with an hh:mm:ss timestamp, streams each step's output
+as it finishes (from the run state), tails the per-role agent logs
+(`.workflow/logs/`) live, and on failure prints the resume command.
 
 ## Requirements
 

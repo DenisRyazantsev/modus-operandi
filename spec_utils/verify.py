@@ -24,7 +24,7 @@ def check_files(paths: Paths) -> list[str]:
         errors.append("name-task.sh is not executable: {}".format(paths["name_task"]))
     if not os.access(paths["run_pipeline"], os.X_OK):
         errors.append(
-            "run-pipeline.sh is not executable: {}".format(paths["run_pipeline"])
+            "run-pipeline.py is not executable: {}".format(paths["run_pipeline"])
         )
     for _, path in (
         ("adr-pipeline.yml", paths["workflow"]),

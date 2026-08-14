@@ -328,15 +328,18 @@ class InstallerTest(unittest.TestCase):
 
     def test_run_pipeline_wrapper_rendered(self):
         self.assertEqual(self.install(), 0)
-        wrapper = self.home / ".config/opencode/scripts/run-pipeline.sh"
+        wrapper = self.home / ".config/opencode/scripts/run-pipeline.py"
         self.assertTrue(wrapper.exists())
         self.assertTrue(os.access(wrapper, os.X_OK))
         text = wrapper.read_text(encoding="utf-8")
-        self.assertIn("specify workflow run", text)
-        self.assertIn("failing step output", text)
+        self.assertIn('"specify", "workflow", "run"', text)
         self.assertIn("state.json", text)
         self.assertIn("resume with: specify workflow resume", text)
-        self.assertIn("PYEOF", text)
+        self.assertIn("LiveMonitor", text)
+        self.assertIn('strftime("%H:%M:%S")', text)
+        self.assertIn(".workflow/logs", text)
+        self.assertNotIn("PYEOF", text)
+        self.assertNotIn("#!/usr/bin/env bash", text)
 
     def test_workflow_saves_adr_to_adr_dir(self):
         self.assertEqual(self.install(), 0)

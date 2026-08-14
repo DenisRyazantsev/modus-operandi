@@ -52,7 +52,7 @@ def build_paths(home: str | Path) -> Paths:
         / ".config"
         / "opencode"
         / "scripts"
-        / "run-pipeline.sh",
+        / "run-pipeline.py",
         "save_adr": base / ".config" / "opencode" / "scripts" / "save_adr.py",
         "check_review": base
         / ".config"

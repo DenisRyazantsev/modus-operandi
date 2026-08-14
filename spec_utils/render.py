@@ -52,8 +52,9 @@ def render_run_agent(cfg: dict[str, Any], paths: Paths) -> None:
 
 
 def render_run_pipeline(paths: Paths) -> None:
-    # Wrapper that surfaces the failing step's stdout/stderr after a run.
-    render_file(TEMPLATES_DIR / "run-pipeline.sh.tpl", paths["run_pipeline"], {})
+    # Wrapper that streams specify output with timestamps, prints step results
+    # as they complete and tails the per-role agent logs.
+    render_file(TEMPLATES_DIR / "run_pipeline.py.tpl", paths["run_pipeline"], {})
     paths["run_pipeline"].chmod(0o755)
 
 
