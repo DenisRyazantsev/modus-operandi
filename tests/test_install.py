@@ -259,7 +259,7 @@ class InstallerTest(unittest.TestCase):
                      "planner-answers", "implement", "review", "fix"):
             block = workflow.split("- id: %s" % step, 1)[1].split("\n  - id:", 1)[0]
             self.assertIn("timeout: 7200", block, step)
-        self.assertNotIn("timeout", workflow.split("- id: verdict", 1)[1].split("- id: latest-review", 1)[0])
+        self.assertNotIn("timeout", workflow.split("- id: verdict", 1)[1].split("- id: copy-latest-review", 1)[0])
 
     def test_placeholder_config_is_rejected(self):
         self.assertEqual(self.install(), 0)
