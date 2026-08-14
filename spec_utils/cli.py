@@ -21,8 +21,10 @@ def print_instructions(paths: Paths) -> None:
         "       python3 {} --register\n"
         "     and then:\n"
         "       specify workflow run adr-pipeline -i feature=\"...\"\n"
-        "     or review your own uncommitted changes:\n"
+        "     or review your code (default: whole codebase):\n"
         "       specify workflow run review-pipeline\n"
+        "     or review only the changes between branches:\n"
+        "       specify workflow run review-pipeline -i branch-diff=true\n"
         "  3. If the run pauses at a gate, review and resume with:\n"
         "       specify workflow resume <run_id>\n".format(
             paths["config"], paths["workflow"], REPO_ROOT / "install.py"

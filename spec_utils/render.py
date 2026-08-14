@@ -98,7 +98,8 @@ def render_workflow(cfg: dict[str, Any], paths: Paths) -> None:
 
 def render_review_workflow(cfg: dict[str, Any], paths: Paths) -> None:
     # The review-only workflow has no inputs and no ADR stage: it diffs the
-    # working tree against the default branch and runs the same review loops.
+    # Whole-codebase review by default, or with -i branch-diff=true the changes
+    # between the current branch and the default branch; same review loops.
     workflow = cfg["workflow"]
     render_file(
         TEMPLATES_DIR / "review-pipeline.yml.tpl",

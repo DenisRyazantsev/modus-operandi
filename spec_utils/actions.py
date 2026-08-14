@@ -34,7 +34,9 @@ def do_register(paths: Paths) -> None:
         deps.run([specify, "workflow", "add", str(path), "--dev"])
         print(f"installed '{name}' into this project")
     print('run them with: specify workflow run adr-pipeline -i feature="..."')
-    print("or: specify workflow run review-pipeline (reviews uncommitted changes)")
+    print('or: specify workflow run review-pipeline -i branch-diff=true')
+    print("    (default: whole codebase; branch-diff=true: only the changes")
+    print("    between the current branch and the default branch)")
 
 
 def _uninstall_pip_package(package: str) -> bool:

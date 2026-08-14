@@ -16,16 +16,25 @@ specify workflow run ~/.config/spec-kit-llm-client/adr-pipeline.yml -i feature="
 Full cycle: ADR → executor questions → planner answers → implementation → review → fixes until the reviewer says
 `VERDICT: PASS`.
 
-A second workflow, `review-pipeline`, does the review part alone: run it after
-your own edits and it reviews the uncommitted changes against the default branch
-(`origin/HEAD`, or `origin/main`/`origin/master`/`main`/`master`, whichever
-exists), fixes findings and writes a `review-report.md`:
+A second workflow, `review-pipeline`, does the review part alone. By default it
+reviews the **entire codebase** of the project and fixes findings:
 
 ```
 specify workflow run review-pipeline
 ```
 
-It has no inputs and no gates — keep the terminal open until it completes.
+With the optional `branch-diff` input it reviews only the changes between the
+current branch and the default branch (`origin/HEAD`, or
+`origin/main`/`origin/master`/`main`/`master`, whichever exists) — the diff
+includes committed, staged and unstaged changes; it fails with
+"nothing to review" when there are none:
+
+```
+specify workflow run review-pipeline -i branch-diff=true
+```
+
+Both modes write a `review-report.md` into the task directory. It has no
+gates — keep the terminal open until it completes.
 The same review stages run in both workflows: SRP → bugs → general correctness →
 readability "traps", each loop fixing its findings until pass.
 

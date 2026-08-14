@@ -282,23 +282,26 @@ class InstallerTest(unittest.TestCase):
             self.home / ".config/spec-kit-llm-client/review-pipeline.yml"
         ).read_text(encoding="utf-8")
         self.assertIn('id: "review-pipeline"', review)
-        self.assertIn("inputs: {}", review)
-        for step in ("generate-task-id", "detect-base-branch",
+        self.assertNotIn("inputs: {}", review)
+        self.assertIn("branch-diff:", review)
+        for step in ("generate-task-id", "determine-scope",
                      "srp-loop", "bug-loop", "review-loop",
                      "comment-review-loop", "report"):
             self.assertIn(f"- id: {step}", review, step)
         for kind in ("srp", "bugs", "review", "comment"):
             self.assertIn(f'check-review ".workflow" "" {kind}', review, kind)
-        self.assertIn("git diff $base", review)
+        self.assertIn("scope.txt", review)
         self.assertIn("refs/remotes/origin/HEAD", review)
         self.assertIn("origin/main", review)
         self.assertIn("origin/master", review)
         self.assertIn("no changes against", review)
-        self.assertIn("base-branch.txt", review)
+        self.assertIn("branch-diff: ", review)
+        self.assertIn("mode: full codebase review", review)
         self.assertIn("git branch --show-current", review)
         self.assertIn("date +%Y%m%d-%H%M", review)
         self.assertIn("ln -sfn", review)
         self.assertIn("review-report.md", review)
+        self.assertNotIn("base=$$(cat", review)
         self.assertNotIn("adr.md", review)
         self.assertNotIn("adr_dir", review)
         self.assertNotIn("--task", review)
@@ -309,7 +312,7 @@ class InstallerTest(unittest.TestCase):
             self.home / ".config/spec-kit-llm-client/review-pipeline.yml"
         ).read_text(encoding="utf-8")
         order = [review.index(f"- id: {s}") for s in
-                 ("generate-task-id", "detect-base-branch", "srp-loop",
+                 ("generate-task-id", "determine-scope", "srp-loop",
                   "srp-pass-check", "bug-loop", "bug-pass-check",
                   "review-loop", "pass-check", "comment-review-loop",
                   "comment-pass-check", "report")]

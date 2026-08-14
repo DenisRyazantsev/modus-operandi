@@ -4,9 +4,13 @@ workflow:
   name: "Review Pipeline"
   version: "1.0.0"
   author: "spec-kit-llm-client"
-  description: "Review your uncommitted changes against the default branch and fix findings"
+  description: "Review your code and fix findings; by default the whole codebase, with -i branch-diff=true only the changes between the current branch and the default branch"
 
-inputs: {}
+inputs:
+  branch-diff:
+    type: string
+    required: false
+    prompt: "true to review only the changes between the current branch and the default branch (otherwise the whole codebase is reviewed)"
 
 steps:
   - id: generate-task-id
@@ -22,10 +26,11 @@ steps:
       ln -sfn "$$tid" "${state_dir}/tasks/current";
       echo "task id: $$tid";
 
-  - id: detect-base-branch
+  - id: determine-scope
     type: shell
     run: >-
       set -euo pipefail;
+      if [ "{{ inputs.branch-diff }}" = "true" ]; then
       base="";
       if git symbolic-ref -q refs/remotes/origin/HEAD >/dev/null 2>&1; then
       base=$$(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/@@');
@@ -43,7 +48,13 @@ steps:
       echo "error: no changes against $$base - nothing to review" >&2; exit 1;
       fi;
       printf '%s' "$$base" > "${state_dir}/base-branch.txt";
-      echo "base branch: $$base";
+      printf 'branch-diff: %s' "$$base" > "${state_dir}/scope.txt";
+      echo "mode: branch-diff (base: $$base)";
+      else
+      rm -f "${state_dir}/base-branch.txt";
+      printf 'full' > "${state_dir}/scope.txt";
+      echo "mode: full codebase review";
+      fi;
 
   - id: srp-loop
     type: do-while
@@ -55,14 +66,17 @@ steps:
         timeout: ${step_timeout}
         run: >-
           set -euo pipefail;
-          base=$$(cat "${state_dir}/base-branch.txt");
           "${run_agent}" planner
-          "Review the git changes for SRP violations ONLY: the single-responsibility
-          principle — every class, function and module must have one clear
-          responsibility, with no god classes/functions and no mixed concerns in one
-          unit. Do NOT review bugs, tests, or any other quality aspect
-          (a later stage does that). Run git status, then git diff $$base (includes
-          staged changes). Write ${state_dir}/tasks/current/srp-review-N.md
+          "Review for SRP violations ONLY: the single-responsibility principle —
+          every class, function and module must have one clear responsibility, with
+          no god classes/functions and no mixed concerns in one unit. Do NOT review
+          bugs, tests, or any other quality aspect (a later stage does that).
+          Review scope: read ${state_dir}/scope.txt — if it says 'full', review the
+          ENTIRE codebase of this project (all source files; skip .git, .specify,
+          build artifacts and dependencies); if it starts with 'branch-diff: ', the
+          base branch name follows — run git status, then git diff <base> (includes
+          staged and unstaged changes) and review ONLY those changes.
+          Write ${state_dir}/tasks/current/srp-review-N.md
           (N is the next number after the existing srp-review files) with the first
           line exactly 'SRP: PASS' or 'SRP: FIX' followed by actionable findings."
 
@@ -104,15 +118,19 @@ steps:
         timeout: ${step_timeout}
         run: >-
           set -euo pipefail;
-          base=$$(cat "${state_dir}/base-branch.txt");
           "${run_agent}" planner
-          "Review the git changes for BUGS ONLY: logic errors, wrong conditions,
+          "Review for BUGS ONLY: logic errors, wrong conditions,
           off-by-one and edge cases, unhandled errors, races, broken control flow,
           wrong types/units, and mismatches between the implemented behavior and
-          what the diff is clearly meant to do.
+          what the code is clearly meant to do.
           Do NOT review SRP violations, style, or comment quality
-          (later stages do that). Run git status, then git diff $$base (includes
-          staged changes). Write ${state_dir}/tasks/current/bug-review-N.md
+          (later stages do that).
+          Review scope: read ${state_dir}/scope.txt — if it says 'full', review the
+          ENTIRE codebase of this project (all source files; skip .git, .specify,
+          build artifacts and dependencies); if it starts with 'branch-diff: ', the
+          base branch name follows — run git status, then git diff <base> (includes
+          staged and unstaged changes) and review ONLY those changes.
+          Write ${state_dir}/tasks/current/bug-review-N.md
           (N is the next number after the existing bug-review files) with the first
           line exactly 'BUGS: PASS' or 'BUGS: FIX' followed by actionable findings."
 
@@ -154,13 +172,16 @@ steps:
         timeout: ${step_timeout}
         run: >-
           set -euo pipefail;
-          base=$$(cat "${state_dir}/base-branch.txt");
           "${run_agent}" planner
-          "Review the git changes against the diff base ($$base) for general
-          correctness and quality: broken logic and control flow, edge cases,
-          unhandled errors, dead code, confusing naming, and anything the earlier
-          SRP and bug stages missed. Run git status, then git diff $$base (includes
-          staged changes). Write ${state_dir}/tasks/current/review-N.md (N is the
+          "Review for general correctness and quality: broken logic and control
+          flow, edge cases, unhandled errors, dead code, confusing naming, and
+          anything the earlier SRP and bug stages missed.
+          Review scope: read ${state_dir}/scope.txt — if it says 'full', review the
+          ENTIRE codebase of this project (all source files; skip .git, .specify,
+          build artifacts and dependencies); if it starts with 'branch-diff: ', the
+          base branch name follows — run git status, then git diff <base> (includes
+          staged and unstaged changes) and review ONLY those changes.
+          Write ${state_dir}/tasks/current/review-N.md (N is the
           next number after the existing review files) with the first line exactly
           'VERDICT: PASS' or 'VERDICT: FIX' followed by actionable findings."
 
@@ -201,15 +222,19 @@ steps:
         timeout: ${step_timeout}
         run: >-
           set -euo pipefail;
-          base=$$(cat "${state_dir}/base-branch.txt");
           "${run_agent}" planner
-          "Review the git changes for readability 'traps' ONLY: correct but
+          "Review for readability 'traps' ONLY: correct but
           misleading code that would confuse a reader — comments that state the
           obvious or contradict the code (add or fix a *why* comment, never a
           *what* description), and names/structures so unclear they deserve a
           rename or refactor. NOT bugs, NOT SRP violations (later stages handle
-          nothing after this — this is the last stage). Run git status, then git
-          diff $$base (includes staged changes). Write
+          nothing after this — this is the last stage).
+          Review scope: read ${state_dir}/scope.txt — if it says 'full', review the
+          ENTIRE codebase of this project (all source files; skip .git, .specify,
+          build artifacts and dependencies); if it starts with 'branch-diff: ', the
+          base branch name follows — run git status, then git diff <base> (includes
+          staged and unstaged changes) and review ONLY those changes.
+          Write
           ${state_dir}/tasks/current/comment-review-N.md (N is the next number
           after the existing comment-review files) with the first line exactly
           'VERDICT: PASS' or 'VERDICT: FIX' followed by actionable findings."
@@ -247,12 +272,13 @@ steps:
     timeout: ${step_timeout}
     run: >-
       set -euo pipefail;
-      base=$$(cat "${state_dir}/base-branch.txt");
       "${run_agent}" planner
       "Write ${state_dir}/tasks/current/review-report.md summarizing this review
-      run: the diff base ($$base), the reviewed files, and per stage (SRP, bugs,
-      general review, comments) what was found and what the executor fixed, ending
-      with an overall verdict line exactly 'VERDICT: PASS' when nothing remains
-      unfixed or 'VERDICT: REVIEW' when some findings could not be resolved. Read
-      the latest srp-review-N.md, bug-review-N.md, review-N.md and
+      run: the review scope (read ${state_dir}/scope.txt — either 'full', meaning
+      the whole codebase was reviewed, or the base branch the diff was taken
+      against), the reviewed files, and per stage (SRP, bugs, general review,
+      comments) what was found and what the executor fixed, ending with an
+      overall verdict line exactly 'VERDICT: PASS' when nothing remains unfixed
+      or 'VERDICT: REVIEW' when some findings could not be resolved. Read the
+      latest srp-review-N.md, bug-review-N.md, review-N.md and
       comment-review-N.md files for the history."

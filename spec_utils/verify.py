@@ -46,8 +46,8 @@ def check_workflow_syntax(paths: Paths) -> list[str]:
     # `specify workflow info <path>` parses and renders the workflow graph
     # without executing it. That is the syntax probe: a valid workflow exits 0.
     # (The old probe ran `specify workflow run` expecting a "required input"
-    # error - it cannot be used for review-pipeline, which has no inputs, since
-    # the run would actually execute.)
+    # error - it cannot be used for review-pipeline, whose inputs are optional,
+    # since the run would actually execute.)
     errors: list[str] = []
     for wf_name, path in (
         ("adr-pipeline.yml", paths["workflow"]),
