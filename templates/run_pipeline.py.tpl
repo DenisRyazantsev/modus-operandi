@@ -7,6 +7,11 @@ state (.specify/workflows/runs/<run_id>/) and prints each step's output as
 it finishes, tails the per-role agent logs (<state_dir>/logs/) live, and on
 failure prints the resume command.
 
+While specify waits for interactive input on a human gate (its menu window
+"┌─ Gate …" is drawn on screen), step results and agent-log lines are
+buffered instead of printed, so the window is not flooded; the buffer is
+flushed as soon as the engine moves past the gate or the wrapper exits.
+
 Usage: run-pipeline.py <workflow-id-or-path> [extra specify args...]
   run-pipeline.py review-pipeline
   run-pipeline.py adr-pipeline -i feature="..."
@@ -51,6 +56,24 @@ def run_id_from_text(text: str) -> str:
         return ""
 
 
+# specify-cli v0.16.x draws the human-gate menu with print(): the first line
+# of the window starts with these characters (after stripping). This is the
+# only observation point for "a gate menu is on screen" — the wrapper's own
+# stdout pipe, the same one the menu is drawn into.
+GATE_MENU_PREFIX = "┌─ Gate"
+
+
+def is_gate_menu_opener(line: str) -> bool:
+    """True when line is the first line of specify's human-gate menu window.
+
+    Pure string predicate: while such a window is on screen, the wrapper
+    buffers its own live output so the menu is not flooded. The menu window
+    is drawn only for interactive gates on a TTY; `human_gates: false` and
+    non-TTY runs never produce this line, so no suppression happens there.
+    """
+    return line.strip().startswith(GATE_MENU_PREFIX)
+
+
 def existing_run_ids(state_dir: Path) -> set[str]:
     """Names of the run directories already present under state_dir/runs.
 
@@ -78,14 +101,20 @@ class StepResultPoller:
     def _run_dir(self) -> Path:
         return self.state_dir / "workflows" / "runs" / self.run_id
 
-    def poll(self) -> list[tuple[str, dict]]:
-        """Return (step_id, result) pairs for steps finished since the last poll."""
-        try:
-            data = json.loads(
-                (self._run_dir() / "state.json").read_text(encoding="utf-8")
-            )
-        except Exception:
-            return []
+    def poll(self, data: dict | None = None) -> list[tuple[str, dict]]:
+        """Return (step_id, result) pairs for steps finished since the last poll.
+
+        state.json is read only if the caller has not already read it: the
+        monitor reads it once per tick for current_step_id (the gate check)
+        and passes the same data in.
+        """
+        if data is None:
+            try:
+                data = json.loads(
+                    (self._run_dir() / "state.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                return []
         events: list[tuple[str, dict]] = []
         for step_id, result in data.get("step_results", {}).items():
             if step_id in self._seen_steps or result.get("status") not in TERMINAL_STATUSES:
@@ -98,8 +127,14 @@ class StepResultPoller:
 def render_log_event(role: str, line: str) -> tuple[str, str]:
     """Map one raw log line to the (role, text) pair to display.
 
-    Pure function: no file state, so the rendering rules are unit-testable
-    without touching the log files.
+    Only meaningful content is shown: `text` parts with a non-empty payload
+    (the agents' actual work progression). Marker events (`step-start`,
+    `step-finish`) and `text` parts with an empty payload carry no
+    information and are dropped entirely — what stays visible from the logs
+    is the agents' progression, while failures are reported by the failed
+    step's own result and the final status block. Pure function: no file
+    state, so the rendering rules are unit-testable without touching the
+    log files.
     """
     line = line.strip()
     if not line:
@@ -112,12 +147,6 @@ def render_log_event(role: str, line: str) -> tuple[str, str]:
     if part.get("type") == "text" and part.get("text"):
         # text parts: print the payload.
         return role, part["text"]
-    if part.get("type") in ("text", "step-start", "step-finish"):
-        # "text" in this branch means a text part with an EMPTY payload
-        # (rare); step markers carry no payload either. All three fall back
-        # to the event-level type as a marker line — event.type, not
-        # part.type ("message" vs "text", "step-start" vs "step-start").
-        return role, "{}".format(event.get("type"))
     return role, ""
 
 
@@ -210,8 +239,97 @@ def print_log_event(role: str, text: str) -> None:
     print_ts(text, "[{}] ".format(role))
 
 
+class GateState:
+    """Shared, thread-safe marker of an open human-gate menu, owning the
+    gate lifecycle.
+
+    The main thread (which reads specify's stdout) calls open(state) when it
+    sees the first line of a gate menu window, capturing the gate's step id
+    synchronously from the state it reads at that moment; update() advances
+    the lifecycle from each later state.json read — closing the gate
+    (returning True) once the engine moves past the gate step. The monitor
+    thread closes the gate explicitly when the wrapper is stopping (an
+    aborted/rejected run may leave current_step_id on the gate forever).
+    The lock keeps the flag and the id consistent across the two threads.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._open = False
+        self._gate_step_id: str | None = None
+
+    def open(self, state: dict | None) -> None:
+        """Mark a gate menu as open, capturing the gate's step id.
+
+        The main thread passes the state.json read made the moment the menu
+        opener line arrived: the menu is drawn only while the gate step is
+        executing (its current_step_id was saved before input()), so the id
+        read here is the gate's own. Capturing it now instead of on a later
+        monitor tick removes the window in which a fast answer could make
+        the first tick record the next step's id and leave the gate open
+        through that whole step. An unreadable state (None) leaves the id
+        for update() to capture on the first readable tick.
+        """
+        with self._lock:
+            self._open = True
+            self._gate_step_id = (state or {}).get("current_step_id") or None
+
+    def close(self) -> None:
+        """Force the gate closed (e.g. the wrapper is stopping)."""
+        with self._lock:
+            self._open = False
+            self._gate_step_id = None
+
+    @property
+    def is_open(self) -> bool:
+        with self._lock:
+            return self._open
+
+    def update(self, state: dict | None) -> bool:
+        """Advance the lifecycle from one state.json read.
+
+        While the menu is open: when the captured id is missing (the open
+        moment read failed), record current_step_id on the first readable
+        tick; when the id differs from the captured one (the user answered
+        and the engine moved on), close the gate and return True — the
+        caller then flushes whatever output was buffered while the menu was
+        open. A failed read (None) only skips the tick: it says nothing
+        about the gate, and closing on it would print straight over the
+        still-open menu — only a readable state with an empty or different
+        current_step_id may close the gate. "Pure" refers to I/O and output
+        only: update() never emits output and never touches anything but the
+        gate's own state (under its lock) — the "never emits output" clause
+        is the contract the caller relies on, since it decides the flush.
+        Loop iterations carry distinct suffixed ids (adr-loop:adr-gate:1,
+        :2, …), so each re-drawn menu is tracked anew.
+        """
+        with self._lock:
+            if not self._open:
+                return False
+            if state is None:
+                # Transient read failure: skip the tick, keep the gate open.
+                return False
+            current = state.get("current_step_id") or ""
+            if not self._gate_step_id:
+                if current:
+                    self._gate_step_id = current
+                return False
+            if current != self._gate_step_id:
+                # Inlined instead of close(): the lock is not reentrant.
+                self._open = False
+                self._gate_step_id = None
+                return True
+            return False
+
+
 class LiveMonitor:
-    """Coordinates step-result polling and agent-log tailing while specify runs."""
+    """Coordinates step-result polling and agent-log tailing while specify runs.
+
+    While a human-gate menu is on screen (GateState raised by the stdout
+    reader), finished steps and agent-log lines are buffered instead of
+    printed; the buffer is flushed when the engine moves past the gate or
+    when the wrapper stops.
+    """
 
     def __init__(self, state_dir: Path, prior_runs: set[str]) -> None:
         self.run_id: str = ""
@@ -220,6 +338,9 @@ class LiveMonitor:
         self._stop = threading.Event()
         self._state_dir = state_dir
         self._prior_runs = prior_runs
+        self.gate = GateState()
+        self._buffered_steps: list[tuple[str, dict]] = []
+        self._buffered_logs: list[tuple[str, str]] = []
 
     def _discover_run_id(self) -> str:
         """Find the run id for the workflow this wrapper started, if unknown.
@@ -246,19 +367,85 @@ class LiveMonitor:
     def join(self) -> None:
         self._thread.join()
 
+    def _read_state(self) -> dict | None:
+        """Read the current run's state.json, or None when unavailable."""
+        try:
+            return json.loads(
+                (
+                    self._state_dir
+                    / "workflows"
+                    / "runs"
+                    / self.run_id
+                    / "state.json"
+                ).read_text(encoding="utf-8")
+            )
+        except Exception:
+            return None
+
+    def discover_and_read_state(self) -> dict | None:
+        """Read the current run's state.json, discovering the run id first.
+
+        Used by main() for the synchronous gate-id capture at the moment a
+        menu opener line arrives; the monitor's own poll may not have
+        discovered the run id yet. Runs on the calling (main) thread, with
+        no lock — that is deliberate: both this method and the monitor's
+        poll write the same deterministic value (the single new run
+        directory), and attribute assignment is atomic under the GIL, so a
+        torn state cannot be observed.
+        """
+        run_id = self.run_id or self._discover_run_id()
+        if not run_id:
+            return None
+        self.run_id = run_id
+        self._poller.run_id = run_id
+        return self._read_state()
+
+    def _emit_step(self, step_id: str, result: dict) -> None:
+        if self.gate.is_open:
+            self._buffered_steps.append((step_id, result))
+        else:
+            print_step_result(step_id, result)
+
+    def _emit_log(self, role: str, text: str) -> None:
+        if self.gate.is_open:
+            self._buffered_logs.append((role, text))
+        else:
+            print_log_event(role, text)
+
+    def _flush_buffer(self) -> None:
+        """Print the events that were buffered while the gate menu was open.
+
+        Steps and logs are flushed in their arrival order per category; this
+        runs right before live printing resumes, so nothing is lost.
+        """
+        for step_id, result in self._buffered_steps:
+            print_step_result(step_id, result)
+        self._buffered_steps.clear()
+        for role, text in self._buffered_logs:
+            print_log_event(role, text)
+        self._buffered_logs.clear()
+
     def _poll_once(self, run_id: str | None = None) -> None:
         if run_id is None:
             run_id = self._discover_run_id()
+        state: dict | None = None
         if run_id:
             self.run_id = run_id
             self._poller.run_id = run_id
-            for step_id, result in self._poller.poll():
-                print_step_result(step_id, result)
+            # state.json is read once per tick: the gate check needs
+            # current_step_id, the poller reuses the same data.
+            state = self._read_state()
+            if self.gate.update(state):
+                # The engine moved past the gate: flush what was buffered
+                # while the menu was open, then resume live emission.
+                self._flush_buffer()
+            for step_id, result in self._poller.poll(state):
+                self._emit_step(step_id, result)
         # The agent logs are drained on every tick regardless of the run id
         # (they do not depend on it); before the run id is known the tailer
         # still shows live agent output.
         for role, text in self._tailer.tail():
-            print_log_event(role, text)
+            self._emit_log(role, text)
 
     def finish(self) -> None:
         """One final poll after specify exits: late step results may still land.
@@ -271,9 +458,17 @@ class LiveMonitor:
         self._poll_once()
 
     def _run(self) -> None:
-        while not self._stop.is_set():
-            self._poll_once()
-            time.sleep(0.5)
+        try:
+            while not self._stop.is_set():
+                self._poll_once()
+                time.sleep(0.5)
+        finally:
+            # The wrapper is stopping. An aborted/rejected run may leave
+            # current_step_id on the gate, so the gate would never close on
+            # its own: close it here and flush whatever was buffered while
+            # it was open — nothing is lost.
+            self.gate.close()
+            self._flush_buffer()
 
 
 def main() -> int:
@@ -305,6 +500,14 @@ def main() -> int:
             line = line.rstrip()
             if not line:
                 continue
+            if is_gate_menu_opener(line):
+                # A human-gate menu window appeared on screen: pause the
+                # monitor's own output (buffered until the gate closes).
+                # The gate's step id is captured synchronously from the
+                # state read right now — not on a later monitor tick, when
+                # a fast answer could already have moved current_step_id.
+                # Echo of the menu lines themselves is unchanged below.
+                monitor.gate.open(monitor.discover_and_read_state())
             print("[{}] {}".format(stamp(), line), flush=True)
             if not run_id:
                 run_id = run_id_from_text(line)
