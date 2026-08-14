@@ -96,10 +96,12 @@ meaningful task id.
 
 When the ADR gate approves, the `save-adr` step releases the ADR into
 `architecture/ADR-<XXXX>-<title>.md` (configured via `workflow.adr_dir`): the next
-free number after the existing `ADR-*.md` files (0001, 0002, ...) and a short
-English `slug` that the planner writes in the ADR frontmatter (2-3 words, kebab-case,
-e.g. `prod-validation-splits`). If the slug is missing, it falls back to a
-transliterated title. Rerunning the same task keeps the ADR number — the file is not
+free number after the existing `ADR-*.md` files (0001, 0002, ...) and the `slug`
+field from the ADR frontmatter — a short 2-3 word English summary in kebab-case
+(e.g. `prod-validation-splits`), written by the planner. The slug is mandatory:
+`save-adr` fails with an actionable message if it is missing (add it to `adr.md`
+and resume) — there is no transliteration fallback, so filenames never contain
+non-English titles. Rerunning the same task keeps the ADR number — the file is not
 duplicated. The ADR heading in the saved file is rewritten to `# ADR-<XXXX>: <title>`.
 
 ### Gates and resume

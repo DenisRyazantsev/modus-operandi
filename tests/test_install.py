@@ -249,6 +249,8 @@ class InstallerTest(unittest.TestCase):
         self.assertIn('adr_dir = "architecture"', workflow)
         self.assertIn('"ADR-%04d-%s.md"', workflow)
         self.assertIn("slug:", workflow)
+        self.assertIn("has no 'slug' field", workflow)
+        self.assertNotIn("translit", workflow.lower().replace("transliteration", ""))
         save_index = workflow.index("- id: save-adr")
         questions_index = workflow.index("- id: executor-questions")
         self.assertLess(save_index, questions_index)
