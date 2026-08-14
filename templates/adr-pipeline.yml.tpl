@@ -123,7 +123,7 @@ ${approve_adr_verdict}
           last=$$(ls -1 ${state_dir}/tasks/{{ inputs.task_id }}/review-*.md 2>/dev/null
           | sort -V | tail -1) && head -1 "$$last" | grep -q '^VERDICT: PASS'
 
-  - id: final-verdict
+  - id: pass-check
     type: shell
     run: >-
       last=$$(ls -1 ${state_dir}/tasks/{{ inputs.task_id }}/review-*.md 2>/dev/null

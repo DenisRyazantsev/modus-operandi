@@ -116,7 +116,7 @@ specify workflow resume <run_id>
 
 With `human_gates: false` the gates auto-approve through `verdict_input` defaults; the
 workflow runs unattended. If the review loop exhausts `max_fix_iterations` without a
-`VERDICT: PASS`, the `final-verdict` step fails the run — inspect the latest
+`VERDICT: PASS`, the `pass-check` step fails the run — inspect the latest
 `review-N.md`, fix the findings manually, and resume:
 
 ```
@@ -167,7 +167,7 @@ opencode serve
 The workflow steps: `write-adr` → `adr-loop` (gate with approve/revise/reject →
 optional feedback revision) → `executor-questions` →
 `planner-answers` → `implement` → `review-loop` (`do-while`: review → fix → verdict)
-→ `final-verdict` → `final-gate` (gate).
+→ `pass-check` → `final-gate` (gate).
 
 The loop verdict checks the **latest** review file only (`sort -V`):
 `last=$(ls -1 .../review-*.md 2>/dev/null | sort -V | tail -1) && head -1 "$last" | grep -q '^VERDICT: PASS'`.

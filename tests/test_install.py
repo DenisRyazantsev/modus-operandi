@@ -219,7 +219,7 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("continue_on_error: true", workflow)
         self.assertIn("sort -V", workflow)
         before_final_gate = workflow.split("final-gate", 1)[0]
-        self.assertNotIn("continue_on_error", before_final_gate.split("final-verdict", 1)[1])
+        self.assertNotIn("continue_on_error", before_final_gate.split("pass-check", 1)[1])
 
     def test_workflow_task_id_is_required(self):
         self.assertEqual(self.install(), 0)
