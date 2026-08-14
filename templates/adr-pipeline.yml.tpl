@@ -204,17 +204,9 @@ ${approve_adr_verdict}
     type: shell
     run: >-
       last=$$(ls -1 ${state_dir}/tasks/{{ inputs.task_id }}/review-*.md 2>/dev/null
-      | sort -V | tail -1) && head -1 "$$last" | grep -q '^VERDICT: PASS'
-
-  - id: copy-latest-review
-    type: shell
-    run: >-
-      latest=$$(ls -1 ${state_dir}/tasks/{{ inputs.task_id }}/review-*.md 2>/dev/null
-      | sort -V | tail -1) && cp "$$latest" ${state_dir}/tasks/latest-review-{{ inputs.task_id }}.md
-
-  - id: final-gate
-    type: gate
-    message: "Review is clean — close?"
-    options: [approve, reject]
-    show_file: "${state_dir}/tasks/latest-review-{{ inputs.task_id }}.md"
-${final_gate_verdict}
+      | sort -V | tail -1);
+      if [ -n "$$last" ] && head -1 "$$last" | grep -q '^VERDICT: PASS'; then
+      echo "REVIEW OK: final verdict PASS ($$last)";
+      else
+      echo "WARNING: review loop exhausted ${max_fix_iterations} iterations without 'VERDICT: PASS' (latest review: $${last:-none}); inspect the latest review file and the code";
+      fi

@@ -199,8 +199,8 @@ class InstallerTest(unittest.TestCase):
             self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
         ).read_text(encoding="utf-8")
         self.assertIn("verdict_input: adr_verdict", workflow)
-        self.assertIn("verdict_input: final_verdict", workflow)
         self.assertIn('default: "approve"', workflow)
+        self.assertNotIn("final_verdict", workflow)
 
     def test_workflow_render_human_gates_true(self):
         self.assertEqual(self.install(), 0)
@@ -209,7 +209,7 @@ class InstallerTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertNotIn("verdict_input", workflow)
 
-    def test_workflow_loop_and_final_verdict_structure(self):
+    def test_workflow_loop_and_pass_check_structure(self):
         self.assertEqual(self.install(), 0)
         workflow = (
             self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
@@ -218,8 +218,8 @@ class InstallerTest(unittest.TestCase):
         self.assertIn('condition: "{{ steps.verdict.output.exit_code != 0 }}"', workflow)
         self.assertIn("continue_on_error: true", workflow)
         self.assertIn("sort -V", workflow)
-        before_final_gate = workflow.split("final-gate", 1)[0]
-        self.assertNotIn("continue_on_error", before_final_gate.split("pass-check", 1)[1])
+        self.assertIn("REVIEW OK: final verdict PASS", workflow)
+        self.assertIn("WARNING: review loop exhausted", workflow)
 
     def test_workflow_task_id_is_required(self):
         self.assertEqual(self.install(), 0)
@@ -236,8 +236,9 @@ class InstallerTest(unittest.TestCase):
             self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
         ).read_text(encoding="utf-8")
         self.assertIn("show_file: \".workflow/tasks/{{ inputs.task_id }}/adr.md\"", workflow)
-        self.assertIn("latest-review-{{ inputs.task_id }}.md", workflow)
-        self.assertIn('show_file: ".workflow/tasks/latest-review-{{ inputs.task_id }}.md"', workflow)
+        self.assertNotIn("latest-review", workflow)
+        self.assertNotIn("final-gate", workflow)
+        self.assertNotIn("copy-latest-review", workflow)
 
     def test_workflow_saves_adr_to_adr_dir(self):
         self.assertEqual(self.install(), 0)
@@ -287,7 +288,7 @@ class InstallerTest(unittest.TestCase):
                      "planner-answers", "implement", "review", "fix"):
             block = workflow.split("- id: %s" % step, 1)[1].split("\n  - id:", 1)[0]
             self.assertIn("timeout: 7200", block, step)
-        self.assertNotIn("timeout", workflow.split("- id: verdict", 1)[1].split("- id: copy-latest-review", 1)[0])
+        self.assertNotIn("timeout", workflow.split("- id: verdict", 1)[1])
 
     def test_placeholder_config_is_rejected(self):
         self.assertEqual(self.install(), 0)

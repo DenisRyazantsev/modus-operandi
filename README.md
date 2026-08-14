@@ -104,9 +104,7 @@ duplicated. The ADR heading in the saved file is rewritten to `# ADR-<XXXX>: <ti
 
 ### Gates and resume
 
-With `human_gates: true` (default) the workflow pauses at the ADR gate and the final
-gate. Each gate shows the material to review inline: the ADR for the ADR gate, and
-the latest `review-N.md` (copied to `latest-review-<task_id>.md`) for `final-gate`.
+The only human touch point is the ADR gate (and the revise feedback gate):
 
 At the ADR gate you can choose `approve`, `revise`, or `reject`:
 
@@ -115,6 +113,11 @@ At the ADR gate you can choose `approve`, `revise`, or `reject`:
   `.workflow/tasks/<task_id>/feedback.md`, then the planner updates the ADR
   accordingly and the gate re-opens with the revised ADR (up to 3 rounds);
 - **reject** — abort the run.
+
+The final outcome needs no gate: if the planner is satisfied the review loop ends
+with `VERDICT: PASS`; if the loop exhausts `max_fix_iterations`, `pass-check` prints
+a `WARNING: review loop exhausted ...` line and the run still completes — check the
+latest `review-N.md` and the code yourself.
 
 Review and continue (after an abort or a paused gate):
 
@@ -142,14 +145,8 @@ resolved deliberately, not silently:
    file's git history plus the Amendments section are the durable trace (the
    `.workflow/` artifacts are gitignored).
 
-With `human_gates: false` the gates auto-approve through `verdict_input` defaults; the
-workflow runs unattended. If the review loop exhausts `max_fix_iterations` without a
-`VERDICT: PASS`, the `pass-check` step fails the run — inspect the latest
-`review-N.md`, fix the findings manually, and resume:
-
-```
-specify workflow resume <run_id>
-```
+With `human_gates: false` the ADR gate auto-approves through `verdict_input` defaults;
+the workflow runs unattended.
 
 ### Warm sessions and `--reset`
 
@@ -195,7 +192,7 @@ opencode serve
 The workflow steps: `write-adr` → `adr-loop` (gate with approve/revise/reject →
 optional feedback revision) → `save-adr` → `executor-questions` →
 `planner-answers` → `implement` → `review-loop` (`do-while`: review → fix → verdict)
-→ `sync-adr` → `pass-check` → `copy-latest-review` → `final-gate` (gate).
+→ `sync-adr` → `pass-check` (reports `REVIEW OK` or `WARNING: review loop exhausted`).
 
 The loop verdict checks the **latest** review file only (`sort -V`):
 `last=$(ls -1 .../review-*.md 2>/dev/null | sort -V | tail -1) && head -1 "$last" | grep -q '^VERDICT: PASS'`.

@@ -291,20 +291,14 @@ def render_workflow(cfg, paths):
     if workflow["human_gates"]:
         verdict_decl = ""
         approve_verdict = ""
-        final_verdict = ""
     else:
         verdict_decl = (
             "  adr_verdict:\n"
             '    type: string\n'
             '    enum: ["", approve, revise, reject]\n'
-            '    default: "approve"\n'
-            "  final_verdict:\n"
-            '    type: string\n'
-            '    enum: ["", approve, reject]\n'
             '    default: "approve"'
         )
         approve_verdict = "    verdict_input: adr_verdict"
-        final_verdict = "    verdict_input: final_verdict"
     render_file(
         TEMPLATES_DIR / "adr-pipeline.yml.tpl",
         paths["workflow"],
@@ -315,7 +309,6 @@ def render_workflow(cfg, paths):
             "step_timeout": str(workflow["shell_timeout"]),
             "verdict_inputs_decl": verdict_decl,
             "approve_adr_verdict": approve_verdict,
-            "final_gate_verdict": final_verdict,
             "max_fix_iterations": str(workflow["max_fix_iterations"]),
         },
     )
