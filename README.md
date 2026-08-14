@@ -98,11 +98,11 @@ When the ADR gate approves, the `save-adr` step releases the ADR into
 `architecture/ADR-<XXXX>-<title>.md` (configured via `workflow.adr_dir`): the next
 free number after the existing `ADR-*.md` files (0001, 0002, ...) and the `slug`
 field from the ADR frontmatter — a short 2-3 word English summary in kebab-case
-(e.g. `prod-validation-splits`), written by the planner. The slug is mandatory:
-`save-adr` fails with an actionable message if it is missing (add it to `adr.md`
-and resume) — there is no transliteration fallback, so filenames never contain
-non-English titles. Rerunning the same task keeps the ADR number — the file is not
-duplicated. The ADR heading in the saved file is rewritten to `# ADR-<XXXX>: <title>`.
+(e.g. `prod-validation-splits`). If the planner forgot the slug, `save-adr` asks it
+to add one (via the warm planner session) and only fails if it still refuses — there
+is no transliteration fallback, so filenames never contain non-English titles.
+Rerunning the same task keeps the ADR number — the file is not duplicated. The ADR
+heading in the saved file is rewritten to `# ADR-<XXXX>: <title>`.
 
 ### Gates and resume
 

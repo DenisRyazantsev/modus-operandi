@@ -250,6 +250,7 @@ class InstallerTest(unittest.TestCase):
         self.assertIn('"ADR-%04d-%s.md"', workflow)
         self.assertIn("slug:", workflow)
         self.assertIn("has no 'slug' field", workflow)
+        self.assertIn("read_slug", workflow)
         self.assertNotIn("translit", workflow.lower().replace("transliteration", ""))
         save_index = workflow.index("- id: save-adr")
         questions_index = workflow.index("- id: executor-questions")

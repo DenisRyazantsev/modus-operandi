@@ -63,20 +63,27 @@ ${approve_adr_verdict}
 
   - id: save-adr
     type: shell
+    timeout: ${step_timeout}
     run: |
       python3 - <<'PY'
-      import os, re, glob
+      import os, re, glob, subprocess, shlex
       p = "${state_dir}/tasks/{{ inputs.task_id }}/adr.md"
       if not os.path.exists(p):
           raise SystemExit("adr.md not found")
-      text = open(p, encoding="utf-8").read()
-      fm = text.split("---", 2)
-      if len(fm) < 3:
-          raise SystemExit("error: adr.md has no YAML frontmatter (no slug field)")
-      m = re.search(r"^slug:\s*(\S+)", fm[1], re.M)
-      if not m:
-          raise SystemExit("error: adr.md frontmatter has no 'slug' field. The slug is a short 2-3 word ENGLISH summary in kebab-case (e.g. 'slug: prod-validation-splits') and becomes the saved filename. Add it to adr.md and resume the run")
-      slug = re.sub(r"[^a-z0-9-]", "-", m.group(1).lower()).strip("-")
+      def read_slug():
+          text = open(p, encoding="utf-8").read()
+          fm = text.split("---", 2)
+          if len(fm) < 3:
+              return None
+          m = re.search(r"^slug:\s*(\S+)", fm[1], re.M)
+          return m.group(1) if m else None
+      if read_slug() is None:
+          prompt = ("Read %s. Its YAML frontmatter (between the first two '---' lines) is missing the 'slug' field. Add it on its own line right after the opening '---': a short 2-3 word ENGLISH summary of the ADR in lowercase kebab-case (e.g. 'slug: prod-validation-splits'). Change nothing else." % p)
+          cmd = "${run_agent} planner " + shlex.quote(prompt) + " --task " + shlex.quote("{{ inputs.task_id }}")
+          subprocess.run(cmd, shell=True, check=True)
+          if read_slug() is None:
+              raise SystemExit("error: adr.md still has no 'slug' field after the planner was asked to add it. Add a short 2-3 word ENGLISH summary in kebab-case (e.g. 'slug: prod-validation-splits') to the frontmatter manually and resume the run")
+      slug = re.sub(r"[^a-z0-9-]", "-", read_slug().lower()).strip("-")
       slug = "-".join(w for w in slug.split("-") if w)
       words = slug.split("-")
       slug = ""
@@ -86,6 +93,7 @@ ${approve_adr_verdict}
           slug = w if not slug else slug + "-" + w
       if not slug:
           raise SystemExit("error: slug is empty after sanitization")
+      text = open(p, encoding="utf-8").read()
       adr_dir = "${adr_dir}"
       existing = glob.glob(os.path.join(adr_dir, "ADR-*-" + slug + ".md"))
       saved_path = ""
