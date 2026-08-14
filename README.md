@@ -116,6 +116,10 @@ At the ADR gate you can choose `approve`, `revise`, or `reject`:
   accordingly and the gate re-opens with the revised ADR (up to 3 rounds);
 - **reject** — abort the run.
 
+If all 3 review rounds run out without an `approve`, a final gate asks you to
+approve the ADR as-is or abort — an unapproved ADR is never saved to
+`architecture/`.
+
 The final outcome needs no gate: if the planner is satisfied the review loop ends
 with `VERDICT: PASS`; if the loop exhausts `max_fix_iterations`, `pass-check` prints
 a `WARNING: review loop exhausted ...` line and the run still completes — check the
