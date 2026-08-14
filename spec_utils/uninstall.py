@@ -4,14 +4,7 @@ from __future__ import annotations
 
 import contextlib
 
-from . import Paths, deps
-
-
-def confirm(prompt: str) -> bool:
-    try:
-        return input(prompt).strip().lower() in ("y", "yes")
-    except EOFError:
-        return False
+from . import Paths, deps, prompt
 
 
 def do_uninstall(paths: Paths, yes: bool) -> None:
@@ -25,6 +18,8 @@ def do_uninstall(paths: Paths, yes: bool) -> None:
         paths["save_adr"],
         paths["check_review"],
         paths["task_utils"],
+        paths["adr_utils"],
+        paths["agent_call"],
         paths["workflow"],
         paths["review_workflow"],
         paths["config_example"],
@@ -38,7 +33,7 @@ def do_uninstall(paths: Paths, yes: bool) -> None:
         with contextlib.suppress(OSError):
             directory.rmdir()
     print("kept your configuration: {}".format(paths["config"]))
-    if yes or confirm("uninstall specify-cli? [y/N] "):
+    if yes or prompt.confirm("uninstall specify-cli? [y/N] "):
         deps.uninstall_specify()
-    if yes or confirm("uninstall PyYAML? [y/N] "):
+    if yes or prompt.confirm("uninstall PyYAML? [y/N] "):
         deps.uninstall_pyyaml()

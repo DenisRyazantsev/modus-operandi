@@ -41,20 +41,33 @@ def render_agents(cfg: dict[str, Any], paths: Paths) -> None:
 
 
 def render_run_agent(cfg: dict[str, Any], paths: Paths) -> None:
-    use_serve = cfg["workflow"]["use_serve"]
+    workflow = cfg["workflow"]
+    use_serve = workflow["use_serve"]
     serve_attach = "--attach http://localhost:4096" if use_serve else ""
     render_file(
         TEMPLATES_DIR / "run-agent.sh.tpl",
         paths["run_agent"],
-        {"serve_attach": serve_attach},
+        {
+            "serve_attach": serve_attach,
+            # The configured state_dir becomes the SKLC_STATE_DIR default so
+            # session records and tasks/current resolution match the workflow
+            # steps, which already use the same configured directory.
+            "state_dir": workflow["state_dir"],
+        },
     )
     paths["run_agent"].chmod(0o755)
 
 
-def render_run_pipeline(paths: Paths) -> None:
+def render_run_pipeline(cfg: dict[str, Any], paths: Paths) -> None:
     # Wrapper that streams specify output with timestamps, prints step results
-    # as they complete and tails the per-role agent logs.
-    render_file(TEMPLATES_DIR / "run_pipeline.py.tpl", paths["run_pipeline"], {})
+    # as they complete and tails the per-role agent logs. The agent logs live
+    # under the configured state_dir, matching run-agent.sh's SKLC_STATE_DIR
+    # default.
+    render_file(
+        TEMPLATES_DIR / "run_pipeline.py.tpl",
+        paths["run_pipeline"],
+        {"state_dir": cfg["workflow"]["state_dir"]},
+    )
     paths["run_pipeline"].chmod(0o755)
 
 
@@ -70,9 +83,10 @@ def render_name_task(cfg: dict[str, Any], paths: Paths) -> None:
 
 
 def render_adr_scripts(paths: Paths) -> None:
-    # save_adr.py and check_review.py both import task_utils.py, so the three
-    # scripts must be copied together to stay importable from scripts/.
-    for key in ("task_utils", "check_review", "save_adr"):
+    # save_adr.py imports task_utils.py, adr_utils.py and agent_call.py, and
+    # check_review.py imports task_utils.py, so all five scripts must be
+    # copied together to stay importable from scripts/.
+    for key in ("task_utils", "check_review", "save_adr", "adr_utils", "agent_call"):
         shutil.copy2(TEMPLATES_DIR / f"{key}.py", paths[key])
 
 
@@ -91,7 +105,7 @@ def render_workflow(cfg: dict[str, Any], paths: Paths) -> None:
             '    enum: ["", approve, revise, reject]\n'
             '    default: "approve"'
         )
-        approve_verdict = "    verdict_input: adr_verdict"
+        approve_verdict = "verdict_input: adr_verdict"
     render_file(
         TEMPLATES_DIR / "adr-pipeline.yml.tpl",
         paths["workflow"],
@@ -109,6 +123,7 @@ def render_workflow(cfg: dict[str, Any], paths: Paths) -> None:
             "max_srp_iterations": str(workflow["max_srp_iterations"]),
             "max_bug_iterations": str(workflow["max_bug_iterations"]),
             "max_comment_iterations": str(workflow["max_comment_iterations"]),
+            "max_adr_iterations": str(workflow["max_adr_iterations"]),
         },
     )
 

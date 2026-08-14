@@ -70,6 +70,49 @@ class CmdCheckReviewTest(unittest.TestCase):
             self.check("review")
         self.assertEqual(cm.exception.code, 1)
 
+    def test_numeric_sort_picks_10_over_9(self):
+        # Lexicographic order would pick review-9.md as "latest"; the
+        # version-order sort must pick review-10.md.
+        (self.task_dir / "review-2.md").write_text(
+            "VERDICT: PASS\n", encoding="utf-8"
+        )
+        (self.task_dir / "review-9.md").write_text(
+            "VERDICT: FIX\n- x\n", encoding="utf-8"
+        )
+        (self.task_dir / "review-10.md").write_text(
+            "VERDICT: PASS\n", encoding="utf-8"
+        )
+        with self.assertRaises(SystemExit) as cm:
+            self.check("review")
+        self.assertEqual(cm.exception.code, 0)
+
+    def test_empty_latest_file_exits_one(self):
+        (self.task_dir / "review-1.md").write_text("", encoding="utf-8")
+        with self.assertRaises(SystemExit) as cm:
+            self.check("review")
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_stray_file_without_number_is_ignored(self):
+        # review-notes.md matches the glob but has no numeric suffix; the
+        # gate must ignore it (not crash on the missing suffix).
+        (self.task_dir / "review-notes.md").write_text(
+            "VERDICT: PASS\n", encoding="utf-8"
+        )
+        (self.task_dir / "review-2.md").write_text(
+            "VERDICT: PASS\n", encoding="utf-8"
+        )
+        with self.assertRaises(SystemExit) as cm:
+            self.check("review")
+        self.assertEqual(cm.exception.code, 0)
+
+    def test_only_stray_files_exit_one(self):
+        (self.task_dir / "review-notes.md").write_text(
+            "VERDICT: PASS\n", encoding="utf-8"
+        )
+        with self.assertRaises(SystemExit) as cm:
+            self.check("review")
+        self.assertEqual(cm.exception.code, 1)
+
     def test_srp_kind_uses_srp_marker(self):
         (self.task_dir / "srp-review-1.md").write_text(
             "SRP: FIX\n- x\n", encoding="utf-8"

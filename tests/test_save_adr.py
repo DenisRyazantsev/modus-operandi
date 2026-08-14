@@ -2,6 +2,7 @@
 
 import argparse
 import importlib.util
+import io
 import sys
 import tempfile
 import unittest
@@ -141,8 +142,13 @@ class CmdSaveTest(unittest.TestCase):
     def test_missing_slug_asks_planner(self):
         self.adr("---\nstatus: accepted\n---\n# ADR: Сплиты\n")
 
-        def fake_run(cmd, shell=False, check=True):
-            assert check is True
+        class FakeResult:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_run(cmd, text=True, capture_output=True):
+            assert text is True and capture_output is True
             assert "planner" in cmd
             adr = self.task_dir / "adr.md"
             text = adr.read_text(encoding="utf-8")
@@ -150,6 +156,7 @@ class CmdSaveTest(unittest.TestCase):
                 text.replace("status: accepted", "slug: prod-validation-splits\nstatus: accepted"),
                 encoding="utf-8",
             )
+            return FakeResult()
 
         with mock.patch("subprocess.run", side_effect=fake_run):
             self.save()
@@ -158,9 +165,37 @@ class CmdSaveTest(unittest.TestCase):
 
     def test_planner_refusal_fails(self):
         self.adr("---\nstatus: accepted\n---\n# ADR: Сплиты\n")
-        with mock.patch("subprocess.run"), self.assertRaises(SystemExit) as cm:
+
+        class FakeResult:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        with mock.patch("subprocess.run", return_value=FakeResult()), self.assertRaises(
+            SystemExit
+        ) as cm:
             self.save()
         self.assertIn("slug", str(cm.exception))
+
+    def test_agent_transport_failure_is_readable(self):
+        # If the planner process itself fails (crash, timeout, attach
+        # failure), the error must surface run-agent.sh's message, not a raw
+        # CalledProcessError traceback.
+        self.adr("---\nstatus: accepted\n---\n# ADR: Сплиты\n")
+
+        class FailedResult:
+            returncode = 2
+            stdout = ""
+            stderr = "run-agent: opencode exited 2; full log: /tmp/x.jsonl\n"
+
+        with mock.patch("subprocess.run", return_value=FailedResult()), self.assertRaises(
+            SystemExit
+        ) as cm:
+            self.save()
+        message = str(cm.exception)
+        self.assertIn("agent call failed (exit 2)", message)
+        self.assertIn("full log: /tmp/x.jsonl", message)
+        self.assertNotIn("Traceback", message)
 
     def test_rerun_same_task_reuses_own_file(self):
         self.adr("---\nslug: prod-validation-splits\n---\n# ADR: Сплиты\n")
@@ -196,8 +231,14 @@ class CmdSaveTest(unittest.TestCase):
     def test_ask_planner_uses_list_form(self):
         recorded = {}
 
-        def fake_run(cmd, check=True):
+        class FakeResult:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_run(cmd, text=True, capture_output=True):
             recorded["cmd"] = cmd
+            return FakeResult()
 
         with mock.patch("subprocess.run", side_effect=fake_run):
             save_adr._ask_planner_for_slug(
@@ -265,6 +306,38 @@ class CmdSyncTest(unittest.TestCase):
                     state_dir=str(self.root / ".workflow"), task_id="t1"
                 )
             )
+
+    def test_sync_unparseable_saved_path_fails(self):
+        # adr-saved.txt points at a file whose name has no ADR-<number>-:
+        # sync must fail loudly instead of writing a malformed "# ADR-XXXX:".
+        target = self.arch / "renamed-adr.md"
+        target.write_text("# ADR: old\n", encoding="utf-8")
+        (self.task_dir / "adr-saved.txt").write_text(str(target), encoding="utf-8")
+        with self.assertRaises(SystemExit) as cm:
+            save_adr.cmd_sync(
+                argparse.Namespace(
+                    state_dir=str(self.root / ".workflow"), task_id="t1"
+                )
+            )
+        self.assertIn("cannot extract ADR number", str(cm.exception))
+        # The unparseable target file must be left untouched.
+        self.assertIn("# ADR: old", target.read_text(encoding="utf-8"))
+
+    def test_sync_empty_saved_path_warns_not_crashes(self):
+        # Regression: Path("") normalizes to "." (truthy), so the old
+        # `not str(Path(...))` guard never fired and an empty adr-saved.txt
+        # fell through to the number regex, exiting with the cryptic
+        # "cannot extract ADR number from .". The emptiness check must run
+        # on the raw string, before the Path is constructed.
+        (self.task_dir / "adr-saved.txt").write_text("", encoding="utf-8")
+        captured = io.StringIO()
+        with mock.patch("sys.stdout", captured):
+            save_adr.cmd_sync(
+                argparse.Namespace(
+                    state_dir=str(self.root / ".workflow"), task_id="t1"
+                )
+            )
+        self.assertIn("warning: saved adr not found", captured.getvalue())
 
 
 if __name__ == "__main__":

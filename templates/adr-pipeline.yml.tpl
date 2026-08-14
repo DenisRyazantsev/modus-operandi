@@ -20,10 +20,66 @@ ${verdict_inputs_decl}
 steps:
   - id: validate-task-id
     type: shell
-    run: >-
-      if [ -n "{{ inputs.task_id }}" ] && ! printf '%s' "{{ inputs.task_id }}" | grep -qE '^[A-Za-z0-9_-]+$$'; then
-      echo "error: task_id '{{ inputs.task_id }}' contains unsupported characters; use only letters, digits, '_' or '-'" >&2; exit 1;
-      fi
+    run: |
+      # The task_id is later embedded inside double-quoted shell arguments
+      # (generate-task-id, save-adr), so it must be rejected if it contains
+      # anything outside [A-Za-z0-9_-]: a quote, backtick, dollar sign or
+      # backslash would break out of the quoted context and execute shell
+      # BEFORE this check could reject it (a task id like `"; touch x; echo "`
+      # runs the touch while the step text is rendered). It must NOT be read
+      # through a heredoc (see validate-feature for why); the value is read as
+      # JSON data from the run's persisted inputs and validated in python,
+      # where the text never enters a shell context.
+      run_id="{{ context.run_id }}";
+      [ -n "$$run_id" ] || { echo "error: cannot locate the current run state; cannot validate the task_id input" >&2; exit 1; };
+      python3 -c '
+      import json, re, sys
+      try:
+          data = json.load(open(".specify/workflows/runs/" + sys.argv[1] + "/inputs.json", encoding="utf-8"))
+      except OSError as exc:
+          print("error: cannot read run inputs: " + str(exc), file=sys.stderr)
+          sys.exit(1)
+      task_id = (data.get("inputs") or {}).get("task_id") or ""
+      if task_id and not re.fullmatch(r"[A-Za-z0-9_-]+", task_id):
+          print("error: task_id contains unsupported characters; use only letters, digits, underscore or dash", file=sys.stderr)
+          sys.exit(1)
+      ' "$$run_id" || exit 1;
+
+  - id: validate-feature
+    type: shell
+    run: |
+      # The feature is later embedded inside double-quoted shell arguments
+      # (generate-task-id, write-adr), so it must be rejected if it contains
+      # characters that could break out of those quotes (double quote,
+      # backtick, dollar sign, backslash). It must NOT be read through a
+      # heredoc: a feature line equal to the delimiter would terminate the
+      # heredoc at parse time and the remaining feature lines would execute
+      # as shell, and an unquoted (expanded) delimiter would expand the
+      # body, executing command substitutions before any check runs. So
+      # the value is read as JSON data from the run's persisted inputs and
+      # validated in python, where the feature text never enters a shell
+      # context.
+      # The run id comes from the workflow context ({{ context.run_id }}), not
+      # from "newest directory by mtime": a concurrently started run, or a
+      # resumed run whose directory keeps its original mtime, would make the
+      # newest-directory lookup pick a different run and silently skip or
+      # wrongly reject this feature's validation.
+      run_id="{{ context.run_id }}";
+      [ -n "$$run_id" ] || { echo "error: cannot locate the current run state (.specify/workflows/runs); cannot validate the feature input" >&2; exit 1; };
+      python3 -c '
+      import json, re, sys
+      try:
+          data = json.load(open(".specify/workflows/runs/" + sys.argv[1] + "/inputs.json", encoding="utf-8"))
+      except OSError as exc:
+          print("error: cannot read run inputs: " + str(exc), file=sys.stderr)
+          sys.exit(1)
+      feature = (data.get("inputs") or {}).get("feature") or ""
+      # \x24 is the dollar sign: the step text is rendered through
+      # string.Template, which would reject a literal dollar sign here.
+      if re.search(r"[\"`\x24\\]", feature):
+          print("error: feature contains characters unsafe for shell (quote, backtick, dollar, backslash); rephrase it", file=sys.stderr)
+          sys.exit(1)
+      ' "$$run_id" || exit 1;
 
   - id: generate-task-id
     type: shell
@@ -53,7 +109,7 @@ steps:
 
   - id: adr-loop
     type: do-while
-    max_iterations: 3
+    max_iterations: ${max_adr_iterations}
     condition: "{{ steps.adr-gate.output.choice != 'approve' }}"
     steps:
       - id: adr-gate
@@ -62,7 +118,7 @@ steps:
         options: [approve, revise, reject]
         on_reject: abort
         show_file: "${state_dir}/tasks/current/adr.md"
-${approve_adr_verdict}
+        ${approve_adr_verdict}
       - id: adr-revise-branch
         type: if
         condition: "{{ steps.adr-gate.output.choice == 'revise' }}"

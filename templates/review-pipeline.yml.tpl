@@ -2,7 +2,7 @@ schema_version: "1.0"
 workflow:
   id: "review-pipeline"
   name: "Review Pipeline"
-  version: "1.0.0"
+  version: "1.1.0"
   author: "spec-kit-llm-client"
   description: "Review your code and fix findings; by default the whole codebase, with -i branch-diff=true only the changes between the current branch and the default branch"
 
@@ -44,7 +44,10 @@ steps:
       echo "WARNING: no main/master branch found; reviewing against HEAD";
       base="HEAD";
       fi;
-      if git diff "$$base" --quiet; then
+      # `git diff --quiet` ignores untracked files, so a branch (or fresh
+      # repo) containing only NEW files would falsely report "no changes";
+      # count untracked files as changes too.
+      if git diff "$$base" --quiet && [ -z "$$(git ls-files --others --exclude-standard)" ]; then
       echo "error: no changes against $$base - nothing to review" >&2; exit 1;
       fi;
       printf '%s' "$$base" > "${state_dir}/base-branch.txt";
@@ -66,19 +69,18 @@ steps:
         timeout: ${step_timeout}
         run: >-
           set -euo pipefail;
+          snapfile="${state_dir}/tasks/current/srp-snapshot.sha";
+          if [ -s "$$snapfile" ]; then
+          snap=$$(cat "$$snapfile");
           "${run_agent}" planner
-          "Review for SRP violations ONLY: the single-responsibility principle —
-          every class, function and module must have one clear responsibility, with
-          no god classes/functions and no mixed concerns in one unit. Do NOT review
-          bugs, tests, or any other quality aspect (a later stage does that).
-          Review scope: read ${state_dir}/scope.txt — if it says 'full', review the
-          ENTIRE codebase of this project (all source files; skip .git, .specify,
-          build artifacts and dependencies); if it starts with 'branch-diff: ', the
-          base branch name follows — run git status, then git diff <base> (includes
-          staged and unstaged changes) and review ONLY those changes.
-          Write ${state_dir}/tasks/current/srp-review-N.md
-          (N is the next number after the existing srp-review files) with the first
-          line exactly 'SRP: PASS' or 'SRP: FIX' followed by actionable findings."
+          "Re-review for SRP ONLY. The executor fixed the findings from the latest srp-review file. Verify each finding is fixed and review ONLY the changes made since the previous review: run git diff $$snap and git status (git diff does not show untracked files, so new files made by the executor only appear in git status). Skip files with fewer than 300 lines of code. Write ${state_dir}/tasks/current/srp-review-N.md (N is the next number after the existing srp-review files) with the first line exactly 'SRP: PASS' or 'SRP: FIX' followed by findings.";
+          else
+          "${run_agent}" planner
+          "Find SRP violations in the code: every class, function and module must have one clear responsibility, no god classes, no mixed concerns. Do not review bugs or style (a later stage does). Skip files with fewer than 300 lines of code. If ${state_dir}/scope.txt starts with 'branch-diff: ', review only that git diff and also run git status (git diff does not show untracked files, so new files appear only in git status — include them in the review scope). Write ${state_dir}/tasks/current/srp-review-N.md (N is the next number after the existing srp-review files) with the first line exactly 'SRP: PASS' or 'SRP: FIX' followed by actionable findings.";
+          fi;
+          snap=$$(git stash create 2>/dev/null || true);
+          [ -n "$$snap" ] || snap=HEAD;
+          printf '%s' "$$snap" > "$$snapfile";
 
       - id: srp-verdict
         type: shell
@@ -118,21 +120,18 @@ steps:
         timeout: ${step_timeout}
         run: >-
           set -euo pipefail;
+          snapfile="${state_dir}/tasks/current/bug-snapshot.sha";
+          if [ -s "$$snapfile" ]; then
+          snap=$$(cat "$$snapfile");
           "${run_agent}" planner
-          "Review for BUGS ONLY: logic errors, wrong conditions,
-          off-by-one and edge cases, unhandled errors, races, broken control flow,
-          wrong types/units, and mismatches between the implemented behavior and
-          what the code is clearly meant to do.
-          Do NOT review SRP violations, style, or comment quality
-          (later stages do that).
-          Review scope: read ${state_dir}/scope.txt — if it says 'full', review the
-          ENTIRE codebase of this project (all source files; skip .git, .specify,
-          build artifacts and dependencies); if it starts with 'branch-diff: ', the
-          base branch name follows — run git status, then git diff <base> (includes
-          staged and unstaged changes) and review ONLY those changes.
-          Write ${state_dir}/tasks/current/bug-review-N.md
-          (N is the next number after the existing bug-review files) with the first
-          line exactly 'BUGS: PASS' or 'BUGS: FIX' followed by actionable findings."
+          "Re-review for bugs ONLY. The executor fixed the findings from the latest bug-review file. Verify each finding is fixed and review ONLY the changes made since the previous review: run git diff $$snap and git status (git diff does not show untracked files, so new files made by the executor only appear in git status). Write ${state_dir}/tasks/current/bug-review-N.md (N is the next number after the existing bug-review files) with the first line exactly 'BUGS: PASS' or 'BUGS: FIX' followed by findings.";
+          else
+          "${run_agent}" planner
+          "Find bugs in the code: logic errors, wrong conditions, off-by-one and edge cases, unhandled errors, races, broken control flow, type/unit mismatches. Do not review SRP or style (other stages do). If ${state_dir}/scope.txt starts with 'branch-diff: ', review only that git diff and also run git status (git diff does not show untracked files, so new files appear only in git status — include them in the review scope). Write ${state_dir}/tasks/current/bug-review-N.md (N is the next number after the existing bug-review files) with the first line exactly 'BUGS: PASS' or 'BUGS: FIX' followed by actionable findings.";
+          fi;
+          snap=$$(git stash create 2>/dev/null || true);
+          [ -n "$$snap" ] || snap=HEAD;
+          printf '%s' "$$snap" > "$$snapfile";
 
       - id: bug-verdict
         type: shell
@@ -172,18 +171,18 @@ steps:
         timeout: ${step_timeout}
         run: >-
           set -euo pipefail;
+          snapfile="${state_dir}/tasks/current/review-snapshot.sha";
+          if [ -s "$$snapfile" ]; then
+          snap=$$(cat "$$snapfile");
           "${run_agent}" planner
-          "Review for general correctness and quality: broken logic and control
-          flow, edge cases, unhandled errors, dead code, confusing naming, and
-          anything the earlier SRP and bug stages missed.
-          Review scope: read ${state_dir}/scope.txt — if it says 'full', review the
-          ENTIRE codebase of this project (all source files; skip .git, .specify,
-          build artifacts and dependencies); if it starts with 'branch-diff: ', the
-          base branch name follows — run git status, then git diff <base> (includes
-          staged and unstaged changes) and review ONLY those changes.
-          Write ${state_dir}/tasks/current/review-N.md (N is the
-          next number after the existing review files) with the first line exactly
-          'VERDICT: PASS' or 'VERDICT: FIX' followed by actionable findings."
+          "Re-review. The executor fixed the findings from the latest review file. Verify each finding is fixed and review ONLY the changes made since the previous review: run git diff $$snap and git status (git diff does not show untracked files, so new files made by the executor only appear in git status). Write ${state_dir}/tasks/current/review-N.md (N is the next number after the existing review files) with the first line exactly 'VERDICT: PASS' or 'VERDICT: FIX' followed by findings.";
+          else
+          "${run_agent}" planner
+          "Find correctness and quality issues the SRP and bug stages missed: broken logic, edge cases, unhandled errors, dead code, confusing naming. If ${state_dir}/scope.txt starts with 'branch-diff: ', review only that git diff and also run git status (git diff does not show untracked files, so new files appear only in git status — include them in the review scope). Write ${state_dir}/tasks/current/review-N.md (N is the next number after the existing review files) with the first line exactly 'VERDICT: PASS' or 'VERDICT: FIX' followed by actionable findings.";
+          fi;
+          snap=$$(git stash create 2>/dev/null || true);
+          [ -n "$$snap" ] || snap=HEAD;
+          printf '%s' "$$snap" > "$$snapfile";
 
       - id: verdict
         type: shell
@@ -222,22 +221,18 @@ steps:
         timeout: ${step_timeout}
         run: >-
           set -euo pipefail;
+          snapfile="${state_dir}/tasks/current/comment-snapshot.sha";
+          if [ -s "$$snapfile" ]; then
+          snap=$$(cat "$$snapfile");
           "${run_agent}" planner
-          "Review for readability 'traps' ONLY: correct but
-          misleading code that would confuse a reader — comments that state the
-          obvious or contradict the code (add or fix a *why* comment, never a
-          *what* description), and names/structures so unclear they deserve a
-          rename or refactor. NOT bugs, NOT SRP violations (later stages handle
-          nothing after this — this is the last stage).
-          Review scope: read ${state_dir}/scope.txt — if it says 'full', review the
-          ENTIRE codebase of this project (all source files; skip .git, .specify,
-          build artifacts and dependencies); if it starts with 'branch-diff: ', the
-          base branch name follows — run git status, then git diff <base> (includes
-          staged and unstaged changes) and review ONLY those changes.
-          Write
-          ${state_dir}/tasks/current/comment-review-N.md (N is the next number
-          after the existing comment-review files) with the first line exactly
-          'VERDICT: PASS' or 'VERDICT: FIX' followed by actionable findings."
+          "Re-review for readability traps ONLY. The executor fixed the findings from the latest comment-review file. Verify each finding is fixed and review ONLY the changes made since the previous review: run git diff $$snap and git status (git diff does not show untracked files, so new files made by the executor only appear in git status). Write ${state_dir}/tasks/current/comment-review-N.md (N is the next number after the existing comment-review files) with the first line exactly 'VERDICT: PASS' or 'VERDICT: FIX' followed by findings.";
+          else
+          "${run_agent}" planner
+          "Find readability traps: correct but misleading code — comments that state the obvious or contradict the code (add or fix a why comment, never a what description), names so unclear they deserve a rename. Not bugs, not SRP. If ${state_dir}/scope.txt starts with 'branch-diff: ', review only that git diff and also run git status (git diff does not show untracked files, so new files appear only in git status — include them in the review scope). Write ${state_dir}/tasks/current/comment-review-N.md (N is the next number after the existing comment-review files) with the first line exactly 'VERDICT: PASS' or 'VERDICT: FIX' followed by actionable findings.";
+          fi;
+          snap=$$(git stash create 2>/dev/null || true);
+          [ -n "$$snap" ] || snap=HEAD;
+          printf '%s' "$$snap" > "$$snapfile";
 
       - id: comment-verdict
         type: shell

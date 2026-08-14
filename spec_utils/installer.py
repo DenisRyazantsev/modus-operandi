@@ -1,0 +1,45 @@
+"""Install orchestration: the full install flow.
+
+User-facing status lines and the next-steps instructions are printed by the
+CLI layer (cli.py); this module only drives the flow.
+"""
+
+from __future__ import annotations
+
+import shutil
+
+from . import CONFIG_EXAMPLE, Paths, config, config_diff, deps, render, verify
+
+
+def ensure_config(paths: Paths) -> None:
+    # File provisioning: the config.example.yml reference copy and the first
+    # config.yml (which the user edits to pick models). config.py stays
+    # limited to loading/merging/validating, so the copies live here next to
+    # the directory mkdir orchestration.
+    shutil.copy2(CONFIG_EXAMPLE, paths["config_example"])
+    if not paths["config"].exists():
+        shutil.copy2(CONFIG_EXAMPLE, paths["config"])
+        print("created {} with defaults (edit it to change models)".format(paths["config"]))
+
+
+def install(paths: Paths, update: bool) -> None:
+    verify.check_prerequisites()
+    deps.ensure_pyyaml()
+    deps.ensure_specify()
+    for directory in (paths["agents"], paths["scripts"], paths["config_dir"]):
+        directory.mkdir(parents=True, exist_ok=True)
+    ensure_config(paths)
+    raw = config.load_config(paths["config"])
+    cfg = config.validate_config(config.apply_defaults(raw))
+    if update:
+        # Diff against the raw config, not the defaults-filled one: after
+        # apply_defaults() every key exists, so the diff would always be empty.
+        config_diff.report_new_options(paths, raw)
+    render.render_agents(cfg, paths)
+    render.render_run_agent(cfg, paths)
+    render.render_name_task(cfg, paths)
+    render.render_run_pipeline(cfg, paths)
+    render.render_adr_scripts(paths)
+    render.render_workflow(cfg, paths)
+    render.render_review_workflow(cfg, paths)
+    verify.verify_install(paths)

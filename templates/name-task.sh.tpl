@@ -40,6 +40,10 @@ for line in sys.stdin:
     except Exception:
         continue
     p = d.get("part", {})
+    # opencode streams many text parts per run (thinking, tool calls, ...);
+    # the final one is the reply, so take texts[-1]. The event-level "text"
+    # check filters out non-message events; the part-level one selects
+    # actual payload parts.
     if d.get("type") == "text" and p.get("type") == "text" and p.get("text"):
         texts.append(p["text"])
 sys.stdout.write(texts[-1] if texts else "")'

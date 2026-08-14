@@ -15,7 +15,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from spec_utils import InstallError, config, deps, verify
+from spec_utils import InstallError, paths, proc, tool_discovery, verify, versions, yaml_loader
 from spec_utils import cli as install
 
 
@@ -66,7 +66,7 @@ class InstallerTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.home = Path(self.tmp.name)
         self.records = []
-        patcher = mock.patch.object(deps, "run", side_effect=make_run(self.records))
+        patcher = mock.patch.object(proc, "run", side_effect=make_run(self.records))
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -76,7 +76,7 @@ class InstallerTest(unittest.TestCase):
     def run_main(self, argv, which=which_fake):
         stderr = io.StringIO()
         with (
-            mock.patch.object(deps, "find_in_path", side_effect=which),
+            mock.patch.object(tool_discovery, "find_in_path", side_effect=which),
             mock.patch("sys.stderr", stderr),
         ):
             rc = install.main(argv)
@@ -104,18 +104,16 @@ class InstallerTest(unittest.TestCase):
             ".config/opencode/scripts/save_adr.py",
             ".config/opencode/scripts/check_review.py",
             ".config/opencode/scripts/task_utils.py",
+            ".config/opencode/scripts/adr_utils.py",
+            ".config/opencode/scripts/agent_call.py",
             ".config/spec-kit-llm-client/config.yml",
             ".config/spec-kit-llm-client/config.example.yml",
             ".config/spec-kit-llm-client/adr-pipeline.yml",
         ]
         for rel in expected:
             self.assertTrue((self.home / rel).exists(), rel)
-        self.assertTrue(
-            os.access(self.home / ".config/opencode/scripts/run-agent.sh", os.X_OK)
-        )
-        self.assertTrue(
-            os.access(self.home / ".config/opencode/scripts/name-task.sh", os.X_OK)
-        )
+        self.assertTrue(os.access(self.home / ".config/opencode/scripts/run-agent.sh", os.X_OK))
+        self.assertTrue(os.access(self.home / ".config/opencode/scripts/name-task.sh", os.X_OK))
 
     def test_reinstall_preserves_user_config(self):
         self.assertEqual(self.install(), 0)
@@ -149,12 +147,8 @@ class InstallerTest(unittest.TestCase):
         adds = [cmd for cmd in self.records if cmd[1:3] == ["workflow", "add"]]
         # Two --register invocations x two workflows (adr + review).
         self.assertEqual(len(adds), 4)
-        self.assertEqual(
-            len([c for c in adds if "adr-pipeline.yml" in c[3]]), 2
-        )
-        self.assertEqual(
-            len([c for c in adds if "review-pipeline.yml" in c[3]]), 2
-        )
+        self.assertEqual(len([c for c in adds if "adr-pipeline.yml" in c[3]]), 2)
+        self.assertEqual(len([c for c in adds if "review-pipeline.yml" in c[3]]), 2)
         self.assertTrue(workflow.exists())
         review = self.home / ".config/spec-kit-llm-client/review-pipeline.yml"
         self.assertTrue(review.exists())
@@ -187,53 +181,51 @@ class InstallerTest(unittest.TestCase):
 
     def test_rendered_executor_has_model_and_permissions(self):
         self.assertEqual(self.install(), 0)
-        executor = (
-            self.home / ".config/opencode/agent/executor.md"
-        ).read_text(encoding="utf-8")
+        executor = (self.home / ".config/opencode/agent/executor.md").read_text(encoding="utf-8")
         self.assertIn("opencode-go/deepseek-v4-flash", executor)
         self.assertIn("reasoningEffort: max", executor)
         self.assertIn("permission", executor)
 
     def test_rendered_planner_reasoning_from_config(self):
         self.assertEqual(self.install(), 0)
-        self.write_config(self.read_config().replace(
-            "reasoning: max", "reasoning: high", 1
-        ))
+        self.write_config(self.read_config().replace("reasoning: max", "reasoning: high", 1))
         self.assertEqual(self.install(), 0)
-        planner = (
-            self.home / ".config/opencode/agent/planner.md"
-        ).read_text(encoding="utf-8")
-        executor = (
-            self.home / ".config/opencode/agent/executor.md"
-        ).read_text(encoding="utf-8")
+        planner = (self.home / ".config/opencode/agent/planner.md").read_text(encoding="utf-8")
+        executor = (self.home / ".config/opencode/agent/executor.md").read_text(encoding="utf-8")
         self.assertIn("reasoningEffort: high", planner)
         self.assertIn("reasoningEffort: max", executor)
 
     def test_workflow_render_human_gates_false(self):
         self.assertEqual(self.install(), 0)
-        self.write_config(self.read_config().replace(
-            "human_gates: true", "human_gates: false"
-        ))
+        self.write_config(self.read_config().replace("human_gates: true", "human_gates: false"))
         self.assertEqual(self.install(), 0)
-        workflow = (
-            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
-        ).read_text(encoding="utf-8")
+        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("verdict_input: adr_verdict", workflow)
         self.assertIn('default: "approve"', workflow)
         self.assertNotIn("final_verdict", workflow)
+        # The rendered file must be valid YAML, with verdict_input nested in
+        # the adr-gate step (regression: it used to be indented one level
+        # shallower, producing unparseable YAML).
+        parsed = yaml_loader.yaml.safe_load(workflow)
+        self.assertIsNotNone(parsed)
+        adr_loop = next(s for s in parsed["steps"] if s["id"] == "adr-loop")
+        adr_gate = next(s for s in adr_loop["steps"] if s["id"] == "adr-gate")
+        self.assertEqual(adr_gate["verdict_input"], "adr_verdict")
 
     def test_workflow_render_human_gates_true(self):
         self.assertEqual(self.install(), 0)
-        workflow = (
-            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
-        ).read_text(encoding="utf-8")
+        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
         self.assertNotIn("verdict_input", workflow)
 
     def test_workflow_loop_and_pass_check_structure(self):
         self.assertEqual(self.install(), 0)
-        workflow = (
-            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
-        ).read_text(encoding="utf-8")
+        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("do-while", workflow)
         self.assertIn('condition: "{{ steps.verdict.output.exit_code != 0 }}"', workflow)
         self.assertIn("continue_on_error: true", workflow)
@@ -247,24 +239,22 @@ class InstallerTest(unittest.TestCase):
 
     def test_workflow_task_id_is_optional(self):
         self.assertEqual(self.install(), 0)
-        workflow = (
-            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
-        ).read_text(encoding="utf-8")
+        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
         block = workflow.split("task_id:", 1)[1].split("steps:", 1)[0]
         self.assertIn("required: false", block)
         self.assertNotIn("default:", block)
 
     def test_workflow_generate_task_id_structure(self):
         self.assertEqual(self.install(), 0)
-        workflow = (
-            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
-        ).read_text(encoding="utf-8")
+        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("- id: generate-task-id", workflow)
-        block = workflow.split("- id: generate-task-id", 1)[1].split(
-            "- id: write-adr", 1
-        )[0]
+        block = workflow.split("- id: generate-task-id", 1)[1].split("- id: write-adr", 1)[0]
         self.assertIn("name-task.sh", block)
-        self.assertNotIn("run-agent.sh\" name", block)
+        self.assertNotIn('run-agent.sh" name', block)
         self.assertIn("date +%Y%m%d-%H%M", block)
         self.assertIn("ln -sfn", block)
         self.assertIn("tasks/current", block)
@@ -276,25 +266,31 @@ class InstallerTest(unittest.TestCase):
 
     def test_workflow_gates_show_files(self):
         self.assertEqual(self.install(), 0)
-        workflow = (
-            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
-        ).read_text(encoding="utf-8")
-        self.assertIn("show_file: \".workflow/tasks/current/adr.md\"", workflow)
+        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('show_file: ".workflow/tasks/current/adr.md"', workflow)
         self.assertNotIn("latest-review", workflow)
         self.assertNotIn("final-gate", workflow)
         self.assertNotIn("copy-latest-review", workflow)
 
     def test_review_workflow_structure(self):
         self.assertEqual(self.install(), 0)
-        review = (
-            self.home / ".config/spec-kit-llm-client/review-pipeline.yml"
-        ).read_text(encoding="utf-8")
+        review = (self.home / ".config/spec-kit-llm-client/review-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
         self.assertIn('id: "review-pipeline"', review)
         self.assertNotIn("inputs: {}", review)
         self.assertIn("branch-diff:", review)
-        for step in ("generate-task-id", "determine-scope",
-                     "srp-loop", "bug-loop", "review-loop",
-                     "comment-review-loop", "report"):
+        for step in (
+            "generate-task-id",
+            "determine-scope",
+            "srp-loop",
+            "bug-loop",
+            "review-loop",
+            "comment-review-loop",
+            "report",
+        ):
             self.assertIn(f"- id: {step}", review, step)
         for kind in ("srp", "bugs", "review", "comment"):
             self.assertIn(f'check-review ".workflow" "" {kind}', review, kind)
@@ -303,6 +299,9 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("origin/main", review)
         self.assertIn("origin/master", review)
         self.assertIn("no changes against", review)
+        # `git diff --quiet` ignores untracked files, so a branch containing
+        # only NEW files must not be rejected as "nothing to review".
+        self.assertIn("git ls-files --others --exclude-standard", review)
         self.assertIn("branch-diff: ", review)
         self.assertIn("mode: full codebase review", review)
         self.assertIn("git branch --show-current", review)
@@ -314,17 +313,72 @@ class InstallerTest(unittest.TestCase):
         self.assertNotIn("adr_dir", review)
         self.assertNotIn("--task", review)
 
+    def test_review_rerun_prompts_include_git_status(self):
+        # Regression: git diff <snapshot> never shows untracked files, so a
+        # NEW file the executor creates while fixing a finding was invisible
+        # in every subsequent re-review. Each re-review prompt must also ask
+        # for git status so untracked files are in the review scope.
+        self.assertEqual(self.install(), 0)
+        review = (self.home / ".config/spec-kit-llm-client/review-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
+        # `$$` in the template renders to a single `$` in the installed file.
+        self.assertIn("git diff $snap and git status", review)
+        self.assertIn("does not show untracked files", review)
+
+    def test_review_first_iteration_prompts_include_untracked_files(self):
+        # Regression: determine-scope admits branches whose only changes are
+        # untracked files, but the first-iteration prompts told the reviewer
+        # to look only at `git diff <base>` — which is empty for untracked
+        # files. Every first-iteration prompt must also ask for git status so
+        # untracked files are in the review scope on the first pass too.
+        self.assertEqual(self.install(), 0)
+        review = (self.home / ".config/spec-kit-llm-client/review-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(review.count("review only that git diff and also run git status"), 4)
+        self.assertIn("new files appear only in git status", review)
+
     def test_review_workflow_order(self):
         self.assertEqual(self.install(), 0)
-        review = (
-            self.home / ".config/spec-kit-llm-client/review-pipeline.yml"
-        ).read_text(encoding="utf-8")
-        order = [review.index(f"- id: {s}") for s in
-                 ("generate-task-id", "determine-scope", "srp-loop",
-                  "srp-pass-check", "bug-loop", "bug-pass-check",
-                  "review-loop", "pass-check", "comment-review-loop",
-                  "comment-pass-check", "report")]
+        review = (self.home / ".config/spec-kit-llm-client/review-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
+        order = [
+            review.index(f"- id: {s}")
+            for s in (
+                "generate-task-id",
+                "determine-scope",
+                "srp-loop",
+                "srp-pass-check",
+                "bug-loop",
+                "bug-pass-check",
+                "review-loop",
+                "pass-check",
+                "comment-review-loop",
+                "comment-pass-check",
+                "report",
+            )
+        ]
         self.assertEqual(order, sorted(order))
+
+    def test_custom_state_dir_propagates_to_scripts(self):
+        # workflow.state_dir is configurable; the generated scripts must agree
+        # with the workflow steps on where the task state and agent logs live.
+        self.assertEqual(self.install(), 0)
+        self.write_config(
+            self.read_config().replace("state_dir: .workflow", "state_dir: meta")
+        )
+        self.assertEqual(self.install(), 0)
+        run_agent = (self.home / ".config/opencode/scripts/run-agent.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("SKLC_STATE_DIR:-meta", run_agent)
+        wrapper = (self.home / ".config/opencode/scripts/run-pipeline.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("'meta/logs'", wrapper)
+        self.assertNotIn(".workflow/logs", wrapper)
 
     def test_run_pipeline_wrapper_rendered(self):
         self.assertEqual(self.install(), 0)
@@ -343,9 +397,9 @@ class InstallerTest(unittest.TestCase):
 
     def test_workflow_saves_adr_to_adr_dir(self):
         self.assertEqual(self.install(), 0)
-        workflow = (
-            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
-        ).read_text(encoding="utf-8")
+        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("- id: save-adr", workflow)
         self.assertIn('save_adr.py" save', workflow)
         self.assertIn('"architecture"', workflow)
@@ -355,20 +409,22 @@ class InstallerTest(unittest.TestCase):
         save_index = workflow.index("- id: save-adr")
         questions_index = workflow.index("- id: executor-questions")
         self.assertLess(save_index, questions_index)
-        save_adr = (
-            self.home / ".config/opencode/scripts/save_adr.py"
-        ).read_text(encoding="utf-8")
+        save_adr = (self.home / ".config/opencode/scripts/save_adr.py").read_text(encoding="utf-8")
         self.assertIn("read_slug", save_adr)
         self.assertIn("has no 'slug' field", save_adr)
-        self.assertIn("must contain ASCII letters", save_adr)
-        self.assertIn("w[:60]", save_adr)
         self.assertNotIn("translit", save_adr.lower().replace("transliteration", ""))
+        # The slug/numbering/heading text rules live in adr_utils.py.
+        adr_utils = (self.home / ".config/opencode/scripts/adr_utils.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("must contain ASCII letters", adr_utils)
+        self.assertIn("w[:60]", adr_utils)
 
     def test_workflow_deviation_sync(self):
         self.assertEqual(self.install(), 0)
-        workflow = (
-            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
-        ).read_text(encoding="utf-8")
+        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("- id: sync-adr", workflow)
         self.assertIn("deviation.md", workflow)
         self.assertIn("## Amendments", workflow)
@@ -377,9 +433,7 @@ class InstallerTest(unittest.TestCase):
         self.assertIn('save_adr.py" sync', block)
         self.assertLess(block.index('save_adr.py" sync'), block.index("rm -f"))
         self.assertIn("timeout: 7200", block)
-        save_adr = (
-            self.home / ".config/opencode/scripts/save_adr.py"
-        ).read_text(encoding="utf-8")
+        save_adr = (self.home / ".config/opencode/scripts/save_adr.py").read_text(encoding="utf-8")
         self.assertIn("adr-saved.txt", save_adr)
         sync_index = workflow.index("- id: sync-adr")
         pass_index = workflow.index("- id: pass-check")
@@ -389,9 +443,9 @@ class InstallerTest(unittest.TestCase):
 
     def test_workflow_approval_gate_after_loop(self):
         self.assertEqual(self.install(), 0)
-        workflow = (
-            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
-        ).read_text(encoding="utf-8")
+        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("- id: adr-unapproved", workflow)
         self.assertIn("- id: adr-approval-gate", workflow)
         self.assertIn("options: [approve, abort]", workflow)
@@ -405,37 +459,86 @@ class InstallerTest(unittest.TestCase):
 
     def test_workflow_validate_task_id(self):
         self.assertEqual(self.install(), 0)
-        workflow = (
-            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
-        ).read_text(encoding="utf-8")
+        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("- id: validate-task-id", workflow)
-        self.assertIn("'^[A-Za-z0-9_-]+$'", workflow)
-        self.assertLess(workflow.index("validate-task-id"), workflow.index("write-adr"))
-        run_agent = (
-            self.home / ".config/opencode/scripts/run-agent.sh"
-        ).read_text(encoding="utf-8")
+        self.assertLess(
+            workflow.index("- id: validate-task-id"), workflow.index("- id: write-adr")
+        )
+        # The task_id input is inlined into double-quoted shell strings in
+        # generate-task-id and save-adr, so anything outside [A-Za-z0-9_-]
+        # must be rejected before any step embeds it. As with the feature,
+        # the value is read as JSON data from the run's persisted inputs and
+        # validated in python: interpolating the raw value into a shell
+        # validation script is itself the injection vector (a task id like
+        # `"; touch x; echo "` runs the touch while the step text renders).
+        block = workflow.split("- id: validate-task-id", 1)[1].split("\n  - id:", 1)[0]
+        self.assertIn("inputs.json", block)
+        self.assertIn("re.fullmatch", block)
+        self.assertNotIn("{{ inputs.task_id }}", block)
+        self.assertNotIn("grep -qE", block)
+        run_agent = (self.home / ".config/opencode/scripts/run-agent.sh").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("^[A-Za-z0-9_-]+$", run_agent)
+
+    def test_workflow_validate_feature(self):
+        self.assertEqual(self.install(), 0)
+        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("- id: validate-feature", workflow)
+        # The feature input is inlined into double-quoted shell strings in
+        # generate-task-id and write-adr, so quotes/backticks/$/backslash
+        # must be rejected before any step embeds it. The check must not
+        # interpolate the feature into a heredoc (a feature line equal to the
+        # delimiter would terminate it early and execute the remaining lines
+        # as shell); instead the value is read as JSON data from the run's
+        # persisted inputs and validated in python.
+        self.assertIn("inputs.json", workflow)
+        self.assertIn("python3 -c", workflow)
+        self.assertIn(".specify/workflows/runs", workflow)
+        self.assertIn("re.search", workflow)
+        self.assertNotIn("<<'FEATURE_EOF'", workflow)
+        # The validate step itself must not interpolate the feature into the
+        # shell text (that is the injection vector the check exists to close).
+        block = workflow.split("- id: validate-feature", 1)[1].split("\n  - id:", 1)[0]
+        self.assertNotIn("{{ inputs.feature }}", block)
+        # The run id must come from the workflow context, not from "newest
+        # directory by mtime": a concurrent run, or a resumed run whose
+        # directory keeps its original mtime, would make the newest-directory
+        # lookup pick the wrong run and skip (or wrongly reject) this
+        # validation.
+        self.assertIn("{{ context.run_id }}", block)
+        self.assertNotIn("ls -1t", block)
+        self.assertNotIn("head -1", block)
+        self.assertLess(
+            workflow.index("- id: validate-feature"),
+            workflow.index("- id: generate-task-id"),
+        )
 
     def test_run_agent_guards(self):
         self.assertEqual(self.install(), 0)
-        run_agent = (
-            self.home / ".config/opencode/scripts/run-agent.sh"
-        ).read_text(encoding="utf-8")
+        run_agent = (self.home / ".config/opencode/scripts/run-agent.sh").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("--task) [ $# -ge 2 ] || usage", run_agent)
         self.assertIn("ps -p", run_agent)
         self.assertIn("grep -q '^opencode'", run_agent)
-        self.assertIn("> \"$LOG_FILE\" 2>&1", run_agent)
-        self.assertIn("cat \"$LOG_FILE\"", run_agent)
+        self.assertIn('> "$LOG_FILE" 2>&1', run_agent)
+        self.assertNotIn('tail -c 4096 "$LOG_FILE"', run_agent)
+        self.assertNotIn('cat "$LOG_FILE"', run_agent)
         self.assertIn("full log: $LOG_FILE", run_agent)
-        self.assertNotIn("OUTPUT=\"$(opencode", run_agent)
+        self.assertNotIn('OUTPUT="$(opencode', run_agent)
         self.assertEqual(run_agent.count("session[iI][dD]"), 1)
         self.assertNotIn("'name'", run_agent)
 
     def test_name_task_script_rendered(self):
         self.assertEqual(self.install(), 0)
-        name_task = (
-            self.home / ".config/opencode/scripts/name-task.sh"
-        ).read_text(encoding="utf-8")
+        name_task = (self.home / ".config/opencode/scripts/name-task.sh").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("kebab-case", name_task)
         self.assertIn("executor", name_task)
         self.assertIn("opencode run", name_task)
@@ -443,39 +546,77 @@ class InstallerTest(unittest.TestCase):
 
     def test_slug_sanitization_error_messages(self):
         self.assertEqual(self.install(), 0)
-        save_adr = (
-            self.home / ".config/opencode/scripts/save_adr.py"
-        ).read_text(encoding="utf-8")
-        self.assertIn("must contain ASCII letters", save_adr)
-        self.assertIn("w[:60]", save_adr)
+        adr_utils = (self.home / ".config/opencode/scripts/adr_utils.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("must contain ASCII letters", adr_utils)
+        self.assertIn("w[:60]", adr_utils)
 
     def test_workflow_adr_revise_loop(self):
         self.assertEqual(self.install(), 0)
-        workflow = (
-            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
-        ).read_text(encoding="utf-8")
-        self.assertIn('options: [approve, revise, reject]', workflow)
+        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("options: [approve, revise, reject]", workflow)
         self.assertIn("adr-loop", workflow)
         self.assertIn("feedback.md", workflow)
         self.assertIn("{{ steps.adr-gate.output.choice != 'approve' }}", workflow)
         self.assertIn("adr-feedback-clear", workflow)
+        # The ADR approve/revise/reject loop ceiling is configurable
+        # (workflow.max_adr_iterations), rendered with the default value 3.
+        block = workflow.split("- id: adr-loop", 1)[1].split("\n  - id:", 1)[0]
+        self.assertIn("max_iterations: 3", block)
+
+    def test_workflow_adr_loop_ceiling_is_configurable(self):
+        self.assertEqual(self.install(), 0)
+        self.write_config(
+            self.read_config().replace("max_adr_iterations: 3", "max_adr_iterations: 7")
+        )
+        self.assertEqual(self.install(), 0)
+        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
+        block = workflow.split("- id: adr-loop", 1)[1].split("\n  - id:", 1)[0]
+        self.assertIn("max_iterations: 7", block)
 
     def test_workflow_agent_steps_have_timeout(self):
         self.assertEqual(self.install(), 0)
-        workflow = (
-            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
-        ).read_text(encoding="utf-8")
-        for step in ("write-adr", "adr-revise", "executor-questions",
-                     "planner-answers", "implement", "review", "fix",
-                     "sync-adr", "save-adr", "srp-review", "srp-fix",
-                     "bug-review", "bug-fix",
-                     "comment-review", "comment-fix"):
+        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
+        for step in (
+            "write-adr",
+            "adr-revise",
+            "executor-questions",
+            "planner-answers",
+            "implement",
+            "review",
+            "fix",
+            "sync-adr",
+            "save-adr",
+            "srp-review",
+            "srp-fix",
+            "bug-review",
+            "bug-fix",
+            "comment-review",
+            "comment-fix",
+        ):
             block = workflow.split(f"- id: {step}", 1)[1].split("\n  - id:", 1)[0]
             self.assertIn("timeout: 7200", block, step)
-        for step in ("verdict", "pass-check", "adr-feedback-clear",
-                     "validate-task-id", "generate-task-id", "srp-verdict", "srp-pass-check",
-                     "bug-verdict", "bug-pass-check",
-                     "comment-verdict", "comment-pass-check"):
+        for step in (
+            "verdict",
+            "pass-check",
+            "adr-feedback-clear",
+            "validate-task-id",
+            "validate-feature",
+            "generate-task-id",
+            "srp-verdict",
+            "srp-pass-check",
+            "bug-verdict",
+            "bug-pass-check",
+            "comment-verdict",
+            "comment-pass-check",
+        ):
             block = workflow.split(f"- id: {step}", 1)[1]
             block = block.split("\n      - id:", 1)[0]
             block = block.split("\n  - id:", 1)[0]
@@ -483,9 +624,9 @@ class InstallerTest(unittest.TestCase):
 
     def test_workflow_srp_loop_structure(self):
         self.assertEqual(self.install(), 0)
-        workflow = (
-            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
-        ).read_text(encoding="utf-8")
+        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("- id: srp-loop", workflow)
         self.assertIn("- id: srp-review", workflow)
         self.assertIn("- id: srp-verdict", workflow)
@@ -508,9 +649,9 @@ class InstallerTest(unittest.TestCase):
 
     def test_workflow_bug_loop_structure(self):
         self.assertEqual(self.install(), 0)
-        workflow = (
-            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
-        ).read_text(encoding="utf-8")
+        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("- id: bug-loop", workflow)
         self.assertIn("- id: bug-review", workflow)
         self.assertIn("- id: bug-verdict", workflow)
@@ -534,17 +675,15 @@ class InstallerTest(unittest.TestCase):
 
     def test_workflow_comment_review_loop_structure(self):
         self.assertEqual(self.install(), 0)
-        workflow = (
-            self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
-        ).read_text(encoding="utf-8")
+        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("- id: comment-review-loop", workflow)
         self.assertIn("- id: comment-review", workflow)
         self.assertIn("- id: comment-verdict", workflow)
         self.assertIn("- id: comment-fix", workflow)
         self.assertIn("- id: comment-pass-check", workflow)
-        self.assertIn(
-            'check-review ".workflow" "{{ inputs.task_id }}" comment', workflow
-        )
+        self.assertIn('check-review ".workflow" "{{ inputs.task_id }}" comment', workflow)
         self.assertIn("COMMENT REVIEW OK: final verdict PASS", workflow)
         self.assertIn("WARNING: comment review loop exhausted", workflow)
         self.assertIn("{{ steps.comment-verdict.output.exit_code != 0 }}", workflow)
@@ -582,6 +721,69 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("error:", err)
         self.assertNotIn("Traceback", err)
 
+    def test_non_mapping_config_root_reports_error_not_traceback(self):
+        # A config.yml that is valid YAML but whose top level is not a mapping
+        # (a bare scalar or a list) must fail with a clean InstallError, not
+        # an unhandled TypeError traceback from dict(raw).
+        for content in ("42\n", "- a\n- b\n"):
+            with self.subTest(content=content):
+                # Restore a valid config first: install() must not proceed
+                # over the previous subTest's broken config.
+                self.write_config(
+                    "models:\n"
+                    "  planner:\n"
+                    "    provider: p\n"
+                    "    model: m\n"
+                    "  executor:\n"
+                    "    provider: p\n"
+                    "    model: m\n"
+                    "workflow: {}\n"
+                )
+                self.assertEqual(self.install(), 0)
+                self.write_config(content)
+                rc, err = self.install_with_capture()
+                self.assertEqual(rc, 1)
+                self.assertIn("top-level must be a mapping", err)
+                self.assertNotIn("Traceback", err)
+
+    def test_boolean_iteration_values_rejected(self):
+        # bool is a subclass of int: `max_fix_iterations: true` used to pass
+        # the integer check and render as "max_iterations: True".
+        self.assertEqual(self.install(), 0)
+        self.write_config(
+            self.read_config().replace("max_fix_iterations: 5", "max_fix_iterations: true")
+        )
+        rc, err = self.install_with_capture()
+        self.assertEqual(rc, 1)
+        self.assertIn("max_fix_iterations must be an integer", err)
+
+    def test_boolean_shell_timeout_rejected(self):
+        self.assertEqual(self.install(), 0)
+        self.write_config(
+            self.read_config().replace("shell_timeout: 7200", "shell_timeout: true")
+        )
+        rc, err = self.install_with_capture()
+        self.assertEqual(rc, 1)
+        self.assertIn("shell_timeout must be a positive number", err)
+
+    def test_null_state_dir_rejected(self):
+        # str(None) is "None", which used to pass the regex and point every
+        # workflow step at "None/tasks/...".
+        self.assertEqual(self.install(), 0)
+        self.write_config(self.read_config().replace("state_dir: .workflow", "state_dir: null"))
+        rc, err = self.install_with_capture()
+        self.assertEqual(rc, 1)
+        self.assertIn("workflow.state_dir must be a string", err)
+
+    def test_non_string_adr_dir_rejected(self):
+        self.assertEqual(self.install(), 0)
+        self.write_config(
+            self.read_config().replace("adr_dir: architecture", "adr_dir: 42")
+        )
+        rc, err = self.install_with_capture()
+        self.assertEqual(rc, 1)
+        self.assertIn("workflow.adr_dir must be a string", err)
+
     def test_flag_conflicts_rejected(self):
         cases = [
             ["--uninstall", "--update"],
@@ -596,32 +798,28 @@ class InstallerTest(unittest.TestCase):
     def test_specify_candidates_finds_local_bin(self):
         (self.home / ".local" / "bin").mkdir(parents=True)
         (self.home / ".local" / "bin" / "specify").touch()
-        with mock.patch.object(deps.Path, "home", return_value=self.home):
+        with mock.patch.object(versions.Path, "home", return_value=self.home):
             self.assertIn(
                 str(self.home / ".local/bin/specify"),
-                deps._specify_candidates(),
+                versions._specify_candidates(),
             )
 
     def test_workflow_check_tolerates_stdout_message(self):
         def run_stdout(cmd, cwd=None, env=None, check=True):
             if cmd[1:3] == ["workflow", "run"]:
-                return FakeResult(
-                    1, "Error: Required input 'feature' not provided.\n", ""
-                )
+                return FakeResult(1, "Error: Required input 'feature' not provided.\n", "")
             return make_run()(cmd, cwd, env, check)
 
-        with mock.patch.object(deps, "run", side_effect=run_stdout):
+        with mock.patch.object(proc, "run", side_effect=run_stdout):
             self.assertEqual(self.install(), 0)
 
     def test_workflow_check_tolerates_lowercase_message(self):
         def run_lower(cmd, cwd=None, env=None, check=True):
             if cmd[1:3] == ["workflow", "run"]:
-                return FakeResult(
-                    1, "", "error: required input 'feature' not provided.\n"
-                )
+                return FakeResult(1, "", "error: required input 'feature' not provided.\n")
             return make_run()(cmd, cwd, env, check)
 
-        with mock.patch.object(deps, "run", side_effect=run_lower):
+        with mock.patch.object(proc, "run", side_effect=run_lower):
             self.assertEqual(self.install(), 0)
 
     def test_uninstall_removes_files_keeps_config(self):
@@ -636,13 +834,13 @@ class InstallerTest(unittest.TestCase):
             ".config/opencode/scripts/save_adr.py",
             ".config/opencode/scripts/check_review.py",
             ".config/opencode/scripts/task_utils.py",
+            ".config/opencode/scripts/adr_utils.py",
+            ".config/opencode/scripts/agent_call.py",
             ".config/spec-kit-llm-client/adr-pipeline.yml",
             ".config/spec-kit-llm-client/config.example.yml",
         ):
             self.assertFalse((self.home / rel).exists(), rel)
-        self.assertTrue(
-            (self.home / ".config/spec-kit-llm-client/config.yml").exists()
-        )
+        self.assertTrue((self.home / ".config/spec-kit-llm-client/config.yml").exists())
 
     def test_uninstall_prompts_declined_on_eof(self):
         self.assertEqual(self.install(), 0)
@@ -655,7 +853,7 @@ class InstallerTest(unittest.TestCase):
         )
 
     def test_verify_collects_all_errors(self):
-        paths = config.build_paths(str(self.home))
+        layout = paths.build_paths(str(self.home))
         (self.home / ".config/opencode/agent").mkdir(parents=True)
         run_agent = self.home / ".config/opencode/scripts/run-agent.sh"
         run_agent.parent.mkdir(parents=True)
@@ -664,27 +862,26 @@ class InstallerTest(unittest.TestCase):
 
         def run_fake(cmd, cwd=None, env=None, check=True):
             if cmd[1:3] == ["workflow", "run"]:
-                return FakeResult(
-                    1, "", "Error: Required input 'feature' not provided.\n"
-                )
+                return FakeResult(1, "", "Error: Required input 'feature' not provided.\n")
             if cmd[-3:] == ["opencode", "agent", "list"]:
                 return FakeResult(0, "build (primary)\n")
             return FakeResult(0)
 
         with (
-            mock.patch.object(deps, "run", side_effect=run_fake),
+            mock.patch.object(proc, "run", side_effect=run_fake),
             self.assertRaises(InstallError) as cm,
         ):
-            verify.verify_install(paths)
+            verify.verify_install(layout)
         err = str(cm.exception)
         self.assertIn("planner", err)
         self.assertIn("executor", err)
         self.assertIn("save_adr.py", err)
         self.assertIn("check_review.py", err)
+        self.assertIn("adr_utils.py", err)
 
     def test_verify_workflow_syntax_specify_off_path(self):
         self.assertEqual(self.install(), 0)
-        paths = config.build_paths(str(self.home))
+        layout = paths.build_paths(str(self.home))
 
         def which_off_specify(name):
             if name == "specify":
@@ -692,17 +889,15 @@ class InstallerTest(unittest.TestCase):
             return which_fake(name)
 
         with (
+            mock.patch.object(tool_discovery, "find_in_path", side_effect=which_off_specify),
             mock.patch.object(
-                deps, "find_in_path", side_effect=which_off_specify
-            ),
-            mock.patch.object(
-                deps,
+                versions,
                 "latest_specify_version",
                 return_value=((0, 16), "/home/u/.local/bin/specify"),
             ),
             self.assertRaises(InstallError) as cm,
         ):
-            verify.verify_install(paths)
+            verify.verify_install(layout)
         err = str(cm.exception)
         self.assertIn("'specify' not found on PATH", err)
         self.assertIn("/home/u/.local/bin/specify", err)

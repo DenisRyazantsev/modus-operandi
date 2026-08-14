@@ -1,11 +1,23 @@
-"""Verification of an installed pipeline (files, workflow syntax, agents)."""
+"""Verification: prerequisites, installed pipeline files, workflow syntax, agents."""
 
 from __future__ import annotations
 
 import os
 import re
 
-from . import InstallError, Paths, deps
+from . import InstallError, Paths, proc, tool_discovery, versions
+
+
+def check_prerequisites() -> None:
+    # Install-time presence checks: the flow cannot proceed without these
+    # tools, so they raise directly (unlike the list-returning checks below,
+    # which let verify_install() collect every failure at once).
+    if not tool_discovery.find_in_path("python3"):
+        raise InstallError("python3 not found in PATH")
+    if not tool_discovery.find_in_path("opencode"):
+        raise InstallError(
+            "opencode not found in PATH - install it first (https://opencode.ai/docs)"
+        )
 
 
 def check_files(paths: Paths) -> list[str]:
@@ -14,7 +26,7 @@ def check_files(paths: Paths) -> list[str]:
         agent = paths["agents"] / agent_name
         if not agent.exists():
             errors.append(f"generated agent missing: {agent}")
-    for key in ("save_adr", "check_review", "task_utils"):
+    for key in ("save_adr", "check_review", "task_utils", "adr_utils", "agent_call"):
         script = paths[key]
         if not script.exists():
             errors.append(f"generated script missing: {script}")
@@ -23,9 +35,7 @@ def check_files(paths: Paths) -> list[str]:
     if not os.access(paths["name_task"], os.X_OK):
         errors.append("name-task.sh is not executable: {}".format(paths["name_task"]))
     if not os.access(paths["run_pipeline"], os.X_OK):
-        errors.append(
-            "run-pipeline.py is not executable: {}".format(paths["run_pipeline"])
-        )
+        errors.append("run-pipeline.py is not executable: {}".format(paths["run_pipeline"]))
     for _, path in (
         ("adr-pipeline.yml", paths["workflow"]),
         ("review-pipeline.yml", paths["review_workflow"]),
@@ -40,13 +50,11 @@ def check_workflow_syntax(paths: Paths) -> list[str]:
     # warns). Resolve specify explicitly so this check returns a readable error
     # string instead of raising FileNotFoundError, which would abort
     # verify_install() before the remaining checks can run.
-    specify = deps.find_in_path("specify")
+    specify = tool_discovery.find_in_path("specify")
     if not specify:
-        _, binary = deps.latest_specify_version()
+        _, binary = versions.latest_specify_version()
         hint = f" (installed at {binary}, add it to PATH)" if binary else ""
-        return [
-            f"'specify' not found on PATH{hint}; add it to PATH and rerun install.py"
-        ]
+        return [f"'specify' not found on PATH{hint}; add it to PATH and rerun install.py"]
     # `specify workflow info <path>` parses and renders the workflow graph
     # without executing it. That is the syntax probe: a valid workflow exits 0.
     # (The old probe ran `specify workflow run` expecting a "required input"
@@ -57,24 +65,24 @@ def check_workflow_syntax(paths: Paths) -> list[str]:
         ("adr-pipeline.yml", paths["workflow"]),
         ("review-pipeline.yml", paths["review_workflow"]),
     ):
-        result = deps.run([specify, "workflow", "info", str(path)], check=False)
+        result = proc.run([specify, "workflow", "info", str(path)], check=False)
         if result.returncode != 0:
             errors.append(
-                f"{wf_name} syntax check failed:\n"
-                + (result.stderr or result.stdout).strip()
+                f"{wf_name} syntax check failed:\n" + (result.stderr or result.stdout).strip()
             )
     return errors
 
 
 def check_agents_visible(paths: Paths) -> list[str]:
     env = os.environ.copy()
+    # Point opencode at the target config root (~/.config = agents/../..) so
+    # `opencode agent list` reports the agents we just installed under --home
+    # instead of the real home's config.
     env["XDG_CONFIG_HOME"] = str(paths["agents"].parent.parent)
-    result = deps.run(["opencode", "agent", "list"], check=False, env=env)
+    result = proc.run(["opencode", "agent", "list"], check=False, env=env)
     if result.returncode != 0:
         return [f"opencode agent list failed: {result.stderr.strip()}"]
-    names = set(
-        re.findall(r"^(\S+)\s+\((?:primary|subagent)\)", result.stdout, re.M)
-    )
+    names = set(re.findall(r"^(\S+)\s+\((?:primary|subagent)\)", result.stdout, re.M))
     errors: list[str] = []
     for name in ("planner", "executor"):
         if name not in names:
@@ -90,6 +98,4 @@ def verify_install(paths: Paths) -> None:
     errors += check_workflow_syntax(paths)
     errors += check_agents_visible(paths)
     if errors:
-        raise InstallError(
-            "installation check failed:\n  " + "\n  ".join(errors)
-        )
+        raise InstallError("installation check failed:\n  " + "\n  ".join(errors))

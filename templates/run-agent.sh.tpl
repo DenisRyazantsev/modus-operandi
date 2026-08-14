@@ -42,7 +42,7 @@ while [ $$# -gt 0 ]; do
   esac
 done
 
-STATE_DIR="$${SKLC_STATE_DIR:-.workflow}"
+STATE_DIR="$${SKLC_STATE_DIR:-${state_dir}}"
 ATTACH_FLAG="${serve_attach}"
 
 if [ -z "$$TASK_ID" ]; then
@@ -113,7 +113,14 @@ with open(p, "w") as f:
 }
 
 extract_session_id() {
-  sed -n 's/.*"session[iI][dD]":"\([^"]*\)".*/\1/p' | head -1
+  # Read the session id straight from the log file with python instead of
+  # piping sed into head: on a large log sed is still writing matches when
+  # head has already exited, gets SIGPIPE, and with set -o pipefail the
+  # whole script dies with exit 141.
+  python3 -c 'import re, sys
+m = re.search(rb"\"session[iI][dD]\":\"([^\"]*)\"", open(sys.argv[1], "rb").read())
+if m:
+    sys.stdout.write(m.group(1).decode())' "$$LOG_FILE"
 }
 
 SESSION_ID=""
@@ -128,12 +135,15 @@ if [ -z "$$SESSION_ID" ]; then
   # die with SIGPIPE (exit 141) mid-run. A file also keeps a durable per-role
   # log the user can inspect after a failed step.
   opencode run --agent "$$ROLE" --auto $$ATTACH_FLAG --format json "$$PROMPT" > "$$LOG_FILE" 2>&1 || RC=$$?
-  cat "$$LOG_FILE"
+  # Nothing is echoed from the event stream to the step's stdout: the
+  # workflow runner captures step output through a pipe, and a large stream
+  # (dozens of tool calls -> hundreds of KB) made the reader close early,
+  # SIGPIPE-ing this script (exit 141). The full log stays in $$LOG_FILE.
   if [ "$$RC" -ne 0 ]; then
     echo "run-agent: opencode exited $$RC; full log: $$LOG_FILE" >&2
     exit "$$RC"
   fi
-  SESSION_ID="$$(extract_session_id < "$$LOG_FILE")"
+  SESSION_ID="$$(extract_session_id)"
   if [ -z "$$SESSION_ID" ]; then
     echo "error: could not extract a session id from opencode output" >&2
     exit 2
@@ -142,7 +152,6 @@ if [ -z "$$SESSION_ID" ]; then
 else
   RC=0
   opencode run --session "$$SESSION_ID" --agent "$$ROLE" --auto $$ATTACH_FLAG --format json "$$PROMPT" > "$$LOG_FILE" 2>&1 || RC=$$?
-  cat "$$LOG_FILE"
   if [ "$$RC" -ne 0 ]; then
     echo "run-agent: opencode exited $$RC; full log: $$LOG_FILE" >&2
     exit "$$RC"
