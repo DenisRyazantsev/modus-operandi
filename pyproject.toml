@@ -15,7 +15,7 @@ lint.select = ["E", "F", "I", "W", "B", "UP", "SIM"]
 [tool.mypy]
 python_version = "3.14"
 strict = true
-files = ["install.py", "spec_utils", "templates/save_adr.py", "templates/check_review.py", "templates/task_utils.py", "templates/adr_utils.py", "templates/agent_call.py"]
+files = ["install.py", "spec_utils", "templates/save_adr.py", "templates/check_review.py", "templates/check_implementation.py", "templates/task_utils.py", "templates/adr_utils.py", "templates/agent_call.py"]
 
 [[tool.mypy.overrides]]
 module = "tests.*"

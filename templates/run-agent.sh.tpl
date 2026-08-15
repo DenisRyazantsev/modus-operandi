@@ -45,6 +45,11 @@ done
 STATE_DIR="$${SKLC_STATE_DIR:-${state_dir}}"
 ATTACH_FLAG="${serve_attach}"
 
+# Raise opencode's per-response output cap (default 32k) so an agent reply
+# cannot be truncated mid-reasoning before it acts (ADR-0007). 1000000 is
+# effectively unlimited: the provider's own ceiling still applies.
+export OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=1000000
+
 if [ -z "$$TASK_ID" ]; then
   # The workflow generates the task id at runtime; recover it from the
   # tasks/current symlink instead of templating the id into every prompt.

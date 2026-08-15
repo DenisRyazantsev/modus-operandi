@@ -95,9 +95,16 @@ def render_name_task(cfg: dict[str, Any], paths: Paths) -> None:
 
 def render_adr_scripts(paths: Paths) -> None:
     # save_adr.py imports task_utils.py, adr_utils.py and agent_call.py, and
-    # check_review.py imports task_utils.py, so all five scripts must be
-    # copied together to stay importable from scripts/.
-    for key in ("task_utils", "check_review", "save_adr", "adr_utils", "agent_call"):
+    # check_review.py imports task_utils.py, so all six scripts must be copied
+    # together to stay importable from scripts/.
+    for key in (
+        "task_utils",
+        "check_review",
+        "check_implementation",
+        "save_adr",
+        "adr_utils",
+        "agent_call",
+    ):
         shutil.copy2(TEMPLATES_DIR / f"{key}.py", paths[key])
 
 
@@ -125,6 +132,7 @@ def render_workflow(cfg: dict[str, Any], paths: Paths) -> None:
             "name_task": str(paths["name_task"]),
             "save_adr": str(paths["save_adr"]),
             "check_review": str(paths["check_review"]),
+            "check_implementation": str(paths["check_implementation"]),
             "state_dir": workflow["state_dir"],
             "adr_dir": workflow["adr_dir"],
             "step_timeout": str(workflow["shell_timeout"]),
@@ -135,6 +143,7 @@ def render_workflow(cfg: dict[str, Any], paths: Paths) -> None:
             "max_bug_iterations": str(workflow["max_bug_iterations"]),
             "max_comment_iterations": str(workflow["max_comment_iterations"]),
             "max_adr_iterations": str(workflow["max_adr_iterations"]),
+            "max_implement_iterations": str(workflow["max_implement_iterations"]),
         },
     )
 

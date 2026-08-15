@@ -12,11 +12,32 @@ While specify waits for interactive input on a human gate (its menu window
 buffered instead of printed, so the window is not flooded; the buffer is
 flushed as soon as the engine moves past the gate or the wrapper exits.
 
+On a terminal run the wrapper owns specify's stdin through a pty: specify's
+gate step prompts only while its stdin is a TTY, so the slave end is given
+to specify (keeping sys.stdin.isatty() True inside it) and terminal input is
+forwarded into the master end, so interactive gates keep working while the
+wrapper can answer the ADR revise feedback gate itself. When that gate opens
+the wrapper creates <state_dir>/tasks/current/feedback.md (never overwriting
+an existing file), opens it in the terminal editor ($$VISUAL, then $$EDITOR,
+then nano, then vi), and on editor close answers the gate with `continue` so
+the workflow resumes (adr-revise reads feedback.md). If no editor can run
+(non-TTY or none found), the file is still created and the gate stays
+interactive for manual input. On a non-TTY run no pty is used and specify
+keeps the inherited stdin, so gates keep going PAUSED exactly as before.
+
 When the run finishes (success, failure or abort alike) the wrapper prints a
 `=== run statistics ===` block: the wall-clock run time and the token/cost
 usage of the planner and executor sessions, queried from opencode by session
-id. It also plays a single victory.wav signal on gate-open, on success and
-on failure; the sound and the statistics never change the exit code.
+id. It also plays a single victory.wav signal on gate-open (except the ADR
+revise feedback gate), on success and on failure; the sound and the
+statistics never change the exit code.
+
+Agent logs are displayed aligned (role labels padded to the longest role
+name), agent reasoning longer than 100 chars is truncated for the console
+(the full text stays in the .jsonl files), and only lines appended during
+the current run are shown (pre-existing log files are baselined at startup).
+A step's agent lines print before the step's "--- step X (completed)"
+marker.
 
 Usage: run-pipeline.py <workflow-id-or-path> [extra specify args...]
   run-pipeline.py review-pipeline
@@ -27,11 +48,16 @@ Usage: run-pipeline.py <workflow-id-or-path> [extra specify args...]
 from __future__ import annotations
 
 import json
+import os
+import pty
 import re
+import select
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import termios
 import threading
 import time
 from pathlib import Path
@@ -45,6 +71,23 @@ TERMINAL_STATUSES = frozenset({"completed", "failed", "skipped"})
 # the installed wrapper and referenced here via the path passed at render
 # time.
 SOUND_FILE = Path("${sound_path}")
+
+# Agent reasoning longer than this is truncated for the console display (the
+# full text always stays in the .jsonl files).
+MAX_LOG_TEXT_LEN = 100
+
+# Role names are fixed (planner/executor); the longest one sets the label
+# width so text after "[role] " starts at the same column.
+ROLE_LABEL_WIDTH = 8
+
+# Substring that identifies the ADR revise feedback gate in a step id: the
+# plain "adr-feedback-gate", or the loop-iteration form
+# "adr-loop:adr-feedback-gate:N". The marker mirrors the step id chosen in
+# adr-pipeline.yml.tpl: current_step_id from state.json is the wrapper's
+# only observation point for "which gate opened", so this is a deliberate
+# cross-file coupling — renaming the step silently disables the editor path
+# and the gate signals like a normal gate again.
+FEEDBACK_GATE_MARKER = "feedback-gate"
 
 
 def stamp() -> str:
@@ -85,6 +128,28 @@ def is_gate_menu_opener(line: str) -> bool:
     non-TTY runs never produce this line, so no suppression happens there.
     """
     return line.strip().startswith(GATE_MENU_PREFIX)
+
+
+def is_feedback_gate(step_id: str | None) -> bool:
+    """True when the step id identifies the ADR revise feedback gate.
+
+    Matches the plain id ("adr-feedback-gate") and the loop-iteration form
+    ("adr-loop:adr-feedback-gate:N") by substring. Pure predicate, so the
+    gate recognition is unit-testable without a running workflow.
+    """
+    return bool(step_id) and FEEDBACK_GATE_MARKER in step_id
+
+
+def truncate(text: str) -> str:
+    """Shorten a displayed agent-log text to MAX_LOG_TEXT_LEN chars + "...".
+
+    Agent reasoning events can be very long and flood the console; the full
+    text always stays in the .jsonl files — this only shortens the console
+    rendering. Pure function.
+    """
+    if len(text) > MAX_LOG_TEXT_LEN:
+        return text[:MAX_LOG_TEXT_LEN] + "..."
+    return text
 
 
 def existing_run_ids(state_dir: Path) -> set[str]:
@@ -155,20 +220,35 @@ def render_log_event(role: str, line: str) -> tuple[str, str]:
     try:
         event = json.loads(line)
     except Exception:
-        return role, line
+        return role, truncate(line)
     part = event.get("part") or {}
     if part.get("type") == "text" and part.get("text"):
-        # text parts: print the payload.
-        return role, part["text"]
+        # text parts: print the payload (truncated for the console; the
+        # .jsonl file keeps the full text).
+        return role, truncate(part["text"])
     return role, ""
 
 
 class AgentLogTailer:
-    """Tails the per-role agent logs (<state_dir>/logs/*.jsonl)."""
+    """Tails the per-role agent logs (<state_dir>/logs/*.jsonl).
+
+    Construction (which happens before the workflow process starts) takes a
+    baseline snapshot of the current sizes of every existing *.jsonl file:
+    those files were written by previous runs (the logs dir is never
+    cleaned), so each starts at its baseline offset and only lines appended
+    during the current run are printed. Files created after the baseline
+    start at offset 0.
+    """
 
     def __init__(self, logs_dir: Path) -> None:
         self._logs_dir = logs_dir
         self._log_pos: dict[Path, int] = {}
+        if logs_dir.is_dir():
+            for path in sorted(logs_dir.glob("*.jsonl")):
+                try:
+                    self._log_pos[path] = path.stat().st_size
+                except OSError:
+                    pass
 
     def tail(self) -> list[tuple[str, str]]:
         """Return (role, text) pairs for log lines appended since the last tail.
@@ -248,8 +328,16 @@ def print_step_result(step_id: str, result: dict) -> None:
         print_ts(stderr, "    [err] ")
 
 
+def role_label(role: str) -> str:
+    """Render the role inside brackets, left-aligned to the longest role
+    name: "[planner ]" / "[executor]". Text after the label therefore starts
+    at the same column for every role. Pure function.
+    """
+    return "[{}]".format(role.ljust(ROLE_LABEL_WIDTH))
+
+
 def print_log_event(role: str, text: str) -> None:
-    print_ts(text, "[{}] ".format(role))
+    print_ts(text, role_label(role) + " ")
 
 
 class GateState:
@@ -428,15 +516,17 @@ class LiveMonitor:
     def _flush_buffer(self) -> None:
         """Print the events that were buffered while the gate menu was open.
 
-        Steps and logs are flushed in their arrival order per category; this
-        runs right before live printing resumes, so nothing is lost.
+        Logs are flushed before the step markers so the "agent lines precede
+        the step's completion marker" invariant holds for buffered output
+        too; this runs right before live printing resumes, so nothing is
+        lost.
         """
-        for step_id, result in self._buffered_steps:
-            print_step_result(step_id, result)
-        self._buffered_steps.clear()
         for role, text in self._buffered_logs:
             print_log_event(role, text)
         self._buffered_logs.clear()
+        for step_id, result in self._buffered_steps:
+            print_step_result(step_id, result)
+        self._buffered_steps.clear()
 
     def _poll_once(self, run_id: str | None = None) -> None:
         if run_id is None:
@@ -452,13 +542,20 @@ class LiveMonitor:
                 # The engine moved past the gate: flush what was buffered
                 # while the menu was open, then resume live emission.
                 self._flush_buffer()
-            for step_id, result in self._poller.poll(state):
-                self._emit_step(step_id, result)
-        # The agent logs are drained on every tick regardless of the run id
-        # (they do not depend on it); before the run id is known the tailer
-        # still shows live agent output.
+        # Agent logs are drained BEFORE the step results: a step's final
+        # agent lines must print before its "--- step X (completed)" marker,
+        # not after it. The logs do not depend on the run id, so they are
+        # drained on every tick regardless.
         for role, text in self._tailer.tail():
             self._emit_log(role, text)
+        if run_id:
+            for step_id, result in self._poller.poll(state):
+                # One more tailer drain per finished step: lines written
+                # after the drain above (e.g. the agent's final reply before
+                # the step completed) print before this step's marker.
+                for role, text in self._tailer.tail():
+                    self._emit_log(role, text)
+                self._emit_step(step_id, result)
 
     def finish(self) -> None:
         """One final poll after specify exits: late step results may still land.
@@ -500,11 +597,13 @@ def fmt_duration(seconds: float) -> str:
 def notify() -> None:
     """Play the single victory.wav signal, for every event.
 
-    Called when a human-gate menu opens, on a successful run and on a failed
-    run alike — one sound for all events, never different signals. Playback
-    is non-blocking (the player process is not waited for) and degrades
-    quietly: no sound file, no system player or a non-TTY stdout simply skip
-    the call, so the exit code and the wrapper's output are never affected.
+    Called when a human-gate menu opens (except the ADR revise feedback
+    gate, which the wrapper answers itself and never signals), on a
+    successful run and on a failed run alike — one sound for all events,
+    never different signals. Playback is non-blocking (the player process is
+    not waited for) and degrades quietly: no sound file, no system player or
+    a non-TTY stdout simply skip the call, so the exit code and the
+    wrapper's output are never affected.
     """
     try:
         if not getattr(sys.stdout, "isatty", lambda: False)():
@@ -667,6 +766,146 @@ def print_run_statistics(state_dir: Path, elapsed: float) -> None:
     print("cost: $${:.2f}".format(usage["cost"]))
 
 
+def resolve_editor() -> list[str] | None:
+    """Resolve the terminal editor for the feedback file.
+
+    Order: $$VISUAL, then $$EDITOR, then nano, then vi. A $$VISUAL/$$EDITOR
+    value may carry arguments (`code --wait`) and is split like a shell
+    command line (a malformed value is skipped with a warning, as in the
+    launcher); the first candidate whose binary is found on PATH wins. None
+    means no editor is available at all and the feedback gate falls back to
+    manual input. Unlike the launcher's `_resolve_editor` (which must always
+    open *something*), here a missing binary falls through to the next
+    candidate and a fully empty chain is reported as None.
+    """
+    for var in ("VISUAL", "EDITOR"):
+        value = os.environ.get(var)
+        if not value:
+            continue
+        try:
+            cmd = shlex.split(value)
+        except ValueError as exc:
+            print(
+                "warning: {} is malformed ({}); skipping it".format(var, exc),
+                file=sys.stderr,
+            )
+            continue
+        if cmd and shutil.which(cmd[0]):
+            return cmd
+    for name in ("nano", "vi"):
+        if shutil.which(name):
+            return [name]
+    return None
+
+
+def create_feedback_file(path: Path) -> None:
+    """Create the empty feedback.md for the revise gate.
+
+    Never overwrites an existing file: the planner may have written one, or
+    the user may have started writing during an earlier fallback.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.touch()
+
+
+def open_feedback_editor(
+    feedback_path: Path, pause: threading.Event, master_fd: int
+) -> bool:
+    """Own the ADR revise feedback gate.
+
+    Pauses stdin forwarding, creates feedback.md (never overwriting), opens
+    it in the terminal editor (which inherits the real terminal, not the
+    pty, so there is no race with the gate's input()) and, on editor close,
+    answers the gate with `continue` so the workflow continues (adr-revise
+    reads feedback.md). Returns True when the wrapper answered the gate;
+    False on fallback — no TTY or no editor on PATH — where the file is
+    still created, forwarding is left running and the gate stays interactive
+    for manual input.
+    """
+    create_feedback_file(feedback_path)
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return False
+    editor = resolve_editor()
+    if editor is None:
+        return False
+    pause.set()
+    try:
+        try:
+            subprocess.run([*editor, str(feedback_path)], check=False)
+        except OSError as exc:
+            print(
+                "error: cannot start editor {}: {}".format(editor[0], exc),
+                file=sys.stderr,
+            )
+            return False
+        # "continue" is the option declared on the adr-feedback-gate step
+        # (options: [continue, abort] in adr-pipeline.yml.tpl); the wrapper
+        # hardcodes it because it has no parsed handle on the workflow's
+        # options, so this string is a cross-file contract, not a free-form
+        # answer — a mismatch makes specify reject it and the gate silently
+        # degrades to manual input. The answer is written while forwarding
+        # is still paused: it is guaranteed to be the first thing the gate's
+        # input() reads.
+        try:
+            os.write(master_fd, b"continue\n")
+        except OSError:
+            pass
+        return True
+    finally:
+        pause.clear()
+
+
+def forward_terminal_input(
+    source, master_fd: int, pause: threading.Event, stop: threading.Event
+) -> None:
+    """Forward terminal input to specify's pty stdin.
+
+    Runs in a background thread while specify runs; the main thread pauses
+    it (pause.set()) while the feedback editor is open so the user's
+    keystrokes reach only the editor. Exits on terminal EOF or when stop is
+    set.
+    """
+    while not stop.is_set():
+        if pause.is_set():
+            time.sleep(0.05)
+            continue
+        try:
+            readable, _, _ = select.select([source], [], [], 0.1)
+        except (OSError, ValueError):
+            return
+        if not readable:
+            continue
+        try:
+            line = source.readline()
+        except (OSError, ValueError):
+            return
+        if not line:
+            return  # terminal EOF: nothing more to forward
+        try:
+            os.write(master_fd, line.encode("utf-8"))
+        except (OSError, ValueError):
+            return
+
+
+def set_pty_no_echo(fd: int) -> None:
+    """Disable ECHO on the pty slave (best effort).
+
+    The user already sees their keystrokes echoed by the real terminal; a
+    pty-side ECHO would only accumulate echoed bytes in the master's read
+    buffer. termios failure leaves the pty at its defaults.
+    """
+    try:
+        attrs = termios.tcgetattr(fd)
+        # tcgetattr returns a 7-element list; index 3 is the local-flags
+        # field (lflag), where ECHO/ECHONL live — clearing them there stops
+        # the pty from echoing, without touching the other modes.
+        attrs[3] &= ~(termios.ECHO | termios.ECHONL)
+        termios.tcsetattr(fd, termios.TCSANOW, attrs)
+    except (OSError, ValueError):
+        pass
+
+
 def main() -> int:
     argv = sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help"):
@@ -684,13 +923,42 @@ def main() -> int:
     # Wall-clock run time is measured directly around the child process; it
     # covers every completion path (success, failure, abort).
     t0 = time.monotonic()
-    proc = subprocess.Popen(
-        ["specify", "workflow", "run", source, *extra],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-    )
+    # The wrapper owns specify's stdin only on a terminal run: a pty keeps
+    # sys.stdin.isatty() True inside specify (its gate step goes PAUSED on a
+    # non-TTY stdin, see ADR-0002), so interactive gates prompt as before
+    # while the wrapper can still inject the feedback-gate answer itself.
+    # On a non-TTY run specify keeps the inherited stdin (also non-TTY), so
+    # gates go PAUSED and no "┌─ Gate" menu is drawn — exactly the
+    # documented non-interactive behavior.
+    master_fd: int | None = None
+    forward_pause = threading.Event()
+    forward_stop = threading.Event()
+    if sys.stdin.isatty():
+        master_fd, slave_fd = pty.openpty()
+        set_pty_no_echo(slave_fd)
+        proc = subprocess.Popen(
+            ["specify", "workflow", "run", source, *extra],
+            stdin=slave_fd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        os.close(slave_fd)
+        forward_thread = threading.Thread(
+            target=forward_terminal_input,
+            args=(sys.stdin, master_fd, forward_pause, forward_stop),
+            daemon=True,
+        )
+        forward_thread.start()
+    else:
+        proc = subprocess.Popen(
+            ["specify", "workflow", "run", source, *extra],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
     monitor.start()
     run_id = ""
     try:
@@ -706,16 +974,46 @@ def main() -> int:
                 # state read right now — not on a later monitor tick, when
                 # a fast answer could already have moved current_step_id.
                 # Echo of the menu lines themselves is unchanged below.
-                monitor.gate.open(monitor.discover_and_read_state())
-                # The human is needed: play the same signal used for a
-                # finished run (success or failure alike).
-                notify()
+                state = monitor.discover_and_read_state()
+                monitor.gate.open(state)
+                if is_feedback_gate((state or {}).get("current_step_id")):
+                    # The ADR revise feedback gate: the wrapper owns the
+                    # answer. feedback.md is created (never overwritten) and
+                    # opened in the terminal editor; on editor close the
+                    # gate is answered with `continue` so the workflow
+                    # continues (adr-revise reads feedback.md). If no editor
+                    # can run, the gate stays interactive for manual input.
+                    # No victory sound is played for this gate in any path.
+                    if master_fd is not None:
+                        open_feedback_editor(
+                            Path.cwd()
+                            / "${state_dir}"
+                            / "tasks"
+                            / "current"
+                            / "feedback.md",
+                            forward_pause,
+                            master_fd,
+                        )
+                else:
+                    # The human is needed: play the same signal used for a
+                    # finished run (success or failure alike).
+                    notify()
             print("[{}] {}".format(stamp(), line), flush=True)
             if not run_id:
                 run_id = run_id_from_text(line)
                 if run_id:
                     monitor.run_id = run_id
     finally:
+        # Stop stdin forwarding and release the pty before reaping the
+        # child: the forward thread would otherwise keep writing into the
+        # pty while the wrapper exits.
+        forward_stop.set()
+        if master_fd is not None:
+            forward_thread.join(timeout=1)
+            try:
+                os.close(master_fd)
+            except OSError:
+                pass
         # Reap the child even when the read loop above raised (OSError,
         # KeyboardInterrupt) before reaching proc.wait(): otherwise
         # proc.returncode would be None and the failure message would print

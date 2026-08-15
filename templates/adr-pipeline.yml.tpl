@@ -126,8 +126,12 @@ steps:
           - id: adr-feedback-gate
             type: gate
             message: >-
-              Write your feedback into ${state_dir}/tasks/current/feedback.md,
-              then choose continue. The planner will update adr.md accordingly.
+              Feedback on the ADR is collected in
+              ${state_dir}/tasks/current/feedback.md — the wrapper opens it
+              in your editor and the run continues automatically when the
+              editor closes. If no editor opened, create the file manually
+              and write your feedback, then choose continue. The planner
+              will update adr.md accordingly.
             options: [continue, abort]
           - id: adr-revise
             type: shell
@@ -193,6 +197,44 @@ steps:
       something impossible or clearly suboptimal), write ${state_dir}/tasks/current/deviation.md
       recording: what the ADR says, what you did instead, and why. Do not create the file
       when there is no deviation."
+
+  - id: implement-loop
+    type: do-while
+    max_iterations: ${max_implement_iterations}
+    condition: "{{ steps.implement-verify.output.exit_code != 0 }}"
+    steps:
+      - id: implement-verify
+        type: shell
+        continue_on_error: true
+        run: >-
+          python3 "${check_implementation}" check "${adr_dir}"
+      - id: implement-retry-branch
+        type: if
+        condition: "{{ steps.implement-verify.output.exit_code != 0 }}"
+        then:
+          - id: implement-retry
+            type: shell
+            timeout: ${step_timeout}
+            run: |
+              # The first loop iteration asks the executor to redo the work;
+              # the marker keeps the loop from asking a second time (a second
+              # empty verify must fail the run, not repeat the prompt).
+              if [ -f "${state_dir}/tasks/current/.implement-retried" ]; then
+              echo "already retried once; the run will fail";
+              exit 0;
+              fi;
+              touch "${state_dir}/tasks/current/.implement-retried";
+              "${run_agent}" executor "You didn't do changes.";
+
+  - id: implement-pass-check
+    type: shell
+    run: >-
+      if python3 "${check_implementation}" check "${adr_dir}"; then
+      echo "IMPLEMENT OK: changes present";
+      else
+      echo "error: the executor made no changes to the repository in two attempts (task state: ${state_dir}/tasks/current; agent log: ${state_dir}/logs); resume with: specify workflow resume {{ context.run_id }}" >&2;
+      exit 1;
+      fi
 
   - id: srp-loop
     type: do-while

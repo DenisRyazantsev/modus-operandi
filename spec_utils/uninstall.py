@@ -18,6 +18,7 @@ def do_uninstall(paths: Paths, yes: bool) -> None:
         paths["victory_wav"],
         paths["save_adr"],
         paths["check_review"],
+        paths["check_implementation"],
         paths["task_utils"],
         paths["adr_utils"],
         paths["agent_call"],

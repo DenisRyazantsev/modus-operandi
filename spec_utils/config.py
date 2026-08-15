@@ -14,6 +14,7 @@ DEFAULT_MAX_SRP_ITERATIONS = 5
 DEFAULT_MAX_BUG_ITERATIONS = 5
 DEFAULT_MAX_COMMENT_ITERATIONS = 5
 DEFAULT_MAX_ADR_ITERATIONS = 3
+DEFAULT_MAX_IMPLEMENT_ITERATIONS = 2
 DEFAULT_SHELL_TIMEOUT = 7200
 DEFAULT_REASONING = "max"
 DEFAULT_ADR_DIR = "architecture"
@@ -26,6 +27,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_bug_iterations": DEFAULT_MAX_BUG_ITERATIONS,
         "max_comment_iterations": DEFAULT_MAX_COMMENT_ITERATIONS,
         "max_adr_iterations": DEFAULT_MAX_ADR_ITERATIONS,
+        "max_implement_iterations": DEFAULT_MAX_IMPLEMENT_ITERATIONS,
         "shell_timeout": DEFAULT_SHELL_TIMEOUT,
         "adr_dir": DEFAULT_ADR_DIR,
         "human_gates": True,
@@ -96,6 +98,7 @@ def validate_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "max_bug_iterations",
         "max_comment_iterations",
         "max_adr_iterations",
+        "max_implement_iterations",
     ):
         value = workflow.get(key)
         # type() is int, not isinstance: bool is a subclass of int, so

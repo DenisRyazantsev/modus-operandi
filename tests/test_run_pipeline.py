@@ -5,14 +5,20 @@ default state_dir and load the result as a module, so the placeholder and
 the runtime behavior are both exercised.
 """
 
+import contextlib
 import importlib.util
 import io
 import json
+import os
+import pty
 import string
 import sys
 import tempfile
+import threading
+import time
 import types
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
@@ -96,8 +102,10 @@ class AgentLogTailerTest(unittest.TestCase):
     def test_unterminated_tail_is_held_back_for_next_poll(self):
         log = self.dir / "x-executor.jsonl"
         complete = '{"part": {"type": "text", "text": "hello"}}\n'
-        log.write_text(complete + '{"part": {"type": "text", "text": "work', encoding="utf-8")
+        # The tailer is constructed BEFORE the file exists so the baseline
+        # (which snapshots pre-existing files) does not consume it.
         tailer = self.mod.AgentLogTailer(self.dir)
+        log.write_text(complete + '{"part": {"type": "text", "text": "work', encoding="utf-8")
         lines, pos = tailer._read_appended(log)
         # Only the complete line is consumed; the partial JSON is not rendered
         # as garbage.
@@ -113,8 +121,8 @@ class AgentLogTailerTest(unittest.TestCase):
 
     def test_wholly_unterminated_chunk_reads_nothing(self):
         log = self.dir / "x-executor.jsonl"
-        log.write_text('{"part": {"type": "text", "text": "abc', encoding="utf-8")
         tailer = self.mod.AgentLogTailer(self.dir)
+        log.write_text('{"part": {"type": "text", "text": "abc', encoding="utf-8")
         lines, pos = tailer._read_appended(log)
         self.assertEqual(lines, [])
         self.assertEqual(pos, 0)
@@ -128,8 +136,8 @@ class AgentLogTailerTest(unittest.TestCase):
         # UnicodeDecodeError, killing the tailer thread.
         log = self.dir / "x-executor.jsonl"
         first, second = "Привет мир", "вторая строка"
-        log.write_text(f"{first}\n", encoding="utf-8")
         tailer = self.mod.AgentLogTailer(self.dir)
+        log.write_text(f"{first}\n", encoding="utf-8")
         lines, pos = tailer._read_appended(log)
         self.assertEqual(lines, [first])
         self.assertEqual(pos, len((first + "\n").encode("utf-8")))
@@ -143,8 +151,8 @@ class AgentLogTailerTest(unittest.TestCase):
     def test_unterminated_multibyte_tail_held_back_in_bytes(self):
         log = self.dir / "x-executor.jsonl"
         complete = "Привет мир\n"
-        log.write_text(complete + "вторая строка", encoding="utf-8")
         tailer = self.mod.AgentLogTailer(self.dir)
+        log.write_text(complete + "вторая строка", encoding="utf-8")
         lines, pos = tailer._read_appended(log)
         self.assertEqual(lines, ["Привет мир"])
         self.assertEqual(pos, len(complete.encode("utf-8")))
@@ -156,8 +164,8 @@ class AgentLogTailerTest(unittest.TestCase):
 
     def test_read_error_does_not_skip_chunk(self):
         log = self.dir / "x-executor.jsonl"
-        log.write_text("first line\n", encoding="utf-8")
         tailer = self.mod.AgentLogTailer(self.dir)
+        log.write_text("first line\n", encoding="utf-8")
         lines, pos = tailer._read_appended(log)
         self.assertEqual(lines, ["first line"])
         log.write_text("first line\nsecond line\n", encoding="utf-8")
@@ -169,6 +177,35 @@ class AgentLogTailerTest(unittest.TestCase):
         # The chunk is retried on the next poll, not permanently skipped.
         lines, pos = tailer._read_appended(log)
         self.assertEqual(lines, ["second line"])
+
+    def test_preexisting_log_content_is_skipped(self):
+        # Files that existed before the wrapper started were written by
+        # previous runs (the logs dir is never cleaned): the tailer baselines
+        # their sizes at construction, so only lines appended during the
+        # current run are printed.
+        log = self.dir / "sessions-executor.jsonl"
+        log.write_text(
+            '{"part": {"type": "text", "text": "old"}}\n', encoding="utf-8"
+        )
+        tailer = self.mod.AgentLogTailer(self.dir)
+        self.assertEqual(tailer.tail(), [])
+        # The current run appends a line: only that line is shown.
+        log.write_text(
+            '{"part": {"type": "text", "text": "old"}}\n'
+            '{"part": {"type": "text", "text": "new"}}\n',
+            encoding="utf-8",
+        )
+        self.assertEqual(tailer.tail(), [("executor", "new")])
+
+    def test_new_file_after_baseline_starts_from_zero(self):
+        # A log file created after the baseline (by the current run) is not
+        # in the snapshot and starts at offset 0.
+        tailer = self.mod.AgentLogTailer(self.dir)
+        log = self.dir / "sessions-planner.jsonl"
+        log.write_text(
+            '{"part": {"type": "text", "text": "fresh"}}\n', encoding="utf-8"
+        )
+        self.assertEqual(tailer.tail(), [("planner", "fresh")])
 
 
 class RunIdDiscoveryTest(unittest.TestCase):
@@ -263,12 +300,14 @@ class LiveMonitorFinishTest(unittest.TestCase):
             logs_dir = Path(tmp) / ".workflow" / "logs"
             logs_dir.mkdir(parents=True)
             log = logs_dir / "sessions-executor.jsonl"
-            log.write_text(
-                '{"part": {"type": "text", "text": "late reply"}}\n',
-                encoding="utf-8",
-            )
             with mock.patch.object(Path, "cwd", return_value=Path(tmp)):
                 monitor = mod.LiveMonitor(Path(tmp), set())
+                # The "late reply" is appended AFTER the tailer's baseline:
+                # only lines written during the run are printed.
+                log.write_text(
+                    '{"part": {"type": "text", "text": "late reply"}}\n',
+                    encoding="utf-8",
+                )
                 captured = io.StringIO()
                 with mock.patch("sys.stdout", captured):
                     monitor.finish()
@@ -361,10 +400,15 @@ class LiveMonitorGateTest(unittest.TestCase):
         run_dir.mkdir(parents=True)
         logs_dir = state / ".workflow" / "logs"
         logs_dir.mkdir(parents=True)
-        (logs_dir / "sessions-executor.jsonl").write_text(
-            '{"part": {"type": "text", "text": "agent work"}}\n', encoding="utf-8"
-        )
         return state
+
+    def _append_log(self, state: Path, text: str = "agent work") -> None:
+        # The log line is appended AFTER the monitor is built: the tailer
+        # baselines pre-existing files at construction, so this simulates a
+        # line written during the run.
+        log = state / ".workflow" / "logs" / "sessions-executor.jsonl"
+        with log.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"part": {"type": "text", "text": text}}) + "\n")
 
     def _open_state(self, state: Path) -> None:
         (state / "workflows" / "runs" / "abc12345" / "state.json").write_text(
@@ -389,6 +433,7 @@ class LiveMonitorGateTest(unittest.TestCase):
             self._open_state(state)
             with mock.patch.object(Path, "cwd", return_value=state):
                 monitor = mod.LiveMonitor(state, set())
+                self._append_log(state)
                 monitor.run_id = "abc12345"
                 monitor.gate.open({"current_step_id": "adr-gate"})
                 captured = io.StringIO()
@@ -409,6 +454,7 @@ class LiveMonitorGateTest(unittest.TestCase):
             state_file = state / "workflows" / "runs" / "abc12345" / "state.json"
             with mock.patch.object(Path, "cwd", return_value=state):
                 monitor = mod.LiveMonitor(state, set())
+                self._append_log(state)
                 monitor.run_id = "abc12345"
                 monitor.gate.open({"current_step_id": "adr-gate"})
                 monitor._poll_once()  # buffers events (gate still open)
@@ -434,6 +480,7 @@ class LiveMonitorGateTest(unittest.TestCase):
             self._open_state(state)
             with mock.patch.object(Path, "cwd", return_value=state):
                 monitor = mod.LiveMonitor(state, set())
+                self._append_log(state)
                 monitor.run_id = "abc12345"
                 monitor.gate.open({"current_step_id": "adr-gate"})
                 captured = io.StringIO()
@@ -454,6 +501,7 @@ class LiveMonitorGateTest(unittest.TestCase):
             self._open_state(state)
             with mock.patch.object(Path, "cwd", return_value=state):
                 monitor = mod.LiveMonitor(state, set())
+                self._append_log(state)
                 monitor.run_id = "abc12345"
                 monitor.gate.open({"current_step_id": "adr-gate"})
                 monitor._poll_once()  # fill the buffer while the gate is open
@@ -765,6 +813,9 @@ class SoundTimingTest(unittest.TestCase):
             return self.returncode
 
     def _run_main(self, mod, tmp, lines, returncode=0):
+        # A non-TTY stdin keeps main() on the plain path (no pty, no
+        # forwarding thread): these tests are about notify() timing, not the
+        # pty plumbing (covered by FeedbackGateFlowTest).
         with (
             mock.patch.object(Path, "cwd", return_value=Path(tmp)),
             mock.patch(
@@ -772,6 +823,7 @@ class SoundTimingTest(unittest.TestCase):
             ),
             mock.patch.object(sys, "argv", ["run-pipeline.py", "adr-pipeline"]),
             mock.patch("sys.stdout", io.StringIO()),
+            mock.patch("sys.stdin.isatty", return_value=False),
             mock.patch.object(mod, "notify") as notify,
         ):
             rc = mod.main()
@@ -799,6 +851,513 @@ class SoundTimingTest(unittest.TestCase):
             rc, notify = self._run_main(mod, tmp, ["Run ID: abc12345"], 1)
         self.assertEqual(rc, 1)
         self.assertEqual(notify.call_count, 1)
+
+
+class TruncateTest(unittest.TestCase):
+    """Agent reasoning longer than MAX_LOG_TEXT_LEN is truncated for the
+    console; the full text stays in the .jsonl (render only)."""
+
+    def test_short_text_unchanged(self):
+        mod = load_run_pipeline()
+        self.assertEqual(mod.truncate(""), "")
+        self.assertEqual(mod.truncate("short"), "short")
+
+    def test_exactly_100_chars_unchanged(self):
+        mod = load_run_pipeline()
+        text = "x" * 100
+        self.assertEqual(mod.truncate(text), text)
+
+    def test_longer_than_100_chars_truncated_with_ellipsis(self):
+        mod = load_run_pipeline()
+        self.assertEqual(mod.truncate("x" * 101), "x" * 100 + "...")
+        self.assertEqual(mod.truncate("x" * 250), "x" * 100 + "...")
+
+    def test_render_log_event_truncates_long_text(self):
+        mod = load_run_pipeline()
+        line = json.dumps({"part": {"type": "text", "text": "y" * 150}})
+        role, text = mod.render_log_event("planner", line)
+        self.assertEqual((role, text), ("planner", "y" * 100 + "..."))
+
+
+class LogAlignmentTest(unittest.TestCase):
+    """Role labels are padded to the longest role name so the text after
+    "[role] " starts at the same column for planner and executor."""
+
+    def test_role_label_pads_to_longest_role(self):
+        mod = load_run_pipeline()
+        self.assertEqual(mod.role_label("planner"), "[planner ]")
+        self.assertEqual(mod.role_label("executor"), "[executor]")
+
+    def test_print_log_event_aligns_text_start(self):
+        mod = load_run_pipeline()
+        captured = io.StringIO()
+        with (
+            mock.patch("sys.stdout", captured),
+            mock.patch.object(mod, "stamp", return_value="07:51:37"),
+        ):
+            mod.print_log_event("planner", "I verified")
+            mod.print_log_event("executor", "SRP-review")
+        lines = captured.getvalue().splitlines()
+        self.assertTrue(lines[0].endswith("I verified"))
+        self.assertTrue(lines[1].endswith("SRP-review"))
+        # The text starts at the same column on both lines.
+        self.assertEqual(
+            lines[0].index("I verified"), lines[1].index("SRP-review")
+        )
+        self.assertTrue(lines[0].startswith("[07:51:37] [planner ] "))
+        self.assertTrue(lines[1].startswith("[07:51:37] [executor] "))
+
+
+class FeedbackGateRecognitionTest(unittest.TestCase):
+    """The revise feedback gate is recognized by the "feedback-gate"
+    substring of the step id (plain and loop-iteration forms)."""
+
+    def test_recognizes_feedback_gate_ids(self):
+        mod = load_run_pipeline()
+        self.assertTrue(mod.is_feedback_gate("adr-feedback-gate"))
+        self.assertTrue(mod.is_feedback_gate("adr-loop:adr-feedback-gate:1"))
+        self.assertTrue(mod.is_feedback_gate("adr-loop:adr-feedback-gate:2"))
+
+    def test_rejects_other_ids(self):
+        mod = load_run_pipeline()
+        self.assertFalse(mod.is_feedback_gate("adr-gate"))
+        self.assertFalse(mod.is_feedback_gate("adr-approval-gate"))
+        self.assertFalse(mod.is_feedback_gate("adr-loop:adr-gate:1"))
+        self.assertFalse(mod.is_feedback_gate(""))
+        self.assertFalse(mod.is_feedback_gate(None))
+
+
+class FeedbackEditorResolutionTest(unittest.TestCase):
+    """The feedback editor resolution chain: $VISUAL -> $EDITOR -> nano ->
+    vi, each candidate validated on PATH; None when the whole chain is
+    empty (unlike the launcher, which must always return something)."""
+
+    def test_prefers_visual_over_editor(self):
+        mod = load_run_pipeline()
+        with (
+            mock.patch.dict(
+                "os.environ", {"VISUAL": "code --wait", "EDITOR": "vim"}, clear=True
+            ),
+            mock.patch("shutil.which", side_effect=lambda name: "/usr/bin/" + name),
+        ):
+            self.assertEqual(mod.resolve_editor(), ["code", "--wait"])
+
+    def test_uses_editor_when_visual_unset(self):
+        mod = load_run_pipeline()
+        with (
+            mock.patch.dict("os.environ", {"EDITOR": "emacs -nw"}, clear=True),
+            mock.patch("shutil.which", side_effect=lambda name: "/usr/bin/" + name),
+        ):
+            self.assertEqual(mod.resolve_editor(), ["emacs", "-nw"])
+
+    def test_missing_binary_falls_through_to_next_candidate(self):
+        # A VISUAL/EDITOR whose binary is not on PATH is skipped and the
+        # chain continues (the launcher would return it as-is instead).
+        mod = load_run_pipeline()
+
+        def which(name):
+            return "/usr/bin/" + name if name == "vim" else None
+
+        with (
+            mock.patch.dict(
+                "os.environ", {"VISUAL": "subl", "EDITOR": "vim"}, clear=True
+            ),
+            mock.patch("shutil.which", side_effect=which),
+        ):
+            self.assertEqual(mod.resolve_editor(), ["vim"])
+
+    def test_malformed_visual_is_skipped_with_warning(self):
+        mod = load_run_pipeline()
+        with (
+            mock.patch.dict(
+                "os.environ", {"VISUAL": 'code --wait"', "EDITOR": "vim"}, clear=True
+            ),
+            mock.patch("shutil.which", side_effect=lambda name: "/usr/bin/" + name),
+            mock.patch("sys.stderr", io.StringIO()) as stderr,
+        ):
+            self.assertEqual(mod.resolve_editor(), ["vim"])
+        self.assertIn("warning", stderr.getvalue())
+
+    def test_falls_back_to_nano_then_vi(self):
+        mod = load_run_pipeline()
+
+        def with_nano(name):
+            return "/usr/bin/" + name if name in ("nano", "vi") else None
+
+        with (
+            mock.patch.dict("os.environ", {}, clear=True),
+            mock.patch("shutil.which", side_effect=with_nano),
+        ):
+            self.assertEqual(mod.resolve_editor(), ["nano"])
+
+        def vi_only(name):
+            return "/usr/bin/vi" if name == "vi" else None
+
+        with (
+            mock.patch.dict("os.environ", {}, clear=True),
+            mock.patch("shutil.which", side_effect=vi_only),
+        ):
+            self.assertEqual(mod.resolve_editor(), ["vi"])
+
+    def test_no_editor_available_returns_none(self):
+        mod = load_run_pipeline()
+        with (
+            mock.patch.dict("os.environ", {}, clear=True),
+            mock.patch("shutil.which", return_value=None),
+        ):
+            self.assertIsNone(mod.resolve_editor())
+
+
+class FeedbackFileTest(unittest.TestCase):
+    """feedback.md is created empty when missing and never overwritten."""
+
+    def test_creates_empty_file_with_parents(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tasks" / "current" / "feedback.md"
+            mod.create_feedback_file(path)
+            self.assertTrue(path.is_file())
+            self.assertEqual(path.read_text(encoding="utf-8"), "")
+
+    def test_never_overwrites_existing_feedback(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "feedback.md"
+            path.write_text("keep me", encoding="utf-8")
+            mod.create_feedback_file(path)
+            self.assertEqual(path.read_text(encoding="utf-8"), "keep me")
+
+
+class FeedbackEditorTest(unittest.TestCase):
+    """open_feedback_editor owns the revise gate: on a TTY with a usable
+    editor it runs the editor and answers `continue`; otherwise it falls
+    back (file created, gate stays interactive, forwarding never paused)."""
+
+    @contextmanager
+    def _tty(self, is_tty=True):
+        with (
+            mock.patch("sys.stdin.isatty", return_value=is_tty),
+            mock.patch("sys.stdout.isatty", return_value=is_tty),
+        ):
+            yield
+
+    def test_answers_continue_after_editor(self):
+        mod = load_run_pipeline()
+        real_master, real_slave = pty.openpty()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "feedback.md"
+                written = []
+                with (
+                    self._tty(),
+                    mock.patch.dict("os.environ", {}, clear=True),
+                    mock.patch("shutil.which", return_value="/usr/bin/nano"),
+                    mock.patch(
+                        "subprocess.run", return_value=mock.Mock(returncode=0)
+                    ) as run,
+                    mock.patch(
+                        "os.write",
+                        side_effect=lambda fd, data: written.append((fd, data))
+                        or len(data),
+                    ),
+                ):
+                    result = mod.open_feedback_editor(
+                        path, threading.Event(), real_master
+                    )
+                self.assertTrue(result)
+                run.assert_called_once()
+                self.assertEqual(run.call_args.args[0], ["nano", str(path)])
+                self.assertEqual(written, [(real_master, b"continue\n")])
+        finally:
+            os.close(real_master)
+            os.close(real_slave)
+
+    def test_falls_back_when_not_a_tty(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "feedback.md"
+            with (
+                self._tty(is_tty=False),
+                mock.patch("subprocess.run") as run,
+                mock.patch("os.write") as write,
+            ):
+                result = mod.open_feedback_editor(path, threading.Event(), 999)
+            self.assertFalse(result)
+            run.assert_not_called()
+            write.assert_not_called()
+            # The file is still created (the fallback keeps manual input).
+            self.assertTrue(path.is_file())
+
+    def test_falls_back_when_no_editor(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "feedback.md"
+            with (
+                self._tty(),
+                mock.patch("shutil.which", return_value=None),
+                mock.patch("subprocess.run") as run,
+            ):
+                result = mod.open_feedback_editor(path, threading.Event(), 999)
+            self.assertFalse(result)
+            run.assert_not_called()
+            self.assertTrue(path.is_file())
+
+    def test_fallback_never_leaves_forwarding_paused(self):
+        # In the fallback the user answers the gate manually, so stdin
+        # forwarding must never be left paused.
+        mod = load_run_pipeline()
+        pause = threading.Event()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "feedback.md"
+            with self._tty(is_tty=False):
+                result = mod.open_feedback_editor(path, pause, 999)
+            self.assertFalse(result)
+            self.assertFalse(pause.is_set())
+
+    def test_editor_failure_falls_back(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "feedback.md"
+            with (
+                self._tty(),
+                mock.patch.dict("os.environ", {}, clear=True),
+                mock.patch("shutil.which", return_value="/usr/bin/nano"),
+                mock.patch("subprocess.run", side_effect=OSError("boom")),
+                mock.patch("sys.stderr", io.StringIO()),
+            ):
+                result = mod.open_feedback_editor(path, threading.Event(), 999)
+            self.assertFalse(result)
+
+
+class ForwardInputTest(unittest.TestCase):
+    """forward_terminal_input copies terminal lines into the pty master and
+    pauses while the feedback editor is open."""
+
+    def _setup(self):
+        read_fd, write_fd = os.pipe()
+        master_fd, slave_fd = pty.openpty()
+        # The text-mode file owns read_fd: it is closed via source.close()
+        # (a GC of the file object closes the fd first, so os.close would
+        # raise EBADF).
+        source = os.fdopen(read_fd, "r")
+        return source, write_fd, master_fd, slave_fd
+
+    def _read_echo(self, master_fd, expected_bytes, timeout=2.0):
+        # The pty line discipline echoes with \n translated to \r\n (ONLCR);
+        # strip \r before comparing.
+        deadline = time.monotonic() + timeout
+        data = b""
+        while time.monotonic() < deadline and len(data) < len(expected_bytes):
+            try:
+                data += os.read(master_fd, 16)
+            except BlockingIOError:
+                time.sleep(0.05)
+        return data.replace(b"\r", b"")
+
+    def test_forwards_terminal_lines_into_pty(self):
+        mod = load_run_pipeline()
+        source, write_fd, master_fd, slave_fd = self._setup()
+        try:
+            stop = threading.Event()
+            thread = threading.Thread(
+                target=mod.forward_terminal_input,
+                args=(source, master_fd, threading.Event(), stop),
+                daemon=True,
+            )
+            thread.start()
+            os.write(write_fd, b"2\n")
+            # The pty line discipline echoes the forwarded line back: reading
+            # the master proves the wrapper forwarded it into specify's stdin.
+            self.assertEqual(self._read_echo(master_fd, b"2\n"), b"2\n")
+            stop.set()
+            thread.join(timeout=1)
+            self.assertFalse(thread.is_alive())
+        finally:
+            source.close()
+            os.close(write_fd)
+            os.close(master_fd)
+            os.close(slave_fd)
+
+    def test_paused_while_editor_open(self):
+        mod = load_run_pipeline()
+        source, write_fd, master_fd, slave_fd = self._setup()
+        try:
+            pause = threading.Event()
+            pause.set()
+            stop = threading.Event()
+            thread = threading.Thread(
+                target=mod.forward_terminal_input,
+                args=(source, master_fd, pause, stop),
+                daemon=True,
+            )
+            thread.start()
+            os.write(write_fd, b"2\n")
+            os.set_blocking(master_fd, False)
+            with self.assertRaises(BlockingIOError):
+                os.read(master_fd, 16)
+            pause.clear()
+            # After the editor closes the pending line is forwarded.
+            self.assertEqual(self._read_echo(master_fd, b"2\n"), b"2\n")
+            stop.set()
+            thread.join(timeout=1)
+        finally:
+            os.set_blocking(master_fd, True)
+            source.close()
+            os.close(write_fd)
+            os.close(master_fd)
+            os.close(slave_fd)
+
+
+class LiveMonitorLogOrderTest(unittest.TestCase):
+    """Agent log lines print BEFORE the step's "--- step X (completed)"
+    marker."""
+
+    def test_logs_print_before_step_marker(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp)
+            run_dir = state / "workflows" / "runs" / "abc12345"
+            run_dir.mkdir(parents=True)
+            (run_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "step_results": {
+                            "write-adr": {
+                                "status": "completed",
+                                "output": {"stdout": "done"},
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            logs_dir = state / ".workflow" / "logs"
+            logs_dir.mkdir(parents=True)
+            log = logs_dir / "sessions-executor.jsonl"
+            with mock.patch.object(Path, "cwd", return_value=state):
+                monitor = mod.LiveMonitor(state, set())
+                monitor.run_id = "abc12345"
+                # The agent line is appended after the tailer's baseline,
+                # like a line written by the finishing step.
+                log.write_text(
+                    '{"part": {"type": "text", "text": "final agent line"}}\n',
+                    encoding="utf-8",
+                )
+                captured = io.StringIO()
+                with mock.patch("sys.stdout", captured):
+                    monitor._poll_once()
+            out = captured.getvalue()
+            self.assertLess(
+                out.index("final agent line"),
+                out.index("--- step write-adr (completed)"),
+            )
+
+
+class FeedbackGateFlowTest(unittest.TestCase):
+    """main() recognizes the ADR revise feedback gate: the editor opens and
+    no victory sound is played (both for the editor path and the manual
+    fallback); regular gates still notify()."""
+
+    class FakeProc:
+        def __init__(self, lines, returncode=0):
+            self.stdout = iter(lines)
+            self.returncode = returncode
+
+        def wait(self):
+            return self.returncode
+
+    def _run_main(self, mod, tmp, step_id, editor_result):
+        state_root = Path(tmp) / ".specify"
+        run_dir = state_root / "workflows" / "runs" / "abc12345"
+        run_dir.mkdir(parents=True)
+        (run_dir / "state.json").write_text(
+            json.dumps({"current_step_id": step_id}), encoding="utf-8"
+        )
+        real_master, real_slave = pty.openpty()
+        # The run dir exists before main() starts; the wrapper snapshots
+        # prior runs BEFORE the workflow starts, so the first existing_run_ids
+        # call must see nothing (making abc12345 look like it appeared during
+        # the run) and later calls must find it.
+        state = {"calls": 0}
+
+        def fake_existing(state_dir):
+            state["calls"] += 1
+            return {"abc12345"} if state["calls"] > 1 else set()
+
+        try:
+            with (
+                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
+                mock.patch("sys.stdin", mock.Mock(isatty=lambda: True)),
+                mock.patch("pty.openpty", return_value=(real_master, real_slave)),
+                mock.patch(
+                    "subprocess.Popen",
+                    return_value=self.FakeProc(
+                        ["┌─ Gate ─────────", "Run ID: abc12345"], 0
+                    ),
+                ),
+                mock.patch.object(sys, "argv", ["run-pipeline.py", "adr-pipeline"]),
+                mock.patch("sys.stdout", io.StringIO()),
+                mock.patch.object(mod, "notify") as notify,
+                mock.patch.object(
+                    mod, "open_feedback_editor", return_value=editor_result
+                ) as editor,
+                mock.patch.object(mod, "forward_terminal_input"),
+                mock.patch.object(
+                    mod, "existing_run_ids", side_effect=fake_existing
+                ),
+            ):
+                rc = mod.main()
+        finally:
+            for fd in (real_master, real_slave):
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+        return rc, notify, editor
+
+    def test_feedback_gate_opens_editor_without_sound(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, notify, editor = self._run_main(
+                mod, tmp, "adr-feedback-gate", editor_result=True
+            )
+        self.assertEqual(rc, 0)
+        editor.assert_called_once()
+        feedback_path = editor.call_args.args[0]
+        self.assertTrue(str(feedback_path).endswith("tasks/current/feedback.md"))
+        # No victory sound for the feedback gate itself: only the final
+        # success signal fires.
+        self.assertEqual(notify.call_count, 1)
+
+    def test_feedback_gate_loop_iteration_without_sound(self):
+        # The loop-iteration form of the feedback gate id is recognized too.
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, notify, editor = self._run_main(
+                mod, tmp, "adr-loop:adr-feedback-gate:1", editor_result=True
+            )
+        self.assertEqual(rc, 0)
+        editor.assert_called_once()
+        self.assertEqual(notify.call_count, 1)
+
+    def test_feedback_gate_fallback_without_sound(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, notify, editor = self._run_main(
+                mod, tmp, "adr-feedback-gate", editor_result=False
+            )
+        self.assertEqual(rc, 0)
+        editor.assert_called_once()
+        self.assertEqual(notify.call_count, 1)
+
+    def test_regular_gate_still_notifies(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, notify, editor = self._run_main(
+                mod, tmp, "adr-gate", editor_result=True
+            )
+        self.assertEqual(rc, 0)
+        editor.assert_not_called()
+        # gate open + successful finish
+        self.assertEqual(notify.call_count, 2)
 
 
 if __name__ == "__main__":

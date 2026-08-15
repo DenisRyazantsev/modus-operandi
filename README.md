@@ -119,6 +119,8 @@ workflow:
   max_srp_iterations: 5        # SRP review-fix loop ceiling
   max_bug_iterations: 5        # bug review-fix loop ceiling
   max_comment_iterations: 5    # comment (readability) review-fix loop ceiling
+  max_adr_iterations: 3        # ADR approve/revise/reject loop ceiling
+  max_implement_iterations: 2  # implement verify/retry loop ceiling (guard against an empty implementation)
   shell_timeout: 7200          # per-step timeout in seconds for agent steps (2h)
   adr_dir: architecture        # directory where approved ADRs are saved
   human_gates: true            # false = gates auto-approve (non-interactive)
@@ -263,7 +265,10 @@ opencode serve
 
 The workflow steps: `write-adr` → `adr-loop` (gate with approve/revise/reject →
 optional feedback revision) → `save-adr` → `executor-questions` →
-`planner-answers` → `implement` → `srp-loop` (`do-while`: SRP review → verdict →
+`planner-answers` → `implement` → `implement-loop` (`do-while`: verify the
+implementation actually changed the repository → if not, the executor is asked
+once to redo the work) → `implement-pass-check` (fails the run with an error
+when two attempts produced no changes) → `srp-loop` (`do-while`: SRP review → verdict →
 fix, only for single-responsibility violations) → `srp-pass-check` (reports
 `SRP REVIEW OK` or a `WARNING`) → `bug-loop` (`do-while`: bug review → verdict →
 fix, only for bugs) → `bug-pass-check` (reports `BUGS REVIEW OK` or a `WARNING`)
@@ -272,6 +277,17 @@ verdict) → `sync-adr` → `pass-check` (reports `REVIEW OK` or
 `WARNING: review loop exhausted`) → `comment-review-loop` (`do-while`: comment
 review → verdict → fix, only for readability "traps" — comments about the *why*,
 not bugs) → `comment-pass-check` (reports `COMMENT REVIEW OK` or a `WARNING`).
+
+Before the review stages, `implement-loop` guards against an executor that
+finished without doing any work: `check_implementation.py` (installed next to
+`check_review.py`) exits non-zero when the repository has no new changes (`git
+diff HEAD` empty and no new non-ignored files; the pipeline's own saved
+`adr_dir/ADR-*.md` files are excluded). The executor is then asked once with
+"You didn't do changes." and, if the second attempt is still empty,
+`implement-pass-check` fails the run with an explanation. `run-agent.sh` also
+raises opencode's per-response output cap via
+`OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=1000000`, so an agent cannot be cut off
+mid-reasoning before acting (ADR-0006).
 
 The review runs in four stages. First `srp-loop` checks the git changes strictly
 for single-responsibility violations (god classes/functions, mixed concerns);

@@ -19,6 +19,7 @@ workflow:
   max_bug_iterations: 5          # ceiling for the bug review-fix loop (before the main review)
   max_comment_iterations: 5      # ceiling for the comment (readability) review-fix loop (after the main review)
   max_adr_iterations: 3          # ceiling for the human ADR approve/revise/reject loop
+  max_implement_iterations: 2    # ceiling for the implement verify/retry loop (guard against an empty implementation)
   shell_timeout: 7200            # per-step timeout in seconds for agent steps (2h)
   adr_dir: architecture          # directory (repo-relative) where approved ADRs are saved
   human_gates: true              # false = gates auto-approve (non-interactive runs)

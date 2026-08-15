@@ -26,7 +26,14 @@ def check_files(paths: Paths) -> list[str]:
         agent = paths["agents"] / agent_name
         if not agent.exists():
             errors.append(f"generated agent missing: {agent}")
-    for key in ("save_adr", "check_review", "task_utils", "adr_utils", "agent_call"):
+    for key in (
+        "save_adr",
+        "check_review",
+        "check_implementation",
+        "task_utils",
+        "adr_utils",
+        "agent_call",
+    ):
         script = paths[key]
         if not script.exists():
             errors.append(f"generated script missing: {script}")

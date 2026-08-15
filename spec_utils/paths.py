@@ -25,6 +25,9 @@ def build_paths(home: str | Path) -> Paths:
         "victory_wav": base / ".config" / "opencode" / "scripts" / "victory.wav",
         "save_adr": base / ".config" / "opencode" / "scripts" / "save_adr.py",
         "check_review": base / ".config" / "opencode" / "scripts" / "check_review.py",
+        "check_implementation": (
+            base / ".config" / "opencode" / "scripts" / "check_implementation.py"
+        ),
         "task_utils": base / ".config" / "opencode" / "scripts" / "task_utils.py",
         "adr_utils": base / ".config" / "opencode" / "scripts" / "adr_utils.py",
         "agent_call": base / ".config" / "opencode" / "scripts" / "agent_call.py",

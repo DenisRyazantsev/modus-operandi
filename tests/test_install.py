@@ -101,10 +101,11 @@ class InstallerTest(unittest.TestCase):
             ".config/opencode/scripts/victory.wav",
             ".config/opencode/scripts/save_adr.py",
             ".config/opencode/scripts/check_review.py",
+            ".config/opencode/scripts/check_implementation.py",
             ".config/opencode/scripts/task_utils.py",
             ".config/opencode/scripts/adr_utils.py",
             ".config/opencode/scripts/agent_call.py",
-            ".config/spec-kit-llm-client/config.yml",
+            ".config/spec-kit-llm-client/adr-pipeline.yml",
             ".config/spec-kit-llm-client/config.example.yml",
             ".config/spec-kit-llm-client/adr-pipeline.yml",
             ".local/bin/spec-run",
@@ -577,6 +578,7 @@ class InstallerTest(unittest.TestCase):
             "executor-questions",
             "planner-answers",
             "implement",
+            "implement-retry",
             "review",
             "fix",
             "sync-adr",
@@ -591,6 +593,9 @@ class InstallerTest(unittest.TestCase):
             block = workflow.split(f"- id: {step}", 1)[1].split("\n  - id:", 1)[0]
             self.assertIn("timeout: 7200", block, step)
         for step in (
+            "implement-loop",
+            "implement-verify",
+            "implement-pass-check",
             "verdict",
             "pass-check",
             "adr-feedback-clear",
@@ -633,6 +638,61 @@ class InstallerTest(unittest.TestCase):
         review_index = workflow.index("- id: review-loop")
         self.assertLess(implement_index, srp_index)
         self.assertLess(srp_check_index, review_index)
+
+    def test_run_agent_sets_output_token_limit(self):
+        # ADR-0007: opencode's default 32k per-response cap must be raised so
+        # an agent cannot burn the whole budget on reasoning before acting.
+        self.assertEqual(self.install(), 0)
+        run_agent = (self.home / ".config/opencode/scripts/run-agent.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=1000000", run_agent)
+        self.assertLess(
+            run_agent.index("OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"),
+            run_agent.index("--format json"),
+        )
+
+    def test_workflow_implement_loop_structure(self):
+        # ADR-0007: after implement, a verify loop guards against an executor
+        # that made no changes; one retry prompt, then the run fails.
+        self.assertEqual(self.install(), 0)
+        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("- id: implement-loop", workflow)
+        self.assertIn("- id: implement-verify", workflow)
+        self.assertIn("- id: implement-retry-branch", workflow)
+        self.assertIn("- id: implement-retry", workflow)
+        self.assertIn("- id: implement-pass-check", workflow)
+        self.assertIn('check_implementation.py" check "architecture"', workflow)
+        self.assertIn('"You didn\'t do changes."', workflow)
+        self.assertIn("IMPLEMENT OK: changes present", workflow)
+        self.assertIn("made no changes to the repository in two attempts", workflow)
+        self.assertIn("{{ steps.implement-verify.output.exit_code != 0 }}", workflow)
+        self.assertIn(".implement-retried", workflow)
+        block = workflow.split("- id: implement-loop", 1)[1].split("\n  - id:", 1)[0]
+        self.assertIn("max_iterations: 2", block)
+        implement_index = workflow.index("- id: implement")
+        loop_index = workflow.index("- id: implement-loop")
+        srp_index = workflow.index("- id: srp-loop")
+        pass_index = workflow.index("- id: implement-pass-check")
+        self.assertLess(implement_index, loop_index)
+        self.assertLess(loop_index, srp_index)
+        self.assertLess(loop_index, pass_index)
+
+    def test_workflow_implement_iterations_configurable(self):
+        self.assertEqual(self.install(), 0)
+        self.write_config(
+            self.read_config().replace(
+                "max_implement_iterations: 2", "max_implement_iterations: 3"
+            )
+        )
+        self.assertEqual(self.install(), 0)
+        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
+        block = workflow.split("- id: implement-loop", 1)[1].split("\n  - id:", 1)[0]
+        self.assertIn("max_iterations: 3", block)
 
     def test_workflow_bug_loop_structure(self):
         self.assertEqual(self.install(), 0)
@@ -862,6 +922,7 @@ class InstallerTest(unittest.TestCase):
             ".config/opencode/scripts/victory.wav",
             ".config/opencode/scripts/save_adr.py",
             ".config/opencode/scripts/check_review.py",
+            ".config/opencode/scripts/check_implementation.py",
             ".config/opencode/scripts/task_utils.py",
             ".config/opencode/scripts/adr_utils.py",
             ".config/opencode/scripts/agent_call.py",
