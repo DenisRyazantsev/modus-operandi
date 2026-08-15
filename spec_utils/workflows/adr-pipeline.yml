@@ -1,3 +1,13 @@
+# WARNING: the literal `timeout:` and `max_iterations:` values in this file
+# are placeholders, not operative settings. The specify engine accepts only
+# literal integers for these keys (no expressions), so the installer's
+# spec_utils/render.py `_patch_workflow_numbers` overwrites every `timeout`
+# with workflow.shell_timeout and each loop's `max_iterations` with its
+# max_*_iterations config value at install/`--apply` time — editing the
+# numbers here silently has no effect on installed workflows. Everything
+# else is delivered at runtime: state_dir and adr_dir arrive as -i inputs,
+# and the script paths come from the SKLC_SCRIPTS_DIR env var (defaulting to
+# $HOME/.config/opencode/scripts for direct `specify workflow run`).
 schema_version: "1.0"
 workflow:
   id: "adr-pipeline"
@@ -15,7 +25,21 @@ inputs:
     type: string
     required: false
     prompt: "Short id for this task (optional; generated from the feature otherwise)"
-${verdict_inputs_decl}
+  state_dir:
+    type: string
+    required: false
+    default: ".workflow"
+    prompt: "Task artifact directory inside the project (from workflow.state_dir)"
+  adr_dir:
+    type: string
+    required: false
+    default: "architecture"
+    prompt: "Directory where approved ADRs are saved (from workflow.adr_dir)"
+  adr_verdict:
+    type: string
+    enum: ["", approve, revise, reject]
+    default: "approve"
+    prompt: "ADR gate verdict: empty = ask the human, otherwise the auto-choice"
 
 steps:
   - id: validate-task-id
@@ -31,7 +55,7 @@ steps:
       # JSON data from the run's persisted inputs and validated in python,
       # where the text never enters a shell context.
       run_id="{{ context.run_id }}";
-      [ -n "$$run_id" ] || { echo "error: cannot locate the current run state; cannot validate the task_id input" >&2; exit 1; };
+      [ -n "$run_id" ] || { echo "error: cannot locate the current run state; cannot validate the task_id input" >&2; exit 1; };
       python3 -c '
       import json, re, sys
       try:
@@ -43,7 +67,7 @@ steps:
       if task_id and not re.fullmatch(r"[A-Za-z0-9_-]+", task_id):
           print("error: task_id contains unsupported characters; use only letters, digits, underscore or dash", file=sys.stderr)
           sys.exit(1)
-      ' "$$run_id" || exit 1;
+      ' "$run_id" || exit 1;
 
   - id: validate-feature
     type: shell
@@ -65,7 +89,7 @@ steps:
       # newest-directory lookup pick a different run and silently skip or
       # wrongly reject this feature's validation.
       run_id="{{ context.run_id }}";
-      [ -n "$$run_id" ] || { echo "error: cannot locate the current run state (.specify/workflows/runs); cannot validate the feature input" >&2; exit 1; };
+      [ -n "$run_id" ] || { echo "error: cannot locate the current run state (.specify/workflows/runs); cannot validate the feature input" >&2; exit 1; };
       python3 -c '
       import json, re, sys
       try:
@@ -74,42 +98,42 @@ steps:
           print("error: cannot read run inputs: " + str(exc), file=sys.stderr)
           sys.exit(1)
       feature = (data.get("inputs") or {}).get("feature") or ""
-      # \x24 is the dollar sign: the step text is rendered through
-      # string.Template, which would reject a literal dollar sign here.
-      if re.search(r"[\"`\x24\\]", feature):
+      if re.search(r"[\"`$\\]", feature):
           print("error: feature contains characters unsafe for shell (quote, backtick, dollar, backslash); rephrase it", file=sys.stderr)
           sys.exit(1)
-      ' "$$run_id" || exit 1;
+      ' "$run_id" || exit 1;
 
   - id: generate-task-id
     type: shell
     run: >-
+      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
       set -euo pipefail;
-      mkdir -p "${state_dir}/tasks";
+      mkdir -p "{{ inputs.state_dir }}/tasks";
       if [ -n "{{ inputs.task_id }}" ]; then
       tid="{{ inputs.task_id }}";
       else
-      slug=$$("${name_task}" "{{ inputs.feature }}");
-      slug=$$(printf '%s' "$$slug" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$$//' | cut -c1-40);
-      [ -n "$$slug" ] || slug=task;
-      tid="$$slug-$$(date +%Y%m%d-%H%M)";
+      slug=$("$SKLC_SCRIPTS_DIR/name-task.sh" "{{ inputs.feature }}");
+      slug=$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -c1-40);
+      [ -n "$slug" ] || slug=task;
+      tid="$slug-$(date +%Y%m%d-%H%M)";
       fi;
-      mkdir -p "${state_dir}/tasks/$$tid";
-      ln -sfn "$$tid" "${state_dir}/tasks/current";
-      echo "task id: $$tid";
+      mkdir -p "{{ inputs.state_dir }}/tasks/$tid";
+      ln -sfn "$tid" "{{ inputs.state_dir }}/tasks/current";
+      echo "task id: $tid";
 
   - id: write-adr
     type: shell
-    timeout: ${step_timeout}
+    timeout: 7200
     run: >-
-      "${run_agent}" planner
-      "Write an ADR for the following feature into ${state_dir}/tasks/current/adr.md
+      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+      "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
+      "Write an ADR for the following feature into {{ inputs.state_dir }}/tasks/current/adr.md
       with sections: Context, Decision, Alternatives, Consequences, Acceptance Criteria.
       Feature: {{ inputs.feature }}"
 
   - id: adr-loop
     type: do-while
-    max_iterations: ${max_adr_iterations}
+    max_iterations: 3
     condition: "{{ steps.adr-gate.output.choice != 'approve' }}"
     steps:
       - id: adr-gate
@@ -117,8 +141,8 @@ steps:
         message: "ADR is ready — approve, revise, or reject?"
         options: [approve, revise, reject]
         on_reject: abort
-        show_file: "${state_dir}/tasks/current/adr.md"
-        ${approve_adr_verdict}
+        show_file: "{{ inputs.state_dir }}/tasks/current/adr.md"
+        verdict_input: adr_verdict
       - id: adr-revise-branch
         type: if
         condition: "{{ steps.adr-gate.output.choice == 'revise' }}"
@@ -127,7 +151,7 @@ steps:
             type: gate
             message: >-
               Feedback on the ADR is collected in
-              ${state_dir}/tasks/current/feedback.md — the wrapper opens it
+              {{ inputs.state_dir }}/tasks/current/feedback.md — the wrapper opens it
               in your editor and the run continues automatically when the
               editor closes. If no editor opened, create the file manually
               and write your feedback, then choose continue. The planner
@@ -135,15 +159,16 @@ steps:
             options: [continue, abort]
           - id: adr-revise
             type: shell
-            timeout: ${step_timeout}
+            timeout: 7200
             run: >-
-              "${run_agent}" planner
-              "Read ${state_dir}/tasks/current/feedback.md. If it contains
-              feedback, update ${state_dir}/tasks/current/adr.md accordingly.
+              SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+              "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
+              "Read {{ inputs.state_dir }}/tasks/current/feedback.md. If it contains
+              feedback, update {{ inputs.state_dir }}/tasks/current/adr.md accordingly.
               If it is empty or missing, do nothing."
           - id: adr-feedback-clear
             type: shell
-            run: "rm -f ${state_dir}/tasks/current/feedback.md"
+            run: "rm -f {{ inputs.state_dir }}/tasks/current/feedback.md"
 
   - id: adr-unapproved
     type: if
@@ -154,113 +179,120 @@ steps:
         message: >-
           The ADR was not approved within the review rounds (last choice:
           {{ steps.adr-gate.output.choice }}). Approve it to save the ADR
-          into ${adr_dir}/, or abort the run.
+          into {{ inputs.adr_dir }}/, or abort the run.
         options: [approve, abort]
         on_reject: abort
-        show_file: "${state_dir}/tasks/current/adr.md"
+        show_file: "{{ inputs.state_dir }}/tasks/current/adr.md"
 
   - id: save-adr
     type: shell
-    timeout: ${step_timeout}
+    timeout: 7200
     run: >-
-      python3 "${save_adr}" save "${state_dir}" "{{ inputs.task_id }}" "${adr_dir}" "${run_agent}"
+      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+      python3 "$SKLC_SCRIPTS_DIR/save_adr.py" save "{{ inputs.state_dir }}" "{{ inputs.task_id }}" "{{ inputs.adr_dir }}" "$SKLC_SCRIPTS_DIR/run-agent.sh"
 
   - id: executor-questions
     type: shell
-    timeout: ${step_timeout}
+    timeout: 7200
     run: >-
-      "${run_agent}" executor
-      "Read ${state_dir}/tasks/current/adr.md. If anything is ambiguous, write
-      ${state_dir}/tasks/current/questions.md whose first line is exactly
+      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+      "$SKLC_SCRIPTS_DIR/run-agent.sh" executor
+      "Read {{ inputs.state_dir }}/tasks/current/adr.md. If anything is ambiguous, write
+      {{ inputs.state_dir }}/tasks/current/questions.md whose first line is exactly
       'QUESTIONS: PRESENT' followed by your numbered questions, then stop. If everything is
-      clear, write ${state_dir}/tasks/current/questions.md with the first line
+      clear, write {{ inputs.state_dir }}/tasks/current/questions.md with the first line
       exactly 'QUESTIONS: NONE'."
 
   - id: planner-answers
     type: shell
-    timeout: ${step_timeout}
+    timeout: 7200
     run: >-
-      "${run_agent}" planner
-      "Read ${state_dir}/tasks/current/questions.md. If its first line is
-      'QUESTIONS: PRESENT', write ${state_dir}/tasks/current/answers.md answering
+      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+      "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
+      "Read {{ inputs.state_dir }}/tasks/current/questions.md. If its first line is
+      'QUESTIONS: PRESENT', write {{ inputs.state_dir }}/tasks/current/answers.md answering
       each question line-by-line in the same order. If it is 'QUESTIONS: NONE', write nothing."
-     
 
   - id: implement
     type: shell
-    timeout: ${step_timeout}
+    timeout: 7200
     run: >-
-      "${run_agent}" executor
-      "Implement the feature per ${state_dir}/tasks/current/adr.md and
-      ${state_dir}/tasks/current/answers.md (if present). Then run the project's
+      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+      "$SKLC_SCRIPTS_DIR/run-agent.sh" executor
+      "Implement the feature per {{ inputs.state_dir }}/tasks/current/adr.md and
+      {{ inputs.state_dir }}/tasks/current/answers.md (if present). Then run the project's
       tests/linter if available. If you must deviate from the ADR (e.g. it describes
-      something impossible or clearly suboptimal), write ${state_dir}/tasks/current/deviation.md
+      something impossible or clearly suboptimal), write {{ inputs.state_dir }}/tasks/current/deviation.md
       recording: what the ADR says, what you did instead, and why. Do not create the file
       when there is no deviation."
 
   - id: implement-loop
     type: do-while
-    max_iterations: ${max_implement_iterations}
+    max_iterations: 2
     condition: "{{ steps.implement-verify.output.exit_code != 0 }}"
     steps:
       - id: implement-verify
         type: shell
         continue_on_error: true
         run: >-
-          python3 "${check_implementation}" check "${adr_dir}"
+          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+          python3 "$SKLC_SCRIPTS_DIR/check_implementation.py" check "{{ inputs.adr_dir }}"
       - id: implement-retry-branch
         type: if
         condition: "{{ steps.implement-verify.output.exit_code != 0 }}"
         then:
           - id: implement-retry
             type: shell
-            timeout: ${step_timeout}
+            timeout: 7200
             run: |
+              SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
               # The first loop iteration asks the executor to redo the work;
               # the marker keeps the loop from asking a second time (a second
               # empty verify must fail the run, not repeat the prompt).
-              if [ -f "${state_dir}/tasks/current/.implement-retried" ]; then
+              if [ -f "{{ inputs.state_dir }}/tasks/current/.implement-retried" ]; then
               echo "already retried once; the run will fail";
               exit 0;
               fi;
-              touch "${state_dir}/tasks/current/.implement-retried";
-              "${run_agent}" executor "You didn't do changes.";
+              touch "{{ inputs.state_dir }}/tasks/current/.implement-retried";
+              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor "You didn't do changes.";
 
   - id: implement-pass-check
     type: shell
     run: >-
-      if python3 "${check_implementation}" check "${adr_dir}"; then
+      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+      if python3 "$SKLC_SCRIPTS_DIR/check_implementation.py" check "{{ inputs.adr_dir }}"; then
       echo "IMPLEMENT OK: changes present";
       else
-      echo "error: the executor made no changes to the repository in two attempts (task state: ${state_dir}/tasks/current; agent log: ${state_dir}/logs); resume with: specify workflow resume {{ context.run_id }}" >&2;
+      echo "error: the executor made no changes to the repository in two attempts (task state: {{ inputs.state_dir }}/tasks/current; agent log: {{ inputs.state_dir }}/logs); resume with: specify workflow resume {{ context.run_id }}" >&2;
       exit 1;
       fi
 
   - id: srp-loop
     type: do-while
-    max_iterations: ${max_srp_iterations}
+    max_iterations: 5
     condition: "{{ steps.srp-verdict.output.exit_code != 0 }}"
     steps:
       - id: srp-review
         type: shell
-        timeout: ${step_timeout}
+        timeout: 7200
         run: >-
-          "${run_agent}" planner
+          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
           "Review the git changes for SRP violations ONLY: the single-responsibility
           principle — every class, function and module must have one clear
           responsibility, with no god classes/functions and no mixed concerns in one
           unit. Do NOT review ADR compliance, tests, or any other quality aspect
           (a later stage does that). Run git status, then git diff HEAD (includes
-          staged changes). Write ${state_dir}/tasks/current/srp-review-N.md
+          staged changes). Write {{ inputs.state_dir }}/tasks/current/srp-review-N.md
           (N is the next number after the existing srp-review files) with the first
           line exactly 'SRP: PASS' or 'SRP: FIX' followed by actionable findings."
-         
 
       - id: srp-verdict
         type: shell
         continue_on_error: true
         run: >-
-          python3 "${check_review}" check-review "${state_dir}" "{{ inputs.task_id }}" srp
+          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+          python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" srp
 
       - id: srp-fix-branch
         type: if
@@ -268,48 +300,51 @@ steps:
         then:
           - id: srp-fix
             type: shell
-            timeout: ${step_timeout}
+            timeout: 7200
             run: >-
-              "${run_agent}" executor
-              "Read the latest ${state_dir}/tasks/current/srp-review-N.md
+              SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor
+              "Read the latest {{ inputs.state_dir }}/tasks/current/srp-review-N.md
               and fix all its SRP findings. Then run the project's tests/linter if
               available."
 
   - id: srp-pass-check
     type: shell
     run: >-
-      if last=$$(python3 "${check_review}" check-review "${state_dir}" "{{ inputs.task_id }}" srp 2>/dev/null); then
-      echo "SRP REVIEW OK: final verdict PASS ($$last)";
+      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+      if last=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" srp 2>/dev/null); then
+      echo "SRP REVIEW OK: final verdict PASS ($last)";
       else
-      echo "WARNING: SRP review loop exhausted ${max_srp_iterations} iterations without 'SRP: PASS' (latest review: $${last:-none}); inspect the latest srp-review file and the code";
+      echo "WARNING: SRP review loop exhausted all iterations without 'SRP: PASS' (latest review: ${last:-none}); inspect the latest srp-review file and the code";
       fi
 
   - id: bug-loop
     type: do-while
-    max_iterations: ${max_bug_iterations}
+    max_iterations: 5
     condition: "{{ steps.bug-verdict.output.exit_code != 0 }}"
     steps:
       - id: bug-review
         type: shell
-        timeout: ${step_timeout}
+        timeout: 7200
         run: >-
-          "${run_agent}" planner
+          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
           "Review the git changes for BUGS ONLY: logic errors, wrong conditions,
           off-by-one and edge cases, unhandled errors, races, broken control flow,
           wrong types/units, and discrepancies between the implemented behavior and
-          the acceptance criteria in ${state_dir}/tasks/current/adr.md.
+          the acceptance criteria in {{ inputs.state_dir }}/tasks/current/adr.md.
           Do NOT review SRP violations, ADR-format compliance, or comment quality
           (later stages do that). Run git status, then git diff HEAD (includes
-          staged changes). Write ${state_dir}/tasks/current/bug-review-N.md
+          staged changes). Write {{ inputs.state_dir }}/tasks/current/bug-review-N.md
           (N is the next number after the existing bug-review files) with the first
           line exactly 'BUGS: PASS' or 'BUGS: FIX' followed by actionable findings."
-         
 
       - id: bug-verdict
         type: shell
         continue_on_error: true
         run: >-
-          python3 "${check_review}" check-review "${state_dir}" "{{ inputs.task_id }}" bugs
+          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+          python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" bugs
 
       - id: bug-fix-branch
         type: if
@@ -317,39 +352,42 @@ steps:
         then:
           - id: bug-fix
             type: shell
-            timeout: ${step_timeout}
+            timeout: 7200
             run: >-
-              "${run_agent}" executor
-              "Read the latest ${state_dir}/tasks/current/bug-review-N.md
+              SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor
+              "Read the latest {{ inputs.state_dir }}/tasks/current/bug-review-N.md
               and fix all its bug findings. Then run the project's tests/linter if
               available."
 
   - id: bug-pass-check
     type: shell
     run: >-
-      if last=$$(python3 "${check_review}" check-review "${state_dir}" "{{ inputs.task_id }}" bugs 2>/dev/null); then
-      echo "BUGS REVIEW OK: final verdict PASS ($$last)";
+      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+      if last=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" bugs 2>/dev/null); then
+      echo "BUGS REVIEW OK: final verdict PASS ($last)";
       else
-      echo "WARNING: bug review loop exhausted ${max_bug_iterations} iterations without 'BUGS: PASS' (latest review: $${last:-none}); inspect the latest bug-review file and the code";
+      echo "WARNING: bug review loop exhausted all iterations without 'BUGS: PASS' (latest review: ${last:-none}); inspect the latest bug-review file and the code";
       fi
 
   - id: review-loop
     type: do-while
-    max_iterations: ${max_fix_iterations}
+    max_iterations: 5
     condition: "{{ steps.verdict.output.exit_code != 0 }}"
     steps:
       - id: review
         type: shell
-        timeout: ${step_timeout}
+        timeout: 7200
         run: >-
-          "${run_agent}" planner
-          "Review the git changes against ${state_dir}/tasks/current/adr.md.
-          First read ${state_dir}/tasks/current/deviation.md if present: if it
+          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
+          "Review the git changes against {{ inputs.state_dir }}/tasks/current/adr.md.
+          First read {{ inputs.state_dir }}/tasks/current/deviation.md if present: if it
           records a justified deviation from the ADR, evaluate the code against the ADR as
           amended by that deviation and do not report the deviation itself as a finding.
           If the deviation file is missing or unjustified, report the mismatch as a finding.
           Run git status, then git diff HEAD (includes staged changes). Write
-          ${state_dir}/tasks/current/review-N.md (N is the next number after the
+          {{ inputs.state_dir }}/tasks/current/review-N.md (N is the next number after the
           existing review files) with the first line exactly 'VERDICT: PASS' or
           'VERDICT: FIX' followed by actionable findings. The verdict must reflect the
           implemented code, not the ADR document."
@@ -358,7 +396,8 @@ steps:
         type: shell
         continue_on_error: true
         run: >-
-          python3 "${check_review}" check-review "${state_dir}" "{{ inputs.task_id }}" review
+          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+          python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" review
 
       - id: fix-branch
         type: if
@@ -366,21 +405,23 @@ steps:
         then:
           - id: fix
             type: shell
-            timeout: ${step_timeout}
+            timeout: 7200
             run: >-
-              "${run_agent}" executor
-              "Read the latest ${state_dir}/tasks/current/review-N.md and fix all its
+              SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor
+              "Read the latest {{ inputs.state_dir }}/tasks/current/review-N.md and fix all its
               findings. Then run the project's tests/linter if available."
 
   - id: sync-adr
     type: shell
-    timeout: ${step_timeout}
+    timeout: 7200
     run: |
+      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
       set -euo pipefail
-      if [ -f "${state_dir}/tasks/current/deviation.md" ]; then
-      "${run_agent}" planner "Read ${state_dir}/tasks/current/deviation.md and ${state_dir}/tasks/current/adr.md. Update adr.md so it reflects the recorded deviation: append an '## Amendments' section (do not rewrite the Decision) noting what changed and why."
-      python3 "${save_adr}" sync "${state_dir}" "{{ inputs.task_id }}"
-      rm -f "${state_dir}/tasks/current/deviation.md"
+      if [ -f "{{ inputs.state_dir }}/tasks/current/deviation.md" ]; then
+      "$SKLC_SCRIPTS_DIR/run-agent.sh" planner "Read {{ inputs.state_dir }}/tasks/current/deviation.md and {{ inputs.state_dir }}/tasks/current/adr.md. Update adr.md so it reflects the recorded deviation: append an '## Amendments' section (do not rewrite the Decision) noting what changed and why."
+      python3 "$SKLC_SCRIPTS_DIR/save_adr.py" sync "{{ inputs.state_dir }}" "{{ inputs.task_id }}"
+      rm -f "{{ inputs.state_dir }}/tasks/current/deviation.md"
       else
       echo "no deviation recorded"
       fi
@@ -388,22 +429,24 @@ steps:
   - id: pass-check
     type: shell
     run: >-
-      if last=$$(python3 "${check_review}" check-review "${state_dir}" "{{ inputs.task_id }}" review 2>/dev/null); then
-      echo "REVIEW OK: final verdict PASS ($$last)";
+      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+      if last=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" review 2>/dev/null); then
+      echo "REVIEW OK: final verdict PASS ($last)";
       else
-      echo "WARNING: review loop exhausted ${max_fix_iterations} iterations without 'VERDICT: PASS' (latest review: $${last:-none}); inspect the latest review file and the code";
+      echo "WARNING: review loop exhausted all iterations without 'VERDICT: PASS' (latest review: ${last:-none}); inspect the latest review file and the code";
       fi
 
   - id: comment-review-loop
     type: do-while
-    max_iterations: ${max_comment_iterations}
+    max_iterations: 5
     condition: "{{ steps.comment-verdict.output.exit_code != 0 }}"
     steps:
       - id: comment-review
         type: shell
-        timeout: ${step_timeout}
+        timeout: 7200
         run: >-
-          "${run_agent}" planner
+          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
           "Review the git changes for readability 'traps' ONLY: places that are
           correct but would mislead a reader, NOT bugs. Act as a senior code
           reviewer opening this file for the first time: find only the spots where
@@ -417,7 +460,7 @@ steps:
           exceptions, edge cases, business rules inside conditions, implicit
           invariants, strange optimizations, external constraints, known
           limitations/tech debt. Run git status, then git diff HEAD (includes
-          staged changes). Write ${state_dir}/tasks/current/comment-review-N.md
+          staged changes). Write {{ inputs.state_dir }}/tasks/current/comment-review-N.md
           (N is the next number after the existing comment-review files) with the
           first line exactly 'VERDICT: PASS' or 'VERDICT: FIX'. If PASS, write
           nothing else. If FIX, list findings in this strict format, one per block:
@@ -425,13 +468,13 @@ steps:
           Why a reader would be misled: <one sentence>
           Comment: <1-2 lines, WHY only, in English>
           Verdict: COMMENT | REFACTOR"
-         
 
       - id: comment-verdict
         type: shell
         continue_on_error: true
         run: >-
-          python3 "${check_review}" check-review "${state_dir}" "{{ inputs.task_id }}" comment
+          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+          python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" comment
 
       - id: comment-fix-branch
         type: if
@@ -439,10 +482,11 @@ steps:
         then:
           - id: comment-fix
             type: shell
-            timeout: ${step_timeout}
+            timeout: 7200
             run: >-
-              "${run_agent}" executor
-              "Read the latest ${state_dir}/tasks/current/comment-review-N.md
+              SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor
+              "Read the latest {{ inputs.state_dir }}/tasks/current/comment-review-N.md
               and apply all its findings: for each Verdict: COMMENT add the
               suggested why-comment to the code; for each Verdict: REFACTOR perform
               the rename/refactor instead of adding a comment. Then run the
@@ -451,8 +495,9 @@ steps:
   - id: comment-pass-check
     type: shell
     run: >-
-      if last=$$(python3 "${check_review}" check-review "${state_dir}" "{{ inputs.task_id }}" comment 2>/dev/null); then
-      echo "COMMENT REVIEW OK: final verdict PASS ($$last)";
+      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+      if last=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" comment 2>/dev/null); then
+      echo "COMMENT REVIEW OK: final verdict PASS ($last)";
       else
-      echo "WARNING: comment review loop exhausted ${max_comment_iterations} iterations without 'VERDICT: PASS' (latest review: $${last:-none}); inspect the latest comment-review file and the code";
+      echo "WARNING: comment review loop exhausted all iterations without 'VERDICT: PASS' (latest review: ${last:-none}); inspect the latest comment-review file and the code";
       fi

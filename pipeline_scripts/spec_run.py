@@ -8,6 +8,12 @@ timestamps, live step output, run statistics and the victory sound.
 `spec-run edit` opens the installed config.yml in your terminal editor and
 re-applies it on exit, so the next run already uses the new settings.
 
+The launcher resolves every installed path at runtime: run-pipeline.py, both
+workflows and config.yml come from the config base directory derived from
+XDG_CONFIG_HOME/$HOME, and the repo's install.py path (used by `edit`) is
+read from the install-path.txt file the installer writes into the config
+directory. Nothing is baked into this file at install time.
+
 Usage:
   spec-run adr "feature description" [-i key=value ...]
   spec-run review [--branch-diff]
@@ -29,14 +35,31 @@ import shlex
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
-# Absolute paths baked in at install time; rerun install.py after moving
-# ~/.config/spec-kit-llm-client, ~/.config/opencode or the repo clone.
-RUN_PIPELINE = "${run_pipeline}"
-ADR_WORKFLOW = "${adr_workflow}"
-REVIEW_WORKFLOW = "${review_workflow}"
-INSTALL_PY = "${install_py}"
-CONFIG = "${config}"
+
+def _config_base() -> Path:
+    """The config root the installer writes into (XDG_CONFIG_HOME or ~/.config)."""
+    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+
+
+def _scripts_dir() -> Path:
+    return _config_base() / "opencode" / "scripts"
+
+
+def _config_dir() -> Path:
+    return _config_base() / "spec-kit-llm-client"
+
+
+# Paths of the installed pipeline, resolved from the launcher's location
+# (both live under the config base, so no values are baked at install time).
+RUN_PIPELINE = str(_scripts_dir() / "run-pipeline.py")
+ADR_WORKFLOW = str(_config_dir() / "adr-pipeline.yml")
+REVIEW_WORKFLOW = str(_config_dir() / "review-pipeline.yml")
+CONFIG = str(_config_dir() / "config.yml")
+
+# The repo's install.py path, recorded by the installer for `spec-run edit`.
+INSTALL_PATH_FILE = _config_dir() / "install-path.txt"
 
 USAGE = """Usage: spec-run <subcommand> [args]
 
@@ -103,7 +126,7 @@ def _resolve_editor() -> list[str]:
             return shlex.split(value)
         except ValueError as exc:
             print(
-                "warning: {} is malformed ({}); skipping it".format(var, exc),
+                f"warning: {var} is malformed ({exc}); skipping it",
                 file=sys.stderr,
             )
     if shutil.which("nano"):
@@ -196,10 +219,25 @@ def _launch_editor(editor_cmd: list[str]) -> int | None:
         return subprocess.run(editor_cmd, check=False).returncode
     except OSError as exc:
         print(
-            "error: cannot start editor {}: {}".format(editor_cmd[0], exc),
+            f"error: cannot start editor {editor_cmd[0]}: {exc}",
             file=sys.stderr,
         )
         return None
+
+
+def _install_py() -> str:
+    """Return the recorded repo install.py path, or "" when not recorded.
+
+    The installer writes the absolute path of the repo's install.py into
+    install-path.txt; `spec-run edit` needs it to re-apply the config. The
+    path cannot be derived from the launcher's own location (the repo clone
+    may live anywhere), so a missing file means the installer metadata is
+    gone (clone moved/deleted) and edit must fail with a readable error.
+    """
+    try:
+        return INSTALL_PATH_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
 
 def _apply_config() -> int:
@@ -208,19 +246,28 @@ def _apply_config() -> int:
     # the result, without the install-time prerequisite/dependency checks or
     # the next-steps output. A config that fails validation surfaces here and
     # aborts `edit` with the installer's exit code.
-    result = subprocess.run([sys.executable, INSTALL_PY, "--apply"], check=False)
+    install_py = _install_py()
+    if not install_py:
+        print(
+            f"error: cannot find the recorded install.py path ({INSTALL_PATH_FILE}); rerun "
+            "install.py from the repo clone to record it",
+            file=sys.stderr,
+        )
+        return 1
+    result = subprocess.run([sys.executable, install_py, "--apply"], check=False)
     if result.returncode == 0:
         print("config applied - agents, scripts and workflows re-rendered")
     return result.returncode
 
 
 def _run_edit() -> int:
-    # `edit` takes no arguments; the config path is baked in at install time.
-    # Resolve and run the editor, then re-apply the config whenever the editor
-    # actually launched. The editor's own exit code does not gate the apply: a
-    # user can save a valid edit and still close the editor non-zero (vim
-    # :cq, ...), and `--apply` re-validates the config anyway, failing loudly
-    # on an invalid edit. Only a failure to start the editor aborts.
+    # `edit` takes no arguments; the config path is derived from the
+    # launcher's location at import time. Resolve and run the editor, then
+    # re-apply the config whenever the editor actually launched. The editor's
+    # own exit code does not gate the apply: a user can save a valid edit and
+    # still close the editor non-zero (vim :cq, ...), and `--apply`
+    # re-validates the config anyway, failing loudly on an invalid edit. Only
+    # a failure to start the editor aborts.
     editor_cmd = _resolve_editor() + [CONFIG]
     if _launch_editor(editor_cmd) is None:
         return 1
@@ -246,7 +293,7 @@ def main(argv: list[str] | None = None) -> int:
         # only when exec fails, which is why return 1 follows.
         os.execv(cmd[0], cmd)
     except OSError as exc:
-        print("error: cannot run {}: {}".format(cmd[0], exc), file=sys.stderr)
+        print(f"error: cannot run {cmd[0]}: {exc}", file=sys.stderr)
     return 1
 
 

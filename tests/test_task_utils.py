@@ -1,4 +1,4 @@
-"""Unit tests for templates/task_utils.py (shared task-dir resolution)."""
+"""Unit tests for pipeline_scripts/task_utils.py (shared task-dir resolution)."""
 
 import importlib.util
 import sys
@@ -7,10 +7,10 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT / "templates"))
+sys.path.insert(0, str(REPO_ROOT / "pipeline_scripts"))
 
 _SPEC = importlib.util.spec_from_file_location(
-    "task_utils", REPO_ROOT / "templates" / "task_utils.py"
+    "task_utils", REPO_ROOT / "pipeline_scripts" / "task_utils.py"
 )
 assert _SPEC is not None and _SPEC.loader is not None
 task_utils = importlib.util.module_from_spec(_SPEC)

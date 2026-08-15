@@ -8,7 +8,11 @@ from __future__ import annotations
 
 import shutil
 
-from . import CONFIG_EXAMPLE, Paths, config, config_diff, deps, render, verify
+from . import CONFIG_EXAMPLE, REPO_ROOT, Paths, config, config_diff, deps, render, verify
+
+# Recommended .gitignore lines for a project using the pipeline (documentation
+# role only; the installer does not write .gitignore files).
+GITIGNORE_SNIPPET = ".workflow/\n.specify/workflows/\n"
 
 
 def ensure_config(paths: Paths) -> None:
@@ -39,14 +43,17 @@ def apply(paths: Paths, update: bool = False) -> None:
         # apply_defaults() every key exists, so the diff would always be empty.
         config_diff.report_new_options(paths, raw)
     render.render_agents(cfg, paths)
-    render.render_run_agent(cfg, paths)
-    render.render_name_task(cfg, paths)
-    render.render_run_pipeline(cfg, paths)
+    render.render_run_agent(paths)
+    render.render_name_task(paths)
+    render.render_run_pipeline(paths)
     render.render_victory_wav(paths)
     render.render_adr_scripts(paths)
     render.render_workflow(cfg, paths)
     render.render_review_workflow(cfg, paths)
-    render.render_spec_run(cfg, paths)
+    render.render_spec_run(paths)
+    # Record the repo's install.py path: `spec-run edit` re-applies the config
+    # through it, and the path cannot be derived from the installed launcher.
+    paths["install_path"].write_text(str(REPO_ROOT / "install.py"), encoding="utf-8")
     verify.verify_install(paths)
 
 

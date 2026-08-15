@@ -141,8 +141,8 @@ specify workflow run ~/.config/spec-kit-llm-client/adr-pipeline.yml -i feature="
 warm sessions (`.workflow/sessions-<task_id>.json`). Use a short, unique id per task —
 running a different task with the same `task_id` reuses that task's sessions.
 
-Both commands create the task artifacts in `.workflow/tasks/<task_id>/` (add to your
-`.gitignore` — see `templates/gitignore.snippet`).
+Both commands create the task artifacts in `.workflow/tasks/<task_id>/` (add
+`.workflow/` and `.specify/workflows/` to your `.gitignore`).
 
 The task id is optional: when omitted, the first workflow step (`generate-task-id`)
 asks the executor to derive a short English kebab-case slug from the feature and
@@ -338,7 +338,7 @@ yes).
 - **Session ids**: `run-agent.sh` extracts the `sessionID` field from `opencode run
   --format json` output, with a `sessionId` fallback. If a future opencode version
   changes the stream shape, update `extract_session_id()` in
-  `templates/run-agent.sh.tpl` (output of `opencode run --format json` prints the
+  `pipeline_scripts/run-agent.sh` (output of `opencode run --format json` prints the
   first `sessionID:...` occurrence).
 - **specify-cli version**: the installer pins a minimum version (>= 0.16). The
   workflow schema (`do-while`, `verdict_input`, `continue_on_error`) is verified
@@ -358,19 +358,21 @@ spec_utils/
   config.py                 paths, defaults, config.yml loading and validation
   deps.py                   python/uv/pip/specify/pyyaml install AND uninstall
   uninstall.py              --uninstall: remove installed files and dependencies
-  render.py                 render agents, scripts and workflows
+  render.py                 install the agents, scripts and workflows (no templates)
   verify.py                 validate the installed pipeline
-templates/
-  planner.md.tpl            planner agent (strong model)
-  executor.md.tpl           executor agent (cheap model)
-  adr-pipeline.yml.tpl      spec-kit workflow
-  review-pipeline.yml.tpl   review-only workflow
-  spec_run.py.tpl           global spec-run launcher (~/.local/bin/spec-run)
-  run-agent.sh.tpl          session glue (planner/executor roles)
-  name-task.sh.tpl          one-shot task-slug generator (generate-task-id)
+  workflows/
+    adr-pipeline.yml        ADR pipeline source (state_dir/adr_dir delivered at runtime)
+    review-pipeline.yml     review-only workflow source
+pipeline_scripts/           installed scripts (copied verbatim; config via args/env)
+  spec_run.py               global spec-run launcher (~/.local/bin/spec-run)
+  run_pipeline.py           run-pipeline.py wrapper (timestamps, logs, statistics)
+  run-agent.sh              session glue (planner/executor roles)
+  name-task.sh              one-shot task-slug generator (generate-task-id)
   save_adr.py               release/sync an ADR (save, sync)
   check_review.py           verdict gate for the review loops (review/srp/bugs/comment)
+  check_implementation.py   implement guard (changes present?)
   task_utils.py             shared helpers (task-dir resolution)
-  gitignore.snippet         recommended .gitignore lines
+  adr_utils.py              text rules for save_adr.py (slug, numbering, headings)
+  agent_call.py             reach an agent through run-agent.sh
 tests/test_install.py       smoke tests (unittest, all through --home)
 ```

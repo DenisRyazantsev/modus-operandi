@@ -1,8 +1,9 @@
-"""Unit tests for the rendered run-pipeline.py template.
+"""Unit tests for the static run-pipeline.py wrapper.
 
-run_pipeline.py.tpl is a string.Template; the tests render it with the
-default state_dir and load the result as a module, so the placeholder and
-the runtime behavior are both exercised.
+run_pipeline.py is a plain Python module (pipeline_scripts/run_pipeline.py):
+the tests copy it into a temp dir and load it as a module, so the
+__file__-derived paths (SOUND_FILE, CONFIG_PATH) are isolated per test and
+both the runtime config handling and the wrapper behavior are exercised.
 """
 
 import contextlib
@@ -11,7 +12,6 @@ import io
 import json
 import os
 import pty
-import string
 import sys
 import tempfile
 import threading
@@ -23,24 +23,44 @@ from pathlib import Path
 from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-_TEMPLATE = (REPO_ROOT / "templates" / "run_pipeline.py.tpl").read_text(encoding="utf-8")
+_SRC = REPO_ROOT / "pipeline_scripts" / "run_pipeline.py"
+
+DEFAULT_CONFIG = {
+    "workflow": {
+        "state_dir": ".workflow",
+        "adr_dir": "architecture",
+        "human_gates": True,
+        "use_serve": False,
+    }
+}
 
 
-def load_run_pipeline(
-    state_dir: str = ".workflow", sound_path: str = "/nonexistent/victory.wav"
-) -> types.ModuleType:
-    rendered = string.Template(_TEMPLATE).substitute(
-        state_dir=state_dir, sound_path=sound_path
-    )
+def load_run_pipeline() -> types.ModuleType:
     tmpdir = Path(tempfile.mkdtemp(prefix="run_pipeline_test_"))
     path = tmpdir / "run_pipeline.py"
-    path.write_text(rendered, encoding="utf-8")
+    path.write_bytes(_SRC.read_bytes())
     spec = importlib.util.spec_from_file_location("run_pipeline_under_test", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules["run_pipeline_under_test"] = module
     spec.loader.exec_module(module)
     return module
+
+
+def point_config_at(mod: types.ModuleType, tmp: str, **workflow_overrides) -> Path:
+    """Write a config.yml into tmp and point the module's CONFIG_PATH at it.
+
+    Returns the config path. main() reads the installed config through
+    mod.CONFIG_PATH, so every main()-driven test controls it this way.
+    """
+    import yaml
+
+    cfg = json.loads(json.dumps(DEFAULT_CONFIG))
+    cfg["workflow"].update(workflow_overrides)
+    path = Path(tmp) / "config.yml"
+    path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+    mod.CONFIG_PATH = path
+    return path
 
 
 class StepResultPollerTest(unittest.TestCase):
@@ -748,26 +768,27 @@ class NotifyTest(unittest.TestCase):
     """One victory.wav for every event, played non-blockingly, with quiet
     degradation when the file, a system player or a TTY is unavailable."""
 
-    def _sound(self, tmp: str) -> Path:
-        wav = Path(tmp) / "victory.wav"
+    def _sound(self, mod: types.ModuleType) -> Path:
+        # SOUND_FILE resolves from the module's own location: ship the wav
+        # next to the loaded copy.
+        wav = Path(mod.__file__).parent / "victory.wav"
         wav.write_bytes(b"RIFF")
         return wav
 
     def test_plays_sound_via_system_player(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            wav = self._sound(tmp)
-            mod = load_run_pipeline(sound_path=str(wav))
-            with (
-                mock.patch("sys.stdout.isatty", return_value=True),
-                mock.patch("subprocess.Popen") as popen,
-                mock.patch("shutil.which", side_effect=lambda name: f"/usr/bin/{name}"),
-            ):
-                mod.notify()
-            popen.assert_called_once()
-            cmd = popen.call_args.args[0]
-            self.assertEqual(cmd[-1], str(wav))
-            # The system player: afplay (macOS) or paplay/aplay (Linux).
-            self.assertTrue(cmd[0].endswith(("afplay", "paplay", "aplay")))
+        mod = load_run_pipeline()
+        wav = self._sound(mod)
+        with (
+            mock.patch("sys.stdout.isatty", return_value=True),
+            mock.patch("subprocess.Popen") as popen,
+            mock.patch("shutil.which", side_effect=lambda name: f"/usr/bin/{name}"),
+        ):
+            mod.notify()
+        popen.assert_called_once()
+        cmd = popen.call_args.args[0]
+        self.assertEqual(cmd[-1], str(wav))
+        # The system player: afplay (macOS) or paplay/aplay (Linux).
+        self.assertTrue(cmd[0].endswith(("afplay", "paplay", "aplay")))
 
     def test_skips_when_not_a_tty(self):
         mod = load_run_pipeline()
@@ -779,7 +800,8 @@ class NotifyTest(unittest.TestCase):
         popen.assert_not_called()
 
     def test_skips_when_sound_file_missing(self):
-        mod = load_run_pipeline(sound_path="/nonexistent/victory.wav")
+        # No victory.wav next to the wrapper: quiet degradation.
+        mod = load_run_pipeline()
         with (
             mock.patch("sys.stdout.isatty", return_value=True),
             mock.patch("subprocess.Popen") as popen,
@@ -788,16 +810,15 @@ class NotifyTest(unittest.TestCase):
         popen.assert_not_called()
 
     def test_skips_when_no_player_available(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            wav = self._sound(tmp)
-            mod = load_run_pipeline(sound_path=str(wav))
-            with (
-                mock.patch("sys.stdout.isatty", return_value=True),
-                mock.patch("shutil.which", return_value=None),
-                mock.patch("subprocess.Popen") as popen,
-            ):
-                mod.notify()
-            popen.assert_not_called()
+        mod = load_run_pipeline()
+        self._sound(mod)
+        with (
+            mock.patch("sys.stdout.isatty", return_value=True),
+            mock.patch("shutil.which", return_value=None),
+            mock.patch("subprocess.Popen") as popen,
+        ):
+            mod.notify()
+        popen.assert_not_called()
 
 
 class SoundTimingTest(unittest.TestCase):
@@ -805,7 +826,7 @@ class SoundTimingTest(unittest.TestCase):
     the same notify() call, never a different signal."""
 
     class FakeProc:
-        def __init__(self, lines, returncode=0):
+        def __init__(self, lines, returncode=0, **kwargs):
             self.stdout = iter(lines)
             self.returncode = returncode
 
@@ -813,6 +834,7 @@ class SoundTimingTest(unittest.TestCase):
             return self.returncode
 
     def _run_main(self, mod, tmp, lines, returncode=0):
+        point_config_at(mod, tmp)
         # A non-TTY stdin keeps main() on the plain path (no pty, no
         # forwarding thread): these tests are about notify() timing, not the
         # pty plumbing (covered by FeedbackGateFlowTest).
@@ -851,6 +873,233 @@ class SoundTimingTest(unittest.TestCase):
             rc, notify = self._run_main(mod, tmp, ["Run ID: abc12345"], 1)
         self.assertEqual(rc, 1)
         self.assertEqual(notify.call_count, 1)
+
+
+class ConfigDeliveryTest(unittest.TestCase):
+    """main() delivers the installed config at runtime: state_dir/adr_dir as
+    -i inputs, use_serve as the SKLC_ATTACH_FLAG env, human_gates as the
+    adr_verdict input presence."""
+
+    class FakeProc:
+        def __init__(self, lines, returncode=0, **kwargs):
+            self.stdout = iter(lines)
+            self.returncode = returncode
+
+        def wait(self):
+            return self.returncode
+
+    def _popen_args(self, mod, tmp, **workflow_overrides):
+        point_config_at(mod, tmp, **workflow_overrides)
+        captured = {}
+        with (
+            mock.patch.object(Path, "cwd", return_value=Path(tmp)),
+            mock.patch(
+                "subprocess.Popen",
+                side_effect=lambda *a, **kw: captured.update(a=kw.get("env", {}))
+                or self.FakeProc(["Run ID: abc12345"], 0, **kw),
+            ),
+            mock.patch.object(sys, "argv", ["run-pipeline.py", "adr-pipeline"]),
+            mock.patch("sys.stdout", io.StringIO()),
+            mock.patch("sys.stdin.isatty", return_value=False),
+            mock.patch.object(mod, "notify"),
+        ):
+            rc = mod.main()
+        self.assertEqual(rc, 0)
+        return captured["a"]
+
+    def test_state_dir_and_adr_dir_passed_as_inputs(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            point_config_at(mod, tmp, state_dir="meta", adr_dir="docs")
+            captured = {}
+
+            def fake_popen(*a, **kw):
+                captured["cmd"] = a[0]
+                return self.FakeProc(["Run ID: abc12345"], 0, **kw)
+
+            with (
+                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
+                mock.patch("subprocess.Popen", side_effect=fake_popen),
+                mock.patch.object(sys, "argv", ["run-pipeline.py", "adr-pipeline"]),
+                mock.patch("sys.stdout", io.StringIO()),
+                mock.patch("sys.stdin.isatty", return_value=False),
+                mock.patch.object(mod, "notify"),
+            ):
+                mod.main()
+        self.assertIn("-i", captured["cmd"])
+        self.assertIn("state_dir=meta", captured["cmd"])
+        self.assertIn("adr_dir=docs", captured["cmd"])
+
+    def test_use_serve_sets_attach_flag_env(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._popen_args(mod, tmp, use_serve=True)
+        self.assertEqual(env["SKLC_ATTACH_FLAG"], "--attach http://localhost:4096")
+        self.assertTrue(env["SKLC_SCRIPTS_DIR"])
+        self.assertEqual(env["SKLC_SCRIPTS_DIR"], str(Path(mod.__file__).parent))
+
+    def test_state_dir_env_matches_configured_value(self):
+        # run-agent.sh resolves its sessions/logs dir from SKLC_STATE_DIR, so
+        # the wrapper must export the configured state_dir for the steps.
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._popen_args(mod, tmp, state_dir="meta")
+        self.assertEqual(env["SKLC_STATE_DIR"], "meta")
+
+    def test_use_serve_false_sets_empty_attach_flag(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._popen_args(mod, tmp, use_serve=False)
+        self.assertEqual(env["SKLC_ATTACH_FLAG"], "")
+
+    def test_human_gates_true_passes_empty_adr_verdict(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            point_config_at(mod, tmp, human_gates=True)
+            captured = {}
+
+            def fake_popen(*a, **kw):
+                captured["cmd"] = a[0]
+                return self.FakeProc(["Run ID: abc12345"], 0, **kw)
+
+            with (
+                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
+                mock.patch("subprocess.Popen", side_effect=fake_popen),
+                mock.patch.object(sys, "argv", ["run-pipeline.py", "adr-pipeline"]),
+                mock.patch("sys.stdout", io.StringIO()),
+                mock.patch("sys.stdin.isatty", return_value=False),
+                mock.patch.object(mod, "notify"),
+            ):
+                mod.main()
+        self.assertIn("-i", captured["cmd"])
+        self.assertIn("adr_verdict=", captured["cmd"])
+
+    def test_human_gates_false_omits_adr_verdict(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            point_config_at(mod, tmp, human_gates=False)
+            captured = {}
+
+            def fake_popen(*a, **kw):
+                captured["cmd"] = a[0]
+                return self.FakeProc(["Run ID: abc12345"], 0, **kw)
+
+            with (
+                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
+                mock.patch("subprocess.Popen", side_effect=fake_popen),
+                mock.patch.object(sys, "argv", ["run-pipeline.py", "adr-pipeline"]),
+                mock.patch("sys.stdout", io.StringIO()),
+                mock.patch("sys.stdin.isatty", return_value=False),
+                mock.patch.object(mod, "notify"),
+            ):
+                mod.main()
+        self.assertNotIn("adr_verdict=", captured["cmd"])
+
+    def test_missing_config_degrades_to_defaults(self):
+        # No config.yml (e.g. hand-invoked wrapper): defaults are used and
+        # the run proceeds.
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            captured = {}
+
+            def fake_popen(*a, **kw):
+                captured["cmd"] = a[0]
+                return self.FakeProc(["Run ID: abc12345"], 0, **kw)
+
+            with (
+                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
+                mock.patch.object(
+                    mod, "CONFIG_PATH", Path(tmp) / "does-not-exist.yml"
+                ),
+                mock.patch("subprocess.Popen", side_effect=fake_popen),
+                mock.patch.object(sys, "argv", ["run-pipeline.py", "adr-pipeline"]),
+                mock.patch("sys.stdout", io.StringIO()),
+                mock.patch("sys.stdin.isatty", return_value=False),
+                mock.patch.object(mod, "notify"),
+            ):
+                rc = mod.main()
+        self.assertEqual(rc, 0)
+        self.assertIn("state_dir=.workflow", captured["cmd"])
+        self.assertIn("adr_verdict=", captured["cmd"])  # human_gates default True
+
+
+class BuildSpecifyInvocationTest(unittest.TestCase):
+    """build_specify_invocation maps config.yml -> specify argv/env (pure).
+
+    main() only orchestrates the run from what this function returns, so the
+    config delivery rules are tested here directly.
+    """
+
+    def _cfg(self, **workflow_overrides) -> dict:
+        cfg = json.loads(json.dumps(DEFAULT_CONFIG))
+        cfg["workflow"].update(workflow_overrides)
+        return cfg
+
+    def _invoke(self, mod, tmp, cfg, source="adr-pipeline", extra=None):
+        with mock.patch.object(Path, "cwd", return_value=Path(tmp)):
+            return mod.build_specify_invocation(cfg, source, extra or [])
+
+    def test_defaults_map_to_inputs_and_env(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            cmd, env, state_dir, logs_dir = self._invoke(mod, tmp, self._cfg())
+        self.assertEqual(state_dir, ".workflow")
+        self.assertEqual(
+            cmd,
+            [
+                "specify",
+                "workflow",
+                "run",
+                "adr-pipeline",
+                "-i",
+                "state_dir=.workflow",
+                "-i",
+                "adr_dir=architecture",
+                "-i",
+                "adr_verdict=",
+            ],
+        )
+        self.assertEqual(env["SKLC_STATE_DIR"], ".workflow")
+        self.assertEqual(env["SKLC_ATTACH_FLAG"], "")
+        self.assertEqual(logs_dir, Path(tmp) / ".workflow" / "logs")
+
+    def test_custom_state_dir_and_adr_dir(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            cmd, env, state_dir, logs_dir = self._invoke(
+                mod, tmp, self._cfg(state_dir="meta", adr_dir="docs")
+            )
+        self.assertEqual(state_dir, "meta")
+        self.assertIn("state_dir=meta", cmd)
+        self.assertIn("adr_dir=docs", cmd)
+        self.assertEqual(env["SKLC_STATE_DIR"], "meta")
+        self.assertEqual(logs_dir, Path(tmp) / "meta" / "logs")
+
+    def test_use_serve_sets_attach_flag_env(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            _, env, _, _ = self._invoke(mod, tmp, self._cfg(use_serve=True))
+        self.assertEqual(env["SKLC_ATTACH_FLAG"], "--attach http://localhost:4096")
+
+    def test_human_gates_false_omits_adr_verdict(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            cmd, _, _, _ = self._invoke(mod, tmp, self._cfg(human_gates=False))
+        self.assertNotIn("adr_verdict=", cmd)
+
+    def test_extra_args_are_appended(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            cmd, _, _, _ = self._invoke(
+                mod, tmp, self._cfg(), extra=["-i", "feature=build a board"]
+            )
+        self.assertEqual(cmd[-2:], ["-i", "feature=build a board"])
+
+    def test_scripts_dir_is_wrappers_own_directory(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            _, env, _, _ = self._invoke(mod, tmp, self._cfg())
+        self.assertEqual(env["SKLC_SCRIPTS_DIR"], str(Path(mod.__file__).parent))
 
 
 class TruncateTest(unittest.TestCase):
@@ -1259,7 +1508,7 @@ class FeedbackGateFlowTest(unittest.TestCase):
     fallback); regular gates still notify()."""
 
     class FakeProc:
-        def __init__(self, lines, returncode=0):
+        def __init__(self, lines, returncode=0, **kwargs):
             self.stdout = iter(lines)
             self.returncode = returncode
 
@@ -1267,6 +1516,7 @@ class FeedbackGateFlowTest(unittest.TestCase):
             return self.returncode
 
     def _run_main(self, mod, tmp, step_id, editor_result):
+        point_config_at(mod, tmp)
         state_root = Path(tmp) / ".specify"
         run_dir = state_root / "workflows" / "runs" / "abc12345"
         run_dir.mkdir(parents=True)
@@ -1292,7 +1542,7 @@ class FeedbackGateFlowTest(unittest.TestCase):
                 mock.patch(
                     "subprocess.Popen",
                     return_value=self.FakeProc(
-                        ["┌─ Gate ─────────", "Run ID: abc12345"], 0
+                        ["┌─ Gate ─────────", "Run ID: abc12345"], 0, env={}
                     ),
                 ),
                 mock.patch.object(sys, "argv", ["run-pipeline.py", "adr-pipeline"]),

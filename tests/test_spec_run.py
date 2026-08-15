@@ -1,13 +1,14 @@
-"""Unit tests for the rendered spec-run launcher template.
+"""Unit tests for the static spec-run launcher (pipeline_scripts/spec_run.py).
 
-spec_run.py.tpl is a string.Template; the tests render it with test paths and
-load the result as a module, exercising both the placeholder substitution and
-the argument-mapping behavior.
+The launcher derives every installed path from XDG_CONFIG_HOME/$HOME at import
+time and reads the repo's install.py path from install-path.txt at edit time;
+the tests point XDG_CONFIG_HOME at a temp dir and write the metadata file
+there, exercising both the path derivation and the argument-mapping behavior.
 """
 
 import importlib.util
 import io
-import string
+import os
 import sys
 import tempfile
 import types
@@ -16,43 +17,58 @@ from pathlib import Path
 from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-_TEMPLATE = (REPO_ROOT / "templates" / "spec_run.py.tpl").read_text(encoding="utf-8")
+_SRC = REPO_ROOT / "pipeline_scripts" / "spec_run.py"
 
-RUN_PIPELINE = "/home/user/.config/opencode/scripts/run-pipeline.py"
-ADR_WORKFLOW = "/home/user/.config/spec-kit-llm-client/adr-pipeline.yml"
-REVIEW_WORKFLOW = "/home/user/.config/spec-kit-llm-client/review-pipeline.yml"
-CONFIG = "/home/user/.config/spec-kit-llm-client/config.yml"
 INSTALL_PY = "/home/user/spec-kit-llm-client/install.py"
 
 
-def load_spec_run() -> types.ModuleType:
-    rendered = string.Template(_TEMPLATE).substitute(
-        run_pipeline=RUN_PIPELINE,
-        adr_workflow=ADR_WORKFLOW,
-        review_workflow=REVIEW_WORKFLOW,
-        config=CONFIG,
-        install_py=INSTALL_PY,
-    )
-    tmpdir = Path(tempfile.mkdtemp(prefix="spec_run_test_"))
-    path = tmpdir / "spec_run.py"
-    path.write_text(rendered, encoding="utf-8")
-    spec = importlib.util.spec_from_file_location("spec_run_under_test", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["spec_run_under_test"] = module
-    spec.loader.exec_module(module)
+def load_spec_run(config_base: str) -> types.ModuleType:
+    with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": config_base}, clear=True):
+        spec = importlib.util.spec_from_file_location("spec_run_under_test", _SRC)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["spec_run_under_test"] = module
+        spec.loader.exec_module(module)
     return module
+
+
+class LauncherPathsTest(unittest.TestCase):
+    def test_paths_derived_from_config_base(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mod = load_spec_run(tmp)
+            base = Path(tmp)
+            self.assertEqual(
+                mod.RUN_PIPELINE, str(base / "opencode" / "scripts" / "run-pipeline.py")
+            )
+            self.assertEqual(
+                mod.ADR_WORKFLOW,
+                str(base / "spec-kit-llm-client" / "adr-pipeline.yml"),
+            )
+            self.assertEqual(
+                mod.REVIEW_WORKFLOW,
+                str(base / "spec-kit-llm-client" / "review-pipeline.yml"),
+            )
+            self.assertEqual(
+                mod.CONFIG, str(base / "spec-kit-llm-client" / "config.yml")
+            )
+            self.assertEqual(
+                mod.INSTALL_PATH_FILE,
+                base / "spec-kit-llm-client" / "install-path.txt",
+            )
 
 
 class BuildCommandTest(unittest.TestCase):
     def setUp(self):
-        self.mod = load_spec_run()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.xdg = self.tmp.name
+        self.mod = load_spec_run(self.xdg)
 
     def test_adr_joins_feature_arguments(self):
         cmd = self.mod.build_command(["adr", "build a kanban board"])
         self.assertEqual(
             cmd,
-            [RUN_PIPELINE, ADR_WORKFLOW, "-i", "feature=build a kanban board"],
+            [self.mod.RUN_PIPELINE, self.mod.ADR_WORKFLOW, "-i", "feature=build a kanban board"],
         )
 
     def test_adr_joins_multiple_argv_elements_into_feature(self):
@@ -63,14 +79,27 @@ class BuildCommandTest(unittest.TestCase):
         cmd = self.mod.build_command(["adr", "feat", "-i", "task_id=my-feature"])
         self.assertEqual(
             cmd,
-            [RUN_PIPELINE, ADR_WORKFLOW, "-i", "feature=feat", "-i", "task_id=my-feature"],
+            [
+                self.mod.RUN_PIPELINE,
+                self.mod.ADR_WORKFLOW,
+                "-i",
+                "feature=feat",
+                "-i",
+                "task_id=my-feature",
+            ],
         )
 
     def test_adr_combined_input_element(self):
         cmd = self.mod.build_command(["adr", "feat", "-i task_id=my-feature"])
         self.assertEqual(
             cmd,
-            [RUN_PIPELINE, ADR_WORKFLOW, "-i", "feature=feat", "-i task_id=my-feature"],
+            [
+                self.mod.RUN_PIPELINE,
+                self.mod.ADR_WORKFLOW,
+                "-i",
+                "feature=feat",
+                "-i task_id=my-feature",
+            ],
         )
 
     def test_adr_arg_starting_with_dash_i_stays_in_feature(self):
@@ -79,7 +108,10 @@ class BuildCommandTest(unittest.TestCase):
         # silently corrupting the feature. Only the exact `-i key=value` forms
         # are inputs; everything else joins the feature text.
         cmd = self.mod.build_command(["adr", "feat", "-i18n"])
-        self.assertEqual(cmd, [RUN_PIPELINE, ADR_WORKFLOW, "-i", "feature=feat -i18n"])
+        self.assertEqual(
+            cmd,
+            [self.mod.RUN_PIPELINE, self.mod.ADR_WORKFLOW, "-i", "feature=feat -i18n"],
+        )
         self.assertNotIn("-i18n", cmd[3:])
 
     def test_adr_dangling_dash_i_is_invalid(self):
@@ -92,17 +124,27 @@ class BuildCommandTest(unittest.TestCase):
 
     def test_review_default(self):
         cmd = self.mod.build_command(["review"])
-        self.assertEqual(cmd, [RUN_PIPELINE, REVIEW_WORKFLOW])
+        self.assertEqual(cmd, [self.mod.RUN_PIPELINE, self.mod.REVIEW_WORKFLOW])
 
     def test_review_branch_diff(self):
         cmd = self.mod.build_command(["review", "--branch-diff"])
-        self.assertEqual(cmd, [RUN_PIPELINE, REVIEW_WORKFLOW, "-i", "branch-diff=true"])
+        self.assertEqual(
+            cmd,
+            [self.mod.RUN_PIPELINE, self.mod.REVIEW_WORKFLOW, "-i", "branch-diff=true"],
+        )
 
     def test_review_passthrough_inputs(self):
         cmd = self.mod.build_command(["review", "--branch-diff", "-i", "task_id=x"])
         self.assertEqual(
             cmd,
-            [RUN_PIPELINE, REVIEW_WORKFLOW, "-i", "branch-diff=true", "-i", "task_id=x"],
+            [
+                self.mod.RUN_PIPELINE,
+                self.mod.REVIEW_WORKFLOW,
+                "-i",
+                "branch-diff=true",
+                "-i",
+                "task_id=x",
+            ],
         )
 
     def test_no_literal_quotes_in_any_value(self):
@@ -214,65 +256,81 @@ class BuildCommandTest(unittest.TestCase):
 
 
 class PrintUsageTest(unittest.TestCase):
+    def _load(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        return load_spec_run(self.tmp.name)
+
     def test_print_usage_defaults_to_stdout(self):
-        mod = load_spec_run()
+        mod = self._load()
         captured = io.StringIO()
         with mock.patch("sys.stdout", captured):
             mod.print_usage()
         self.assertIn("Usage:", captured.getvalue())
 
     def test_print_usage_writes_to_given_stream(self):
-        mod = load_spec_run()
+        mod = self._load()
         err = io.StringIO()
         mod.print_usage(err)
         self.assertIn("Usage:", err.getvalue())
 
 
 class MainTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.xdg = self.tmp.name
+        self.mod = load_spec_run(self.xdg)
+
+    def _record_install_py(self):
+        config_dir = Path(self.xdg) / "spec-kit-llm-client"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "install-path.txt").write_text(INSTALL_PY, encoding="utf-8")
+
     def test_main_execs_run_pipeline(self):
-        mod = load_spec_run()
+        mod = self.mod
         with mock.patch.object(mod.os, "execv") as execv:
             mod.main(["adr", "build a kanban board"])
         execv.assert_called_once()
         self.assertEqual(
             execv.call_args.args[1],
-            [RUN_PIPELINE, ADR_WORKFLOW, "-i", "feature=build a kanban board"],
+            [mod.RUN_PIPELINE, mod.ADR_WORKFLOW, "-i", "feature=build a kanban board"],
         )
 
     def test_main_help_exit_zero(self):
         captured = io.StringIO()
         with mock.patch("sys.stdout", captured):
-            rc = load_spec_run().main(["--help"])
+            rc = self.mod.main(["--help"])
         self.assertEqual(rc, 0)
         self.assertIn("Usage:", captured.getvalue())
 
     def test_main_no_args_exit_nonzero(self):
         with mock.patch("sys.stderr", io.StringIO()) as err:
-            rc = load_spec_run().main([])
+            rc = self.mod.main([])
         self.assertEqual(rc, 1)
         self.assertIn("Usage:", err.getvalue())
 
     def test_main_unknown_subcommand_exit_nonzero(self):
         with mock.patch("sys.stderr", io.StringIO()) as err:
-            rc = load_spec_run().main(["frobnicate"])
+            rc = self.mod.main(["frobnicate"])
         self.assertEqual(rc, 1)
         self.assertIn("Usage:", err.getvalue())
 
     def test_main_adr_without_feature_exit_nonzero(self):
         with mock.patch("sys.stderr", io.StringIO()) as err:
-            rc = load_spec_run().main(["adr"])
+            rc = self.mod.main(["adr"])
         self.assertEqual(rc, 1)
         self.assertIn("Usage:", err.getvalue())
 
     def test_main_dangling_input_exit_nonzero(self):
         for argv in (["adr", "feat", "-i"], ["review", "-i"]):
             with self.subTest(argv=argv), mock.patch("sys.stderr", io.StringIO()) as err:
-                rc = load_spec_run().main(argv)
+                rc = self.mod.main(argv)
             self.assertEqual(rc, 1)
             self.assertIn("Usage:", err.getvalue())
 
     def test_main_execv_failure_reports_error(self):
-        mod = load_spec_run()
+        mod = self.mod
         with (
             mock.patch.object(mod.os, "execv", side_effect=OSError("no such file")),
             mock.patch("sys.stderr", io.StringIO()) as err,
@@ -282,7 +340,8 @@ class MainTest(unittest.TestCase):
         self.assertIn("error:", err.getvalue())
 
     def test_main_edit_runs_editor_then_installer(self):
-        mod = load_spec_run()
+        mod = self.mod
+        self._record_install_py()
         calls: list[list[str]] = []
 
         def fake_run(cmd, check=True):
@@ -297,10 +356,13 @@ class MainTest(unittest.TestCase):
         ):
             rc = mod.main(["edit"])
         self.assertEqual(rc, 0)
-        self.assertEqual(calls, [["nano", CONFIG], [sys.executable, INSTALL_PY, "--apply"]])
+        self.assertEqual(
+            calls, [["nano", mod.CONFIG], [sys.executable, INSTALL_PY, "--apply"]]
+        )
 
     def test_main_edit_propagates_installer_exit_code(self):
-        mod = load_spec_run()
+        mod = self.mod
+        self._record_install_py()
         results = iter(
             [types.SimpleNamespace(returncode=0), types.SimpleNamespace(returncode=3)]
         )
@@ -320,7 +382,8 @@ class MainTest(unittest.TestCase):
     def test_main_edit_applies_after_nonzero_editor_exit(self):
         # A user can save a valid edit and still close the editor non-zero
         # (vim :cq, ...); the config must still be re-applied then.
-        mod = load_spec_run()
+        mod = self.mod
+        self._record_install_py()
         calls: list[list[str]] = []
         results = iter(
             [types.SimpleNamespace(returncode=7), types.SimpleNamespace(returncode=0)]
@@ -338,10 +401,13 @@ class MainTest(unittest.TestCase):
         ):
             rc = mod.main(["edit"])
         self.assertEqual(rc, 0)
-        self.assertEqual(calls, [["nano", CONFIG], [sys.executable, INSTALL_PY, "--apply"]])
+        self.assertEqual(
+            calls, [["nano", mod.CONFIG], [sys.executable, INSTALL_PY, "--apply"]]
+        )
 
     def test_main_edit_editor_start_failure_returns_nonzero(self):
-        mod = load_spec_run()
+        mod = self.mod
+        self._record_install_py()
 
         def fake_run(cmd, check=True):
             if cmd[0] == "nano":
@@ -357,6 +423,22 @@ class MainTest(unittest.TestCase):
             rc = mod.main(["edit"])
         self.assertEqual(rc, 1)
         self.assertIn("error:", err.getvalue())
+
+    def test_main_edit_without_recorded_install_py_fails_cleanly(self):
+        # The repo clone was moved/deleted: install-path.txt is missing and
+        # `edit` must fail with a readable error, not a traceback.
+        mod = self.mod
+        with (
+            mock.patch.dict("os.environ", {}, clear=True),
+            mock.patch.object(mod.shutil, "which", return_value="/usr/bin/nano"),
+            mock.patch("subprocess.run") as run,
+            mock.patch("sys.stderr", io.StringIO()) as err,
+        ):
+            rc = mod.main(["edit"])
+        self.assertEqual(rc, 1)
+        run.assert_called_once()  # only the editor launch, no --apply
+        self.assertIn("install.py", err.getvalue())
+        self.assertIn("install-path.txt", err.getvalue())
 
 
 if __name__ == "__main__":

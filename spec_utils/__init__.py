@@ -5,7 +5,8 @@ from pathlib import Path
 from .paths import Paths as Paths
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-TEMPLATES_DIR = REPO_ROOT / "templates"
+PIPELINE_SCRIPTS_DIR = REPO_ROOT / "pipeline_scripts"
+WORKFLOWS_DIR = Path(__file__).resolve().parent / "workflows"
 CONFIG_EXAMPLE = REPO_ROOT / "config.example.yml"
 
 

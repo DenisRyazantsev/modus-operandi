@@ -15,6 +15,7 @@ def build_paths(home: str | Path) -> Paths:
         "config_dir": base / ".config" / "spec-kit-llm-client",
         "config": base / ".config" / "spec-kit-llm-client" / "config.yml",
         "config_example": base / ".config" / "spec-kit-llm-client" / "config.example.yml",
+        "install_path": base / ".config" / "spec-kit-llm-client" / "install-path.txt",
         "user_bin": base / ".local" / "bin",
         "spec_run": base / ".local" / "bin" / "spec-run",
         "workflow": base / ".config" / "spec-kit-llm-client" / "adr-pipeline.yml",

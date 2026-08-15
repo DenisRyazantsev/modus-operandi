@@ -25,6 +25,7 @@ def do_uninstall(paths: Paths, yes: bool) -> None:
         paths["workflow"],
         paths["review_workflow"],
         paths["config_example"],
+        paths["install_path"],
         paths["spec_run"],
     ):
         if path.exists():

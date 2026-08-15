@@ -78,7 +78,7 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--update",
         action="store_true",
-        help="reinstall templates and print newly available config options",
+        help="reinstall the pipeline artifacts and print newly available config options",
     )
     parser.add_argument("--uninstall", action="store_true", help="remove installed files")
     parser.add_argument(

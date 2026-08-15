@@ -1,96 +1,138 @@
-"""Rendering: install templates into the target home directory."""
+"""Rendering: install the pipeline artifacts into the target home directory.
 
+No template system: the installed scripts are plain static files copied from
+``pipeline_scripts/``, the agents are written as data (frontmatter values are
+concatenated into the markdown), and the workflows are generated as data
+(YAML loaded into a dict, the six configurable numbers written in, dumped
+back). Nothing is substituted into text with placeholders or ``$`` escapes.
+"""
+
+# ruff: noqa: E501  (the agent bodies below are single-line prompt paragraphs)
 from __future__ import annotations
 
 import shutil
-from pathlib import Path
-from string import Template
 from typing import Any
 
-from . import REPO_ROOT, TEMPLATES_DIR, Paths
+from . import (
+    PIPELINE_SCRIPTS_DIR,
+    REPO_ROOT,
+    WORKFLOWS_DIR,
+    Paths,
+    yaml_loader,
+)
+
+# ---------------------------------------------------------------------------
+# Agents (frontmatter values written as data into the markdown)
+# ---------------------------------------------------------------------------
+
+PLANNER_BODY = """You are the planner and reviewer in a spec-driven "planner -> executor" pipeline. You run on a strong model; the executor runs on a cheap one. You never write application code yourself.
+
+A task is identified by an id `<task-id>`; all its artifacts live under `.workflow/tasks/<task-id>/` inside the project. You are given the concrete paths in each prompt.
+
+## Duties
+
+1. **Write ADRs.** When asked to plan a feature, write the ADR file (`.workflow/tasks/<task-id>/adr.md`) with YAML frontmatter (`slug`, `status: accepted`, `date`) followed by sections: Context, Decision, Alternatives, Consequences, Acceptance Criteria. The frontmatter MUST include a `slug` field: a short 2-3 word summary of the ADR in ENGLISH, lowercase kebab-case (e.g. `slug: prod-validation-splits`). Write it on its own line right after the opening `---`. The pipeline fails if it is missing or empty — do not skip it even when the ADR body is written in Russian. Ground the decision in the described feature, be specific enough for a cheap model to implement without re-asking, and keep it minimal.
+2. **Answer executor questions.** When asked, read `.workflow/tasks/<task-id>/questions.md`. If its first line is exactly `QUESTIONS: PRESENT`, write `.workflow/tasks/<task-id>/answers.md`, answering each question line-by-line in the same order. If the first line is exactly `QUESTIONS: NONE`, write nothing.
+3. **Review.** When asked to review, inspect the current git changes against `.workflow/tasks/<task-id>/adr.md` using `git diff HEAD` (this includes staged changes; run `git status` first to see what changed). Write `.workflow/tasks/<task-id>/review-N.md`, where N is the next number after the existing review files (`review-1.md`, `review-2.md`, ...). The first line must be exactly `VERDICT: PASS` or `VERDICT: FIX`, followed by concrete, actionable findings. Findings must map to acceptance criteria or explicit ADR requirements. The verdict must reflect the implemented code, not the ADR document itself.
+
+Do not implement features. Do not invent requirements beyond the ADR. Prefer your session context over re-reading files you already loaded."""
+
+EXECUTOR_BODY = """You are the executor in a spec-driven "planner -> executor" pipeline. You run on a cheap model; the planner runs on a strong one. You implement features from written artifacts; you do not design architecture on your own.
+
+A task is identified by an id `<task-id>`; all its artifacts live under `.workflow/tasks/<task-id>/` inside the project. You are given the concrete paths in each prompt.
+
+## Duties
+
+1. **Read the plan.** Start from `.workflow/tasks/<task-id>/adr.md`. If `.workflow/tasks/<task-id>/answers.md` exists, read it too.
+2. **Ask when uncertain.** If anything in the plan is ambiguous or underspecified, write `.workflow/tasks/<task-id>/questions.md` whose first line is exactly `QUESTIONS: PRESENT`, followed by numbered questions, then STOP — do not implement anything. If everything is clear, still write `.workflow/tasks/<task-id>/questions.md` with the first line exactly `QUESTIONS: NONE`.
+3. **Implement.** Follow adr.md and answers.md exactly. Prefer minimal, idiomatic changes. Do not add unrequested features.
+4. **Fix findings.** When asked to fix, read the latest `.workflow/tasks/<task-id>/review-N.md` (the highest N) and address only its findings.
+5. **Verify.** Before finishing, run the project's tests/linter if any are present.
+
+Do not re-read the whole project when its context is already in your session. Keep changes scoped to the plan."""
 
 
-def render_file(
-    template_path: Path, target_path: Path, mapping: dict[str, str]
-) -> None:
-    text = Template(template_path.read_text(encoding="utf-8")).substitute(mapping)
-    target_path.write_text(text, encoding="utf-8")
+def _agent_markdown(
+    description: str,
+    temperature: str,
+    provider: str,
+    model: str,
+    reasoning: str,
+    body: str,
+) -> str:
+    # The frontmatter values are data: plain string concatenation (no
+    # placeholder machinery), so the body can contain any characters.
+    frontmatter = (
+        "---\n"
+        "description: " + description + "\n"
+        "mode: primary\n"
+        "model: " + provider + "/" + model + "\n"
+        "temperature: " + temperature + "\n"
+        "reasoningEffort: " + reasoning + "\n"
+        'permission:\n  "*": allow\n'
+        "---\n"
+    )
+    return frontmatter + body
 
 
 def render_agents(cfg: dict[str, Any], paths: Paths) -> None:
     planner = cfg["models"]["planner"]
     executor = cfg["models"]["executor"]
-    render_file(
-        TEMPLATES_DIR / "planner.md.tpl",
-        paths["agents"] / "planner.md",
-        {
-            "planner_provider": planner["provider"],
-            "planner_model": planner["model"],
-            "planner_reasoning": planner["reasoning"],
-        },
+    (paths["agents"] / "planner.md").write_text(
+        _agent_markdown(
+            "Planner and reviewer for the adr-pipeline workflow",
+            "0.3",
+            planner["provider"],
+            planner["model"],
+            planner["reasoning"],
+            PLANNER_BODY,
+        ),
+        encoding="utf-8",
     )
-    render_file(
-        TEMPLATES_DIR / "executor.md.tpl",
-        paths["agents"] / "executor.md",
-        {
-            "executor_provider": executor["provider"],
-            "executor_model": executor["model"],
-            "executor_reasoning": executor["reasoning"],
-        },
+    (paths["agents"] / "executor.md").write_text(
+        _agent_markdown(
+            "Executor for the adr-pipeline workflow",
+            "0.1",
+            executor["provider"],
+            executor["model"],
+            executor["reasoning"],
+            EXECUTOR_BODY,
+        ),
+        encoding="utf-8",
     )
 
 
-def render_run_agent(cfg: dict[str, Any], paths: Paths) -> None:
-    workflow = cfg["workflow"]
-    use_serve = workflow["use_serve"]
-    serve_attach = "--attach http://localhost:4096" if use_serve else ""
-    render_file(
-        TEMPLATES_DIR / "run-agent.sh.tpl",
-        paths["run_agent"],
-        {
-            "serve_attach": serve_attach,
-            # The configured state_dir becomes the SKLC_STATE_DIR default so
-            # session records and tasks/current resolution match the workflow
-            # steps, which already use the same configured directory.
-            "state_dir": workflow["state_dir"],
-        },
-    )
-    paths["run_agent"].chmod(0o755)
+# ---------------------------------------------------------------------------
+# Static scripts (copied verbatim; settings come from args/env at runtime)
+# ---------------------------------------------------------------------------
 
 
-def render_run_pipeline(cfg: dict[str, Any], paths: Paths) -> None:
-    # Wrapper that streams specify output with timestamps, prints step results
-    # as they complete, tails the per-role agent logs, prints a run-statistics
-    # block after the run and plays a victory sound. The agent logs live under
-    # the configured state_dir, matching run-agent.sh's SKLC_STATE_DIR
-    # default; the sound file is shipped next to the installed wrapper and
-    # referenced by its absolute path.
-    render_file(
-        TEMPLATES_DIR / "run_pipeline.py.tpl",
-        paths["run_pipeline"],
-        {
-            "state_dir": cfg["workflow"]["state_dir"],
-            "sound_path": str(paths["victory_wav"]),
-        },
-    )
-    paths["run_pipeline"].chmod(0o755)
+def _install_script(source_name: str, target: Any, executable: bool = False) -> None:
+    shutil.copy2(PIPELINE_SCRIPTS_DIR / source_name, target)
+    if executable:
+        target.chmod(0o755)
+
+
+def render_run_agent(paths: Paths) -> None:
+    _install_script("run-agent.sh", paths["run_agent"], executable=True)
+
+
+def render_name_task(paths: Paths) -> None:
+    _install_script("name-task.sh", paths["name_task"], executable=True)
+
+
+def render_run_pipeline(paths: Paths) -> None:
+    _install_script("run_pipeline.py", paths["run_pipeline"], executable=True)
+
+
+def render_spec_run(paths: Paths) -> None:
+    _install_script("spec_run.py", paths["spec_run"], executable=True)
 
 
 def render_victory_wav(paths: Paths) -> None:
-    # Static asset shipped next to the installed run-pipeline.py; the rendered
-    # wrapper references it through the absolute path rendered as sound_path.
+    # Static asset shipped next to the installed run-pipeline.py, which
+    # resolves it from its own location at runtime.
     shutil.copy2(REPO_ROOT / "architecture" / "assets" / "victory.wav", paths["victory_wav"])
-
-
-def render_name_task(cfg: dict[str, Any], paths: Paths) -> None:
-    use_serve = cfg["workflow"]["use_serve"]
-    serve_attach = "--attach http://localhost:4096" if use_serve else ""
-    render_file(
-        TEMPLATES_DIR / "name-task.sh.tpl",
-        paths["name_task"],
-        {"serve_attach": serve_attach},
-    )
-    paths["name_task"].chmod(0o755)
 
 
 def render_adr_scripts(paths: Paths) -> None:
@@ -105,86 +147,71 @@ def render_adr_scripts(paths: Paths) -> None:
         "adr_utils",
         "agent_call",
     ):
-        shutil.copy2(TEMPLATES_DIR / f"{key}.py", paths[key])
+        shutil.copy2(PIPELINE_SCRIPTS_DIR / f"{key}.py", paths[key])
+
+
+# ---------------------------------------------------------------------------
+# Workflows (static sources; only the six config numbers are written as data)
+# ---------------------------------------------------------------------------
+
+# Loop step id -> config key for the max-iteration ceiling. The engine only
+# accepts a literal integer for max_iterations (no expressions), so the
+# configured values are written into the workflow at install/--apply time.
+_LOOP_ITERATION_KEYS = {
+    "adr-loop": "max_adr_iterations",
+    "implement-loop": "max_implement_iterations",
+    "srp-loop": "max_srp_iterations",
+    "bug-loop": "max_bug_iterations",
+    "review-loop": "max_fix_iterations",
+    "comment-review-loop": "max_comment_iterations",
+}
+
+
+def _patch_workflow_numbers(data: dict[str, Any], cfg: dict[str, Any]) -> None:
+    """Write shell_timeout and the max_*_iterations values into the workflow.
+
+    The static sources carry the default literals; this overwrites them from
+    the validated config so `spec-run edit`/`--apply` re-applies a changed
+    config without any text-substitution machinery.
+    """
+    workflow_cfg = cfg["workflow"]
+    timeout = workflow_cfg["shell_timeout"]
+
+    def walk(steps: list[dict[str, Any]]) -> None:
+        for step in steps:
+            if "timeout" in step:
+                step["timeout"] = timeout
+            if step.get("type") == "do-while":
+                step_id = step.get("id")
+                key = _LOOP_ITERATION_KEYS.get(step_id) if isinstance(step_id, str) else None
+                if key:
+                    step["max_iterations"] = workflow_cfg[key]
+            for branch in ("steps", "then", "else"):
+                nested = step.get(branch)
+                if isinstance(nested, list):
+                    walk(nested)
+
+    walk(data["steps"])
+
+
+def _generate_workflow(source_name: str, cfg: dict[str, Any]) -> str:
+    source = WORKFLOWS_DIR / f"{source_name}.yml"
+    data = yaml_loader.yaml.safe_load(source.read_text(encoding="utf-8"))
+    _patch_workflow_numbers(data, cfg)
+    return str(
+        yaml_loader.yaml.safe_dump(
+            data, allow_unicode=True, sort_keys=False, default_flow_style=False
+        )
+    )
 
 
 def render_workflow(cfg: dict[str, Any], paths: Paths) -> None:
-    workflow = cfg["workflow"]
-    if workflow["human_gates"]:
-        # Interactive mode: the ADR gate prompts the human (approve/revise/reject).
-        verdict_decl = ""
-        approve_verdict = ""
-    else:
-        # Non-interactive mode: gate verdict is read from a workflow input that
-        # defaults to "approve", so the run never pauses at the ADR gate.
-        verdict_decl = (
-            "  adr_verdict:\n"
-            '    type: string\n'
-            '    enum: ["", approve, revise, reject]\n'
-            '    default: "approve"'
-        )
-        approve_verdict = "verdict_input: adr_verdict"
-    render_file(
-        TEMPLATES_DIR / "adr-pipeline.yml.tpl",
-        paths["workflow"],
-        {
-            "run_agent": str(paths["run_agent"]),
-            "name_task": str(paths["name_task"]),
-            "save_adr": str(paths["save_adr"]),
-            "check_review": str(paths["check_review"]),
-            "check_implementation": str(paths["check_implementation"]),
-            "state_dir": workflow["state_dir"],
-            "adr_dir": workflow["adr_dir"],
-            "step_timeout": str(workflow["shell_timeout"]),
-            "verdict_inputs_decl": verdict_decl,
-            "approve_adr_verdict": approve_verdict,
-            "max_fix_iterations": str(workflow["max_fix_iterations"]),
-            "max_srp_iterations": str(workflow["max_srp_iterations"]),
-            "max_bug_iterations": str(workflow["max_bug_iterations"]),
-            "max_comment_iterations": str(workflow["max_comment_iterations"]),
-            "max_adr_iterations": str(workflow["max_adr_iterations"]),
-            "max_implement_iterations": str(workflow["max_implement_iterations"]),
-        },
+    paths["workflow"].write_text(
+        _generate_workflow("adr-pipeline", cfg), encoding="utf-8"
     )
 
 
 def render_review_workflow(cfg: dict[str, Any], paths: Paths) -> None:
-    # The review-only workflow has no inputs and no ADR stage: it diffs the
-    # Whole-codebase review by default, or with -i branch-diff=true the changes
-    # between the current branch and the default branch; same review loops.
-    workflow = cfg["workflow"]
-    render_file(
-        TEMPLATES_DIR / "review-pipeline.yml.tpl",
-        paths["review_workflow"],
-        {
-            "run_agent": str(paths["run_agent"]),
-            "check_review": str(paths["check_review"]),
-            "state_dir": workflow["state_dir"],
-            "step_timeout": str(workflow["shell_timeout"]),
-            "max_fix_iterations": str(workflow["max_fix_iterations"]),
-            "max_srp_iterations": str(workflow["max_srp_iterations"]),
-            "max_bug_iterations": str(workflow["max_bug_iterations"]),
-            "max_comment_iterations": str(workflow["max_comment_iterations"]),
-        },
+    paths["review_workflow"].write_text(
+        _generate_workflow("review-pipeline", cfg), encoding="utf-8"
     )
-
-
-def render_spec_run(cfg: dict[str, Any], paths: Paths) -> None:
-    # Global launcher: a thin entry point installed once into the user bin
-    # directory and callable from any project, delegating to the installed
-    # run-pipeline.py wrapper. The absolute paths to the wrapper, both
-    # workflows, the installed config.yml and the repo's install.py (the last
-    # two power `spec-run edit`'s editor-open and re-apply steps) are baked in
-    # at install time.
-    render_file(
-        TEMPLATES_DIR / "spec_run.py.tpl",
-        paths["spec_run"],
-        {
-            "run_pipeline": str(paths["run_pipeline"]),
-            "adr_workflow": str(paths["workflow"]),
-            "review_workflow": str(paths["review_workflow"]),
-            "config": str(paths["config"]),
-            "install_py": str(REPO_ROOT / "install.py"),
-        },
-    )
-    paths["spec_run"].chmod(0o755)

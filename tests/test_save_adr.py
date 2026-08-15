@@ -1,4 +1,4 @@
-"""Unit tests for templates/save_adr.py (slug, numbering, heading rewrite)."""
+"""Unit tests for pipeline_scripts/save_adr.py (slug, numbering, heading rewrite)."""
 
 import argparse
 import importlib.util
@@ -11,10 +11,10 @@ from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 # save_adr.py imports task_utils.py from the same directory.
-sys.path.insert(0, str(REPO_ROOT / "templates"))
+sys.path.insert(0, str(REPO_ROOT / "pipeline_scripts"))
 
 _SPEC = importlib.util.spec_from_file_location(
-    "save_adr", REPO_ROOT / "templates" / "save_adr.py"
+    "save_adr", REPO_ROOT / "pipeline_scripts" / "save_adr.py"
 )
 assert _SPEC is not None and _SPEC.loader is not None
 save_adr = importlib.util.module_from_spec(_SPEC)

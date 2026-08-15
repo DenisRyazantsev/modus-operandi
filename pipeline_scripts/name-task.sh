@@ -9,27 +9,28 @@
 # files (unlike run-agent.sh, which keeps warm opencode sessions per role).
 #
 # Environment:
-#   (none)
+#   SKLC_ATTACH_FLAG   extra opencode flag, e.g. --attach http://localhost:4096
+#                      (set by the run-pipeline.py wrapper from use_serve)
 set -euo pipefail
 
 usage() {
-  echo "usage: $$0 \"<feature>\"" >&2
+  echo "usage: $0 \"<feature>\"" >&2
   exit 2
 }
 
-[ $$# -ge 1 ] || usage
-PROMPT="$$1"
+[ $# -ge 1 ] || usage
+PROMPT="$1"
 
-ATTACH_FLAG="${serve_attach}"
+ATTACH_FLAG="${SKLC_ATTACH_FLAG:-}"
 
 # The executor is cheap and this is a trivial naming task; the slug feeds the
 # task-id so it must be short and safe.
-OUTPUT="$$(opencode run --agent executor --auto $$ATTACH_FLAG --format json "Reply with ONLY a short kebab-case slug (2-5 lowercase english words joined by hyphens, no quotes, no markdown, no explanation) describing this feature: $$PROMPT" 2>&1)" || RC=$$?
-if [ "$${RC:-0}" -ne 0 ]; then
-  printf '%s\n' "$$OUTPUT" >&2
-  exit "$$RC"
+OUTPUT="$(opencode run --agent executor --auto $ATTACH_FLAG --format json "Reply with ONLY a short kebab-case slug (2-5 lowercase english words joined by hyphens, no quotes, no markdown, no explanation) describing this feature: $PROMPT" 2>&1)" || RC=$?
+if [ "${RC:-0}" -ne 0 ]; then
+  printf '%s\n' "$OUTPUT" >&2
+  exit "$RC"
 fi
-printf '%s\n' "$$OUTPUT" | python3 -c 'import json,sys
+printf '%s\n' "$OUTPUT" | python3 -c 'import json,sys
 texts = []
 for line in sys.stdin:
     line = line.strip()

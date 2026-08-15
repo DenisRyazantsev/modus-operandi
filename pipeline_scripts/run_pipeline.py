@@ -18,7 +18,7 @@ to specify (keeping sys.stdin.isatty() True inside it) and terminal input is
 forwarded into the master end, so interactive gates keep working while the
 wrapper can answer the ADR revise feedback gate itself. When that gate opens
 the wrapper creates <state_dir>/tasks/current/feedback.md (never overwriting
-an existing file), opens it in the terminal editor ($$VISUAL, then $$EDITOR,
+an existing file), opens it in the terminal editor ($VISUAL, then $EDITOR,
 then nano, then vi), and on editor close answers the gate with `continue` so
 the workflow resumes (adr-revise reads feedback.md). If no editor can run
 (non-TTY or none found), the file is still created and the gate stays
@@ -43,10 +43,19 @@ Usage: run-pipeline.py <workflow-id-or-path> [extra specify args...]
   run-pipeline.py review-pipeline
   run-pipeline.py adr-pipeline -i feature="..."
   run-pipeline.py ~/.config/spec-kit-llm-client/review-pipeline.yml -i branch-diff=true
+
+Environment:
+  SKLC_CONFIG          path of the installed config.yml (default: derived
+                       from this wrapper's location)
+  SKLC_SCRIPTS_DIR     directory of the installed pipeline scripts (set to
+                       this wrapper's own directory for the specify child)
+  SKLC_ATTACH_FLAG     opencode attach flag passed to run-agent.sh/name-task.sh
+                       (set from workflow.use_serve in the installed config)
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import pty
@@ -67,10 +76,19 @@ from pathlib import Path
 # reported as a finished event.
 TERMINAL_STATUSES = frozenset({"completed", "failed", "skipped"})
 
-# Absolute path of the victory.wav signal, shipped by the installer next to
-# the installed wrapper and referenced here via the path passed at render
-# time.
-SOUND_FILE = Path("${sound_path}")
+# Absolute path of the victory.wav signal: shipped by the installer next to
+# this wrapper, so it is resolved from the wrapper's own location at runtime.
+SOUND_FILE = Path(__file__).resolve().parent / "victory.wav"
+
+# The installed config.yml: the only runtime source of the workflow settings
+# (state_dir, adr_dir, use_serve, human_gates). `__file__` is the wrapper
+# FILE (~/.config/opencode/scripts/run-pipeline.py), so ~/.config is three
+# `.parent` hops up from it: scripts/ -> opencode/ -> .config/. SKLC_CONFIG
+# overrides the location (used by tests).
+CONFIG_PATH = Path(
+    os.environ.get("SKLC_CONFIG")
+    or (Path(__file__).resolve().parent.parent.parent / "spec-kit-llm-client" / "config.yml")
+)
 
 # Agent reasoning longer than this is truncated for the console display (the
 # full text always stays in the .jsonl files).
@@ -83,11 +101,30 @@ ROLE_LABEL_WIDTH = 8
 # Substring that identifies the ADR revise feedback gate in a step id: the
 # plain "adr-feedback-gate", or the loop-iteration form
 # "adr-loop:adr-feedback-gate:N". The marker mirrors the step id chosen in
-# adr-pipeline.yml.tpl: current_step_id from state.json is the wrapper's
-# only observation point for "which gate opened", so this is a deliberate
-# cross-file coupling — renaming the step silently disables the editor path
-# and the gate signals like a normal gate again.
+# the installed adr-pipeline.yml: current_step_id from state.json is the
+# wrapper's only observation point for "which gate opened", so this is a
+# deliberate cross-file coupling — renaming the step silently disables the
+# editor path and the gate signals like a normal gate again.
 FEEDBACK_GATE_MARKER = "feedback-gate"
+
+
+def load_config() -> dict:
+    """Read the installed config.yml into a dict, or {} on any failure.
+
+    A missing or unreadable file degrades to the documented defaults, so a
+    hand-invoked wrapper (or a config deleted after install) still runs.
+    """
+    try:
+        text = CONFIG_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    try:
+        import yaml  # installed by the installer (deps.ensure_pyyaml)
+
+        data = yaml.safe_load(text) or {}
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def stamp() -> str:
@@ -99,7 +136,7 @@ def print_ts(text: str, prefix: str = "") -> None:
     if not text:
         return
     for line in text.splitlines():
-        print("[{}] {}{}".format(stamp(), prefix, line), flush=True)
+        print(f"[{stamp()}] {prefix}{line}", flush=True)
 
 
 def run_id_from_text(text: str) -> str:
@@ -245,10 +282,8 @@ class AgentLogTailer:
         self._log_pos: dict[Path, int] = {}
         if logs_dir.is_dir():
             for path in sorted(logs_dir.glob("*.jsonl")):
-                try:
+                with contextlib.suppress(OSError):
                     self._log_pos[path] = path.stat().st_size
-                except OSError:
-                    pass
 
     def tail(self) -> list[tuple[str, str]]:
         """Return (role, text) pairs for log lines appended since the last tail.
@@ -333,7 +368,7 @@ def role_label(role: str) -> str:
     name: "[planner ]" / "[executor]". Text after the label therefore starts
     at the same column for every role. Pure function.
     """
-    return "[{}]".format(role.ljust(ROLE_LABEL_WIDTH))
+    return f"[{role.ljust(ROLE_LABEL_WIDTH)}]"
 
 
 def print_log_event(role: str, text: str) -> None:
@@ -432,10 +467,17 @@ class LiveMonitor:
     when the wrapper stops.
     """
 
-    def __init__(self, state_dir: Path, prior_runs: set[str]) -> None:
+    def __init__(
+        self,
+        state_dir: Path,
+        prior_runs: set[str],
+        logs_dir: Path | None = None,
+    ) -> None:
         self.run_id: str = ""
         self._poller = StepResultPoller(state_dir, self.run_id)
-        self._tailer = AgentLogTailer(Path.cwd() / '${state_dir}/logs')
+        if logs_dir is None:
+            logs_dir = Path.cwd() / ".workflow" / "logs"
+        self._tailer = AgentLogTailer(logs_dir)
         self._stop = threading.Event()
         self._state_dir = state_dir
         self._prior_runs = prior_runs
@@ -583,7 +625,7 @@ class LiveMonitor:
 
 def fmt_thousands(n: int | float) -> str:
     """Format a token count with space thousand separators: 321213 -> '321 213'."""
-    return "{:,}".format(int(n)).replace(",", " ")
+    return f"{int(n):,}".replace(",", " ")
 
 
 def fmt_duration(seconds: float) -> str:
@@ -591,7 +633,7 @@ def fmt_duration(seconds: float) -> str:
     total = max(0, int(seconds))
     hours, rem = divmod(total, 3600)
     minutes, secs = divmod(rem, 60)
-    return "{:02d}:{:02d}:{:02d}".format(hours, minutes, secs)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
 def notify() -> None:
@@ -649,7 +691,7 @@ def read_session_ids(state_dir: Path) -> dict[str, str]:
         return {}
     try:
         data = json.loads(
-            (state_dir / "sessions-{}.json".format(task_id)).read_text(
+            (state_dir / f"sessions-{task_id}.json").read_text(
                 encoding="utf-8"
             )
         )
@@ -744,7 +786,7 @@ def print_run_statistics(state_dir: Path, elapsed: float) -> None:
     usage = collect_usage(state_dir)
     print()
     print("=== run statistics ===")
-    print("wall time: {}".format(fmt_duration(elapsed)))
+    print(f"wall time: {fmt_duration(elapsed)}")
     print(
         "tokens: input {} · output {} · reasoning {}".format(
             fmt_thousands(usage["input"]),
@@ -758,18 +800,13 @@ def print_run_statistics(state_dir: Path, elapsed: float) -> None:
             fmt_thousands(usage["cache_write"]),
         )
     )
-    # `$$` is string.Template's escape for a literal dollar sign: the doubled
-    # dollar sign is intentional, not a mistake, because the rendered file
-    # must contain the runtime cost line with a single dollar sign before
-    # the two-decimal format spec. A single dollar sign here would make
-    # Template.substitute raise "Invalid placeholder in string".
-    print("cost: $${:.2f}".format(usage["cost"]))
+    print("cost: ${:.2f}".format(usage["cost"]))
 
 
 def resolve_editor() -> list[str] | None:
     """Resolve the terminal editor for the feedback file.
 
-    Order: $$VISUAL, then $$EDITOR, then nano, then vi. A $$VISUAL/$$EDITOR
+    Order: $VISUAL, then $EDITOR, then nano, then vi. A $VISUAL/$EDITOR
     value may carry arguments (`code --wait`) and is split like a shell
     command line (a malformed value is skipped with a warning, as in the
     launcher); the first candidate whose binary is found on PATH wins. None
@@ -786,7 +823,7 @@ def resolve_editor() -> list[str] | None:
             cmd = shlex.split(value)
         except ValueError as exc:
             print(
-                "warning: {} is malformed ({}); skipping it".format(var, exc),
+                f"warning: {var} is malformed ({exc}); skipping it",
                 file=sys.stderr,
             )
             continue
@@ -835,22 +872,20 @@ def open_feedback_editor(
             subprocess.run([*editor, str(feedback_path)], check=False)
         except OSError as exc:
             print(
-                "error: cannot start editor {}: {}".format(editor[0], exc),
+                f"error: cannot start editor {editor[0]}: {exc}",
                 file=sys.stderr,
             )
             return False
         # "continue" is the option declared on the adr-feedback-gate step
-        # (options: [continue, abort] in adr-pipeline.yml.tpl); the wrapper
-        # hardcodes it because it has no parsed handle on the workflow's
-        # options, so this string is a cross-file contract, not a free-form
-        # answer — a mismatch makes specify reject it and the gate silently
-        # degrades to manual input. The answer is written while forwarding
-        # is still paused: it is guaranteed to be the first thing the gate's
-        # input() reads.
-        try:
+        # (options: [continue, abort] in the installed adr-pipeline.yml); the
+        # wrapper hardcodes it because it has no parsed handle on the
+        # workflow's options, so this string is a cross-file contract, not a
+        # free-form answer — a mismatch makes specify reject it and the gate
+        # silently degrades to manual input. The answer is written while
+        # forwarding is still paused: it is guaranteed to be the first thing
+        # the gate's input() reads.
+        with contextlib.suppress(OSError):
             os.write(master_fd, b"continue\n")
-        except OSError:
-            pass
         return True
     finally:
         pause.clear()
@@ -906,6 +941,57 @@ def set_pty_no_echo(fd: int) -> None:
         pass
 
 
+def build_specify_invocation(
+    cfg: dict, source: str, extra: list[str]
+) -> tuple[list[str], dict[str, str], str, Path]:
+    """Map the installed config + argv to the specify invocation.
+
+    The single place that turns config.yml into the launch of specify;
+    returns (specify_cmd, env, state_dir, logs_dir) so main() only
+    orchestrates the live run. No run-side I/O happens here:
+
+    - state_dir/adr_dir go to the workflow as -i inputs (its steps reference
+      {{ inputs.state_dir }} / {{ inputs.adr_dir }});
+    - use_serve becomes the SKLC_ATTACH_FLAG env var for
+      run-agent.sh/name-task.sh;
+    - human_gates decides whether the ADR gate's verdict input is passed as
+      empty (interactive) or left to its "approve" default (auto-approve);
+    - run-agent.sh keeps its sessions/logs/pids under the same state dir the
+      workflow steps write artifacts to, so it must see SKLC_STATE_DIR.
+    """
+    workflow = cfg.get("workflow") or {}
+    state_dir = workflow.get("state_dir") or ".workflow"
+    adr_dir = workflow.get("adr_dir") or "architecture"
+    use_serve = bool(workflow.get("use_serve", False))
+    human_gates = bool(workflow.get("human_gates", True))
+    attach_flag = "--attach http://localhost:4096" if use_serve else ""
+    scripts_dir = str(Path(__file__).resolve().parent)
+    env = dict(os.environ)
+    env["SKLC_SCRIPTS_DIR"] = scripts_dir
+    env["SKLC_ATTACH_FLAG"] = attach_flag
+    env["SKLC_STATE_DIR"] = state_dir
+
+    specify_cmd = [
+        "specify",
+        "workflow",
+        "run",
+        source,
+        "-i",
+        f"state_dir={state_dir}",
+        "-i",
+        f"adr_dir={adr_dir}",
+    ]
+    if human_gates:
+        # Interactive gates: an empty adr_verdict falls through to the human
+        # prompt. Non-interactive runs omit it, so the declared default
+        # "approve" auto-approves the ADR gate (matching human_gates: false).
+        specify_cmd += ["-i", "adr_verdict="]
+    specify_cmd += extra
+
+    logs_dir = Path.cwd() / state_dir / "logs"
+    return specify_cmd, env, state_dir, logs_dir
+
+
 def main() -> int:
     argv = sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help"):
@@ -914,15 +1000,21 @@ def main() -> int:
     source = argv[0]
     extra = argv[1:]
 
+    # Map the installed config + argv to the specify invocation; main() only
+    # orchestrates the live run from the result.
+    cfg = load_config()
+    specify_cmd, env, state_dir, logs_dir = build_specify_invocation(cfg, source, extra)
+
     state_root = Path.cwd() / ".specify"
     # Snapshot the existing run directories BEFORE the workflow starts: the
     # run id is only printed by specify after the run finishes, so the
     # monitor recognizes the current run as the run dir that appears now.
     prior_runs = existing_run_ids(state_root)
-    monitor = LiveMonitor(state_root, prior_runs)
+    monitor = LiveMonitor(state_root, prior_runs, logs_dir)
     # Wall-clock run time is measured directly around the child process; it
     # covers every completion path (success, failure, abort).
     t0 = time.monotonic()
+
     # The wrapper owns specify's stdin only on a terminal run: a pty keeps
     # sys.stdin.isatty() True inside specify (its gate step goes PAUSED on a
     # non-TTY stdin, see ADR-0002), so interactive gates prompt as before
@@ -937,12 +1029,13 @@ def main() -> int:
         master_fd, slave_fd = pty.openpty()
         set_pty_no_echo(slave_fd)
         proc = subprocess.Popen(
-            ["specify", "workflow", "run", source, *extra],
+            specify_cmd,
             stdin=slave_fd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            env=env,
         )
         os.close(slave_fd)
         forward_thread = threading.Thread(
@@ -953,11 +1046,12 @@ def main() -> int:
         forward_thread.start()
     else:
         proc = subprocess.Popen(
-            ["specify", "workflow", "run", source, *extra],
+            specify_cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            env=env,
         )
     monitor.start()
     run_id = ""
@@ -987,7 +1081,7 @@ def main() -> int:
                     if master_fd is not None:
                         open_feedback_editor(
                             Path.cwd()
-                            / "${state_dir}"
+                            / state_dir
                             / "tasks"
                             / "current"
                             / "feedback.md",
@@ -998,7 +1092,7 @@ def main() -> int:
                     # The human is needed: play the same signal used for a
                     # finished run (success or failure alike).
                     notify()
-            print("[{}] {}".format(stamp(), line), flush=True)
+            print(f"[{stamp()}] {line}", flush=True)
             if not run_id:
                 run_id = run_id_from_text(line)
                 if run_id:
@@ -1010,10 +1104,8 @@ def main() -> int:
         forward_stop.set()
         if master_fd is not None:
             forward_thread.join(timeout=1)
-            try:
+            with contextlib.suppress(OSError):
                 os.close(master_fd)
-            except OSError:
-                pass
         # Reap the child even when the read loop above raised (OSError,
         # KeyboardInterrupt) before reaching proc.wait(): otherwise
         # proc.returncode would be None and the failure message would print
@@ -1037,16 +1129,14 @@ def main() -> int:
         rc = 1
     if rc != 0:
         print()
-        print("[{}] run failed (exit {})".format(stamp(), rc))
+        print(f"[{stamp()}] run failed (exit {rc})")
         if run_id or monitor.run_id:
             print(
-                "[{}] resume with: specify workflow resume {}".format(
-                    stamp(), run_id or monitor.run_id
-                )
+                f"[{stamp()}] resume with: specify workflow resume {run_id or monitor.run_id}"
             )
     # The statistics block prints on every completion path and never fails:
     # missing session data or a failed `opencode export` degrade to zeros.
-    print_run_statistics(Path.cwd() / "${state_dir}", t1 - t0)
+    print_run_statistics(Path.cwd() / state_dir, t1 - t0)
     # One victory.wav signal for every event: gate open, success, failure.
     notify()
     return rc

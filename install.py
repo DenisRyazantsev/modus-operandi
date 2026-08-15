@@ -9,7 +9,8 @@ glue script, and a spec-kit workflow (adr-pipeline) under
 ~/.config/spec-kit-llm-client/. See README.md for usage.
 
 Options:
-  --update       reinstall templates and print newly available config options
+  --update       reinstall the pipeline artifacts and print newly available
+                 config options
   --apply        re-render all artifacts from the current config (no
                  prerequisite/dependency checks, no next-steps; used by
                  `spec-run edit` after the editor closes)
