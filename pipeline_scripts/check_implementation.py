@@ -16,7 +16,8 @@ excluded: the saved ADR (<adr_dir>/ADR-*.md) is created by save-adr before the
 implement step, so without the exclusion an empty implementation would always
 "pass" because the fresh ADR file is untracked.
 
-Exits 0 when changes are present, 1 when there are none, 2 on a git error.
+Exits 0 when changes are present, 1 otherwise — no changes and git errors
+alike (a git error is reported in the printed summary).
 """
 
 from __future__ import annotations

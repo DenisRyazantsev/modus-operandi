@@ -122,11 +122,29 @@ def render_name_task(paths: Paths) -> None:
 
 
 def render_run_pipeline(paths: Paths) -> None:
+    # run-pipeline.py is split one class per file; the modules below must all
+    # be copied together so the installed wrapper stays importable. The path
+    # key of the shared module differs from its filename (leading underscore).
     _install_script("run_pipeline.py", paths["run_pipeline"], executable=True)
+    for key, source_name in (
+        ("run_pipeline_common", "_run_pipeline_common.py"),
+        ("run_id_discoverer", "run_id_discoverer.py"),
+        ("step_result_poller", "step_result_poller.py"),
+        ("agent_log_tailer", "agent_log_tailer.py"),
+        ("gate_state", "gate_state.py"),
+        ("buffered_emitter", "buffered_emitter.py"),
+        ("live_monitor", "live_monitor.py"),
+    ):
+        _install_script(source_name, paths[key])
 
 
 def render_spec_run(paths: Paths) -> None:
     _install_script("spec_run.py", paths["spec_run"], executable=True)
+    # spec-run is split one class per file: the exceptions package is copied
+    # next to the launcher so the submodules stay importable.
+    paths["exceptions_dir"].mkdir(parents=True, exist_ok=True)
+    for name in ("__init__.py", "help_requested.py", "invalid_invocation.py", "edit_requested.py"):
+        shutil.copy2(PIPELINE_SCRIPTS_DIR / "exceptions" / name, paths["exceptions_dir"] / name)
 
 
 def render_victory_wav(paths: Paths) -> None:

@@ -43,8 +43,22 @@ def check_files(paths: Paths) -> list[str]:
         errors.append("name-task.sh is not executable: {}".format(paths["name_task"]))
     if not os.access(paths["run_pipeline"], os.X_OK):
         errors.append("run-pipeline.py is not executable: {}".format(paths["run_pipeline"]))
+    for key in (
+        "run_pipeline_common",
+        "run_id_discoverer",
+        "step_result_poller",
+        "agent_log_tailer",
+        "gate_state",
+        "buffered_emitter",
+        "live_monitor",
+    ):
+        if not paths[key].is_file():
+            errors.append(f"generated script missing: {paths[key]}")
     if not os.access(paths["spec_run"], os.X_OK):
         errors.append("spec-run is not executable: {}".format(paths["spec_run"]))
+    for name in ("__init__.py", "help_requested.py", "invalid_invocation.py", "edit_requested.py"):
+        if not (paths["exceptions_dir"] / name).is_file():
+            errors.append(f"generated script missing: {paths['exceptions_dir'] / name}")
     if not paths["victory_wav"].is_file():
         errors.append(f"victory sound missing: {paths['victory_wav']}")
     for rel in (

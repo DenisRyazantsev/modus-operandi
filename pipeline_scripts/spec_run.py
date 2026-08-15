@@ -37,6 +37,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+# The exceptions package (one class per file) ships next to this launcher —
+# source: pipeline_scripts/exceptions/, installed: <bin dir>/exceptions/.
+# `__file__` is the launcher itself, so its directory is the one place the
+# package is guaranteed to be found, however the launcher is loaded (as an
+# installed script, through exec, or by tests via importlib).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from exceptions import EditRequested, HelpRequested, InvalidInvocation
+
 
 def _config_base() -> Path:
     """The config root the installer writes into (XDG_CONFIG_HOME or ~/.config)."""
@@ -114,24 +123,30 @@ def build_command(argv: list[str]) -> list[str]:
     raise InvalidInvocation
 
 
-def _resolve_editor() -> list[str]:
+def _resolve_editor() -> list[str] | None:
     # VISUAL/EDITOR values may carry arguments (`code --wait`), so they are
     # split like a shell command line. A malformed value (e.g. an unbalanced
-    # quote) is skipped with a warning instead of crashing with a traceback.
+    # quote) is skipped with a warning, and a candidate whose binary is not
+    # on PATH falls through to the next one (mirroring run_pipeline.py's
+    # resolve_editor); None means no editor is available at all.
     for var in ("VISUAL", "EDITOR"):
         value = os.environ.get(var)
         if not value:
             continue
         try:
-            return shlex.split(value)
+            cmd = shlex.split(value)
         except ValueError as exc:
             print(
                 f"warning: {var} is malformed ({exc}); skipping it",
                 file=sys.stderr,
             )
-    if shutil.which("nano"):
-        return ["nano"]
-    return ["vi"]
+            continue
+        if cmd and shutil.which(cmd[0]):
+            return cmd
+    for name in ("nano", "vi"):
+        if shutil.which(name):
+            return [name]
+    return None
 
 
 def _build_adr_command(rest: list[str]) -> list[str]:
@@ -187,20 +202,6 @@ def _build_review_command(rest: list[str]) -> list[str]:
             cmd.append(arg)
         i += 1
     return cmd
-
-
-class HelpRequested(Exception):
-    """build_command saw `--help`/`-h`: print usage on stdout and exit 0."""
-
-
-class InvalidInvocation(Exception):
-    """build_command saw an unusable invocation: print usage on stderr and exit
-    non-zero."""
-
-
-class EditRequested(Exception):
-    """build_command saw `edit`: open the installed config in the editor and
-    re-apply it on exit (handled by the caller through _run_edit)."""
 
 
 def print_usage(stream=None) -> None:
@@ -268,8 +269,14 @@ def _run_edit() -> int:
     # still close the editor non-zero (vim :cq, ...), and `--apply`
     # re-validates the config anyway, failing loudly on an invalid edit. Only
     # a failure to start the editor aborts.
-    editor_cmd = _resolve_editor() + [CONFIG]
-    if _launch_editor(editor_cmd) is None:
+    editor_cmd = _resolve_editor()
+    if editor_cmd is None:
+        print(
+            "error: no editor found; set VISUAL or EDITOR, or install nano/vi",
+            file=sys.stderr,
+        )
+        return 1
+    if _launch_editor(editor_cmd + [CONFIG]) is None:
         return 1
     return _apply_config()
 

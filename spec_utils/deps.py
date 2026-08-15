@@ -115,8 +115,10 @@ def uninstall_specify() -> bool:
 
 def uninstall_pyyaml() -> bool:
     # Teardown counterpart of ensure_pyyaml(): tries the same install
-    # locations in order — the current python's pip, then pip3, then pip3
-    # --user — and succeeds on the first one that works.
+    # locations in order — the current python's pip, then pip3 — and
+    # succeeds on the first one that works. pip uninstall has no --user
+    # flag (it is an install-only option), so pip3 --user installs are
+    # covered by the plain pip3 uninstall form above.
     attempts: list[list[str]] = []
     python = tool_discovery.find_in_path("python3")
     if python and environment.pip_works(python):
@@ -124,7 +126,6 @@ def uninstall_pyyaml() -> bool:
     pip3 = tool_discovery.find_in_path("pip3")
     if pip3:
         attempts.append([pip3, "uninstall", "-y", "pyyaml"])
-        attempts.append([pip3, "uninstall", "-y", "--user", "pyyaml"])
     for cmd in attempts:
         result = proc.run(cmd, check=False)
         if result.returncode == 0:

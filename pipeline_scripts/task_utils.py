@@ -17,7 +17,7 @@ def resolve_task_dir(state_dir: str, task_id: str) -> Path:
         return tasks / task_id
     current = tasks / "current"
     task_dir = current.resolve()
-    if not task_dir.exists() or task_dir == current:
+    if not task_dir.exists() or not current.is_symlink():
         sys.exit(
             f"error: {current} does not point to a task directory; run the "
             "pipeline from the start or pass an explicit task_id"

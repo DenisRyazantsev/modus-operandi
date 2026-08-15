@@ -16,6 +16,13 @@ def do_uninstall(paths: Paths, yes: bool) -> None:
         paths["run_agent"],
         paths["name_task"],
         paths["run_pipeline"],
+        paths["run_pipeline_common"],
+        paths["run_id_discoverer"],
+        paths["step_result_poller"],
+        paths["agent_log_tailer"],
+        paths["gate_state"],
+        paths["buffered_emitter"],
+        paths["live_monitor"],
         paths["victory_wav"],
         paths["save_adr"],
         paths["check_review"],
@@ -32,6 +39,10 @@ def do_uninstall(paths: Paths, yes: bool) -> None:
         if path.exists():
             path.unlink()
             removed.append(str(path))
+    exceptions_dir = paths["exceptions_dir"]
+    if exceptions_dir.is_dir():
+        shutil.rmtree(exceptions_dir)
+        removed.append(str(exceptions_dir))
     prompts = paths["prompts"]
     if prompts.is_dir():
         shutil.rmtree(prompts)

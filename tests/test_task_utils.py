@@ -46,6 +46,14 @@ class ResolveTaskDirTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             task_utils.resolve_task_dir(str(self.root / ".workflow"), "")
 
+    def test_empty_task_id_with_real_dir_fails(self):
+        # `tasks/current` being a real directory rather than a symlink is an
+        # invalid install: resolve_task_dir must reject it (guard compares
+        # against the resolved path) instead of silently returning it.
+        (self.tasks / "current").mkdir()
+        with self.assertRaises(SystemExit):
+            task_utils.resolve_task_dir(str(self.root / ".workflow"), "")
+
 
 if __name__ == "__main__":
     unittest.main()
