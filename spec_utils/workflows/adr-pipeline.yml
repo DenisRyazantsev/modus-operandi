@@ -126,10 +126,10 @@ steps:
     timeout: 7200
     run: >-
       SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-      "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
-      "Write an ADR for the following feature into {{ inputs.state_dir }}/tasks/current/adr.md
-      with sections: Context, Decision, Alternatives, Consequences, Acceptance Criteria.
-      Feature: {{ inputs.feature }}"
+      PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
+      export STATE_DIR="{{ inputs.state_dir }}";
+      export FEATURE="{{ inputs.feature }}";
+      "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/adr/write-adr";
 
   - id: adr-loop
     type: do-while
@@ -162,10 +162,9 @@ steps:
             timeout: 7200
             run: >-
               SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-              "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
-              "Read {{ inputs.state_dir }}/tasks/current/feedback.md. If it contains
-              feedback, update {{ inputs.state_dir }}/tasks/current/adr.md accordingly.
-              If it is empty or missing, do nothing."
+              PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
+              export STATE_DIR="{{ inputs.state_dir }}";
+              "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/adr/adr-revise";
           - id: adr-feedback-clear
             type: shell
             run: "rm -f {{ inputs.state_dir }}/tasks/current/feedback.md"
@@ -196,35 +195,27 @@ steps:
     timeout: 7200
     run: >-
       SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-      "$SKLC_SCRIPTS_DIR/run-agent.sh" executor
-      "Read {{ inputs.state_dir }}/tasks/current/adr.md. If anything is ambiguous, write
-      {{ inputs.state_dir }}/tasks/current/questions.md whose first line is exactly
-      'QUESTIONS: PRESENT' followed by your numbered questions, then stop. If everything is
-      clear, write {{ inputs.state_dir }}/tasks/current/questions.md with the first line
-      exactly 'QUESTIONS: NONE'."
+      PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
+      export STATE_DIR="{{ inputs.state_dir }}";
+      "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/adr/executor-questions";
 
   - id: planner-answers
     type: shell
     timeout: 7200
     run: >-
       SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-      "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
-      "Read {{ inputs.state_dir }}/tasks/current/questions.md. If its first line is
-      'QUESTIONS: PRESENT', write {{ inputs.state_dir }}/tasks/current/answers.md answering
-      each question line-by-line in the same order. If it is 'QUESTIONS: NONE', write nothing."
+      PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
+      export STATE_DIR="{{ inputs.state_dir }}";
+      "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/adr/planner-answers";
 
   - id: implement
     type: shell
     timeout: 7200
     run: >-
       SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-      "$SKLC_SCRIPTS_DIR/run-agent.sh" executor
-      "Implement the feature per {{ inputs.state_dir }}/tasks/current/adr.md and
-      {{ inputs.state_dir }}/tasks/current/answers.md (if present). Then run the project's
-      tests/linter if available. If you must deviate from the ADR (e.g. it describes
-      something impossible or clearly suboptimal), write {{ inputs.state_dir }}/tasks/current/deviation.md
-      recording: what the ADR says, what you did instead, and why. Do not create the file
-      when there is no deviation."
+      PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
+      export STATE_DIR="{{ inputs.state_dir }}";
+      "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/adr/implement";
 
   - id: implement-loop
     type: do-while
@@ -254,7 +245,8 @@ steps:
               exit 0;
               fi;
               touch "{{ inputs.state_dir }}/tasks/current/.implement-retried";
-              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor "You didn't do changes.";
+              PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
+              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/adr/implement-retry.md";
 
   - id: implement-pass-check
     type: shell
@@ -277,13 +269,20 @@ steps:
         timeout: 7200
         run: >-
           SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
-          "Review the git changes for SRP violations ONLY. Do NOT review ADR
-          compliance, tests, or any other quality aspect (a later stage does that).
-          Run git status, then git diff HEAD (includes staged changes). Write
-          {{ inputs.state_dir }}/tasks/current/srp-review-N.md (N is the next number
-          after the existing srp-review files) with the first
-          line exactly 'SRP: PASS' or 'SRP: FIX' followed by actionable findings."
+          PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
+          latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" srp 2>/dev/null || true);
+          n=1;
+          if [ -n "$latest" ]; then
+          b=$(basename "$latest");
+          num=${b#srp-review-};
+          num=${num%.md};
+          case "$num" in ''|*[!0-9]*) num=0;; esac;
+          n=$((num+1));
+          fi;
+          export STATE_DIR="{{ inputs.state_dir }}";
+          export LATEST="$latest";
+          export N="$n";
+          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/adr/srp-review.md";
 
       - id: srp-verdict
         type: shell
@@ -301,10 +300,11 @@ steps:
             timeout: 7200
             run: >-
               SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor
-              "Read the latest {{ inputs.state_dir }}/tasks/current/srp-review-N.md
-              and fix all its SRP findings. Then run the project's tests/linter if
-              available."
+              PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
+              latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" srp 2>/dev/null || true);
+              export STATE_DIR="{{ inputs.state_dir }}";
+              export LATEST="$latest";
+              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/srp-fix.md";
 
   - id: srp-pass-check
     type: shell
@@ -326,16 +326,20 @@ steps:
         timeout: 7200
         run: >-
           SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
-          "Review the git changes for BUGS ONLY: logic errors, wrong conditions,
-          off-by-one and edge cases, unhandled errors, races, broken control flow,
-          wrong types/units, and discrepancies between the implemented behavior and
-          the acceptance criteria in {{ inputs.state_dir }}/tasks/current/adr.md.
-          Do NOT review SRP violations, ADR-format compliance, or comment quality
-          (later stages do that). Run git status, then git diff HEAD (includes
-          staged changes). Write {{ inputs.state_dir }}/tasks/current/bug-review-N.md
-          (N is the next number after the existing bug-review files) with the first
-          line exactly 'BUGS: PASS' or 'BUGS: FIX' followed by actionable findings."
+          PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
+          latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" bugs 2>/dev/null || true);
+          n=1;
+          if [ -n "$latest" ]; then
+          b=$(basename "$latest");
+          num=${b#bug-review-};
+          num=${num%.md};
+          case "$num" in ''|*[!0-9]*) num=0;; esac;
+          n=$((num+1));
+          fi;
+          export STATE_DIR="{{ inputs.state_dir }}";
+          export LATEST="$latest";
+          export N="$n";
+          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/adr/bug-review.md";
 
       - id: bug-verdict
         type: shell
@@ -353,10 +357,11 @@ steps:
             timeout: 7200
             run: >-
               SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor
-              "Read the latest {{ inputs.state_dir }}/tasks/current/bug-review-N.md
-              and fix all its bug findings. Then run the project's tests/linter if
-              available."
+              PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
+              latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" bugs 2>/dev/null || true);
+              export STATE_DIR="{{ inputs.state_dir }}";
+              export LATEST="$latest";
+              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/bug-fix.md";
 
   - id: bug-pass-check
     type: shell
@@ -378,17 +383,20 @@ steps:
         timeout: 7200
         run: >-
           SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
-          "Review the git changes against {{ inputs.state_dir }}/tasks/current/adr.md.
-          First read {{ inputs.state_dir }}/tasks/current/deviation.md if present: if it
-          records a justified deviation from the ADR, evaluate the code against the ADR as
-          amended by that deviation and do not report the deviation itself as a finding.
-          If the deviation file is missing or unjustified, report the mismatch as a finding.
-          Run git status, then git diff HEAD (includes staged changes). Write
-          {{ inputs.state_dir }}/tasks/current/review-N.md (N is the next number after the
-          existing review files) with the first line exactly 'VERDICT: PASS' or
-          'VERDICT: FIX' followed by actionable findings. The verdict must reflect the
-          implemented code, not the ADR document."
+          PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
+          latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" review 2>/dev/null || true);
+          n=1;
+          if [ -n "$latest" ]; then
+          b=$(basename "$latest");
+          num=${b#review-};
+          num=${num%.md};
+          case "$num" in ''|*[!0-9]*) num=0;; esac;
+          n=$((num+1));
+          fi;
+          export STATE_DIR="{{ inputs.state_dir }}";
+          export LATEST="$latest";
+          export N="$n";
+          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/adr/review.md";
 
       - id: verdict
         type: shell
@@ -406,9 +414,11 @@ steps:
             timeout: 7200
             run: >-
               SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor
-              "Read the latest {{ inputs.state_dir }}/tasks/current/review-N.md and fix all its
-              findings. Then run the project's tests/linter if available."
+              PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
+              latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" review 2>/dev/null || true);
+              export STATE_DIR="{{ inputs.state_dir }}";
+              export LATEST="$latest";
+              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/fix.md";
 
   - id: sync-adr
     type: shell
@@ -417,7 +427,9 @@ steps:
       SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
       set -euo pipefail
       if [ -f "{{ inputs.state_dir }}/tasks/current/deviation.md" ]; then
-      "$SKLC_SCRIPTS_DIR/run-agent.sh" planner "Read {{ inputs.state_dir }}/tasks/current/deviation.md and {{ inputs.state_dir }}/tasks/current/adr.md. Update adr.md so it reflects the recorded deviation: append an '## Amendments' section (do not rewrite the Decision) noting what changed and why."
+      PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
+      export STATE_DIR="{{ inputs.state_dir }}";
+      "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/adr/sync-adr.md"
       python3 "$SKLC_SCRIPTS_DIR/save_adr.py" sync "{{ inputs.state_dir }}" "{{ inputs.task_id }}"
       rm -f "{{ inputs.state_dir }}/tasks/current/deviation.md"
       else
@@ -444,28 +456,20 @@ steps:
         timeout: 7200
         run: >-
           SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
-          "Review the git changes for readability 'traps' ONLY: places that are
-          correct but would mislead a reader, NOT bugs. Act as a senior code
-          reviewer opening this file for the first time: find only the spots where
-          a reader would make a wrong assumption about what the code does and why
-          it is written this way. Comment only the WHY, never the WHAT; apply the
-          Chesterton's fence test (don't suggest removing things you don't yet
-          understand); prefer a rename/refactor over a comment; judge against a
-          typical reader of this codebase; if there are no findings return an empty
-          list (noise is worse than silence). Check these triggers in order: magic
-          numbers/constants, workarounds/hacks, non-standard API use, swallowed
-          exceptions, edge cases, business rules inside conditions, implicit
-          invariants, strange optimizations, external constraints, known
-          limitations/tech debt. Run git status, then git diff HEAD (includes
-          staged changes). Write {{ inputs.state_dir }}/tasks/current/comment-review-N.md
-          (N is the next number after the existing comment-review files) with the
-          first line exactly 'VERDICT: PASS' or 'VERDICT: FIX'. If PASS, write
-          nothing else. If FIX, list findings in this strict format, one per block:
-          <file:line>
-          Why a reader would be misled: <one sentence>
-          Comment: <1-2 lines, WHY only, in English>
-          Verdict: COMMENT | REFACTOR"
+          PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
+          latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" comment 2>/dev/null || true);
+          n=1;
+          if [ -n "$latest" ]; then
+          b=$(basename "$latest");
+          num=${b#comment-review-};
+          num=${num%.md};
+          case "$num" in ''|*[!0-9]*) num=0;; esac;
+          n=$((num+1));
+          fi;
+          export STATE_DIR="{{ inputs.state_dir }}";
+          export LATEST="$latest";
+          export N="$n";
+          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/adr/comment-review.md";
 
       - id: comment-verdict
         type: shell
@@ -483,12 +487,11 @@ steps:
             timeout: 7200
             run: >-
               SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor
-              "Read the latest {{ inputs.state_dir }}/tasks/current/comment-review-N.md
-              and apply all its findings: for each Verdict: COMMENT add the
-              suggested why-comment to the code; for each Verdict: REFACTOR perform
-              the rename/refactor instead of adding a comment. Then run the
-              project's tests/linter if available."
+              PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
+              latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" comment 2>/dev/null || true);
+              export STATE_DIR="{{ inputs.state_dir }}";
+              export LATEST="$latest";
+              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/adr/comment-fix.md";
 
   - id: comment-pass-check
     type: shell

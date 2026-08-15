@@ -47,6 +47,35 @@ def check_files(paths: Paths) -> list[str]:
         errors.append("spec-run is not executable: {}".format(paths["spec_run"]))
     if not paths["victory_wav"].is_file():
         errors.append(f"victory sound missing: {paths['victory_wav']}")
+    for rel in (
+        "review/srp-review.md",
+        "review/srp-rereview.md",
+        "review/bug-review.md",
+        "review/bug-rereview.md",
+        "review/review.md",
+        "review/review-rereview.md",
+        "review/comment-review.md",
+        "review/comment-rereview.md",
+        "review/report.md",
+        "review/comment-fix.md",
+        "adr/write-adr.md",
+        "adr/adr-revise.md",
+        "adr/executor-questions.md",
+        "adr/planner-answers.md",
+        "adr/implement.md",
+        "adr/implement-retry.md",
+        "adr/sync-adr.md",
+        "adr/srp-review.md",
+        "adr/bug-review.md",
+        "adr/review.md",
+        "adr/comment-review.md",
+        "adr/comment-fix.md",
+        "srp-fix.md",
+        "bug-fix.md",
+        "fix.md",
+    ):
+        if not (paths["prompts"] / rel).is_file():
+            errors.append(f"generated prompt missing: {paths['prompts'] / rel}")
     for _, path in (
         ("adr-pipeline.yml", paths["workflow"]),
         ("review-pipeline.yml", paths["review_workflow"]),

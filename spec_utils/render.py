@@ -215,3 +215,17 @@ def render_review_workflow(cfg: dict[str, Any], paths: Paths) -> None:
     paths["review_workflow"].write_text(
         _generate_workflow("review-pipeline", cfg), encoding="utf-8"
     )
+
+
+def render_prompts(paths: Paths) -> None:
+    # The workflow steps pass the prompt files to run-agent.sh via
+    # --prompt-file, which substitutes @TOKEN@ placeholders from the env.
+    # Copied verbatim, keeping the review/ and adr/ subdirectories.
+    source = REPO_ROOT / "prompts"
+    target = paths["prompts"]
+    target.mkdir(parents=True, exist_ok=True)
+    for path in source.rglob("*"):
+        if path.is_file():
+            dest = target / path.relative_to(source)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, dest)

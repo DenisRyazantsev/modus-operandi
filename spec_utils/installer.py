@@ -50,6 +50,7 @@ def apply(paths: Paths, update: bool = False) -> None:
     render.render_adr_scripts(paths)
     render.render_workflow(cfg, paths)
     render.render_review_workflow(cfg, paths)
+    render.render_prompts(paths)
     render.render_spec_run(paths)
     # Record the repo's install.py path: `spec-run edit` re-applies the config
     # through it, and the path cannot be derived from the installed launcher.

@@ -1,0 +1,1 @@
+Read @STATE_DIR@/tasks/current/adr.md. If anything is ambiguous, write @STATE_DIR@/tasks/current/questions.md whose first line is exactly 'QUESTIONS: PRESENT' followed by your numbered questions, then stop. If everything is clear, write @STATE_DIR@/tasks/current/questions.md with the first line exactly 'QUESTIONS: NONE'.

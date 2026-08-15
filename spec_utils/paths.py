@@ -20,6 +20,7 @@ def build_paths(home: str | Path) -> Paths:
         "spec_run": base / ".local" / "bin" / "spec-run",
         "workflow": base / ".config" / "spec-kit-llm-client" / "adr-pipeline.yml",
         "review_workflow": base / ".config" / "spec-kit-llm-client" / "review-pipeline.yml",
+        "prompts": base / ".config" / "spec-kit-llm-client" / "prompts",
         "run_agent": base / ".config" / "opencode" / "scripts" / "run-agent.sh",
         "name_task": base / ".config" / "opencode" / "scripts" / "name-task.sh",
         "run_pipeline": base / ".config" / "opencode" / "scripts" / "run-pipeline.py",

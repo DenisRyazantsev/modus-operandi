@@ -2,6 +2,7 @@
 # run-agent.sh - session glue for the adr-pipeline workflow.
 #
 # Usage: run-agent.sh <role> "<prompt>" [--task <task-id>] [--reset]
+#        run-agent.sh <role> --prompt-file <path> [--task <task-id>] [--reset]
 #
 # Keeps one warm opencode session per role (stored in <state_dir>/sessions.json)
 # and resumes it with `opencode run --session` between workflow steps, so the
@@ -24,14 +25,33 @@ set -euo pipefail
 
 usage() {
   echo "usage: $0 <role> \"<prompt>\" [--task <task-id>] [--reset]" >&2
+  echo "       $0 <role> --prompt-file <path> [--task <task-id>] [--reset]" >&2
   echo "       role must be 'planner' or 'executor'" >&2
   exit 2
 }
 
 [ $# -ge 2 ] || usage
 ROLE="$1"
-PROMPT="$2"
-shift 2
+if [ "${2:-}" = "--prompt-file" ]; then
+  [ $# -ge 3 ] || usage
+  PROMPT_FILE="$3"
+  [ -f "$PROMPT_FILE" ] || { echo "error: prompt file not found: $PROMPT_FILE" >&2; exit 2; }
+  # Substitute @TOKEN@ placeholders from the environment: the workflow step
+  # exports STATE_DIR/LATEST/N/SNAP/etc. before the call, so the prompt files
+  # stay plain .md text with no shell or template escapes.
+  PROMPT="$(python3 - "$PROMPT_FILE" <<'PYEOF'
+import os
+import re
+import sys
+text = open(sys.argv[1], encoding="utf-8").read()
+sys.stdout.write(re.sub(r"@([A-Z0-9_]+)@", lambda m: os.environ.get(m.group(1), m.group(0)), text))
+PYEOF
+)"
+  shift 3
+else
+  PROMPT="$2"
+  shift 2
+fi
 [ "$ROLE" = "planner" ] || [ "$ROLE" = "executor" ] || usage
 
 TASK_ID=""

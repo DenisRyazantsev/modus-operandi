@@ -1,0 +1,1 @@
+Read @LATEST@ and apply all its findings: for each Verdict: COMMENT add the suggested why-comment to the code; for each Verdict: REFACTOR perform the rename/refactor instead of adding a comment. Then run the project's tests/linter if available.

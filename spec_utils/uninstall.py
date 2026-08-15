@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import shutil
 
 from . import Paths, deps, prompt
 
@@ -31,6 +32,10 @@ def do_uninstall(paths: Paths, yes: bool) -> None:
         if path.exists():
             path.unlink()
             removed.append(str(path))
+    prompts = paths["prompts"]
+    if prompts.is_dir():
+        shutil.rmtree(prompts)
+        removed.append(str(prompts))
     if removed:
         print("removed:\n  " + "\n  ".join(removed))
     for directory in (paths["agents"], paths["scripts"], paths["config_dir"], paths["user_bin"]):

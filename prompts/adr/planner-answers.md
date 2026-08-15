@@ -1,0 +1,1 @@
+Read @STATE_DIR@/tasks/current/questions.md. If its first line is 'QUESTIONS: PRESENT', write @STATE_DIR@/tasks/current/answers.md answering each question line-by-line in the same order. If it is 'QUESTIONS: NONE', write nothing.

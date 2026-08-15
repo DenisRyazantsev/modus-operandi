@@ -86,15 +86,27 @@ steps:
         timeout: 7200
         run: >-
           SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+          PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
           set -euo pipefail;
+          latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" srp 2>/dev/null || true);
+          n=1;
+          if [ -n "$latest" ]; then
+          b=$(basename "$latest");
+          num=${b#srp-review-};
+          num=${num%.md};
+          case "$num" in ''|*[!0-9]*) num=0;; esac;
+          n=$((num+1));
+          fi;
+          export STATE_DIR="{{ inputs.state_dir }}";
+          export LATEST="$latest";
+          export N="$n";
           snapfile="{{ inputs.state_dir }}/tasks/current/srp-snapshot.sha";
           if [ -s "$snapfile" ]; then
           snap=$(cat "$snapfile");
-          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
-          "Re-review for SRP ONLY. The executor fixed the findings from the latest srp-review file. Verify each finding is fixed and review ONLY the changes made since the previous review: run git diff $snap and git status (git diff does not show untracked files, so new files made by the executor only appear in git status). Skip files with fewer than 300 lines of code. Write {{ inputs.state_dir }}/tasks/current/srp-review-N.md (N is the next number after the existing srp-review files) with the first line exactly 'SRP: PASS' or 'SRP: FIX' followed by findings.";
+          export SNAP="$snap";
+          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/review/srp-rereview.md";
           else
-          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
-          "Find SRP violations in the code. Do not review bugs or style (a later stage does). Skip files with fewer than 300 lines of code. If {{ inputs.state_dir }}/scope.txt starts with 'branch-diff: ', review only that git diff and also run git status (git diff does not show untracked files, so new files appear only in git status — include them in the review scope). Write {{ inputs.state_dir }}/tasks/current/srp-review-N.md (N is the next number after the existing srp-review files) with the first line exactly 'SRP: PASS' or 'SRP: FIX' followed by actionable findings.";
+          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/review/srp-review.md";
           fi;
           snap=$(git stash create 2>/dev/null || true);
           [ -n "$snap" ] || snap=HEAD;
@@ -116,10 +128,11 @@ steps:
             timeout: 7200
             run: >-
               SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor
-              "Read the latest {{ inputs.state_dir }}/tasks/current/srp-review-N.md
-              and fix all its SRP findings. Then run the project's tests/linter if
-              available."
+              PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
+              latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" srp 2>/dev/null || true);
+              export STATE_DIR="{{ inputs.state_dir }}";
+              export LATEST="$latest";
+              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/srp-fix.md";
 
   - id: srp-pass-check
     type: shell
@@ -141,15 +154,27 @@ steps:
         timeout: 7200
         run: >-
           SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+          PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
           set -euo pipefail;
+          latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" bugs 2>/dev/null || true);
+          n=1;
+          if [ -n "$latest" ]; then
+          b=$(basename "$latest");
+          num=${b#bug-review-};
+          num=${num%.md};
+          case "$num" in ''|*[!0-9]*) num=0;; esac;
+          n=$((num+1));
+          fi;
+          export STATE_DIR="{{ inputs.state_dir }}";
+          export LATEST="$latest";
+          export N="$n";
           snapfile="{{ inputs.state_dir }}/tasks/current/bug-snapshot.sha";
           if [ -s "$snapfile" ]; then
           snap=$(cat "$snapfile");
-          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
-          "Re-review for bugs ONLY. The executor fixed the findings from the latest bug-review file. Verify each finding is fixed and review ONLY the changes made since the previous review: run git diff $snap and git status (git diff does not show untracked files, so new files made by the executor only appear in git status). Write {{ inputs.state_dir }}/tasks/current/bug-review-N.md (N is the next number after the existing bug-review files) with the first line exactly 'BUGS: PASS' or 'BUGS: FIX' followed by findings.";
+          export SNAP="$snap";
+          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/review/bug-rereview.md";
           else
-          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
-          "Find bugs in the code: logic errors, wrong conditions, off-by-one and edge cases, unhandled errors, races, broken control flow, type/unit mismatches. Do not review SRP or style (other stages do). If {{ inputs.state_dir }}/scope.txt starts with 'branch-diff: ', review only that git diff and also run git status (git diff does not show untracked files, so new files appear only in git status — include them in the review scope). Write {{ inputs.state_dir }}/tasks/current/bug-review-N.md (N is the next number after the existing bug-review files) with the first line exactly 'BUGS: PASS' or 'BUGS: FIX' followed by actionable findings.";
+          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/review/bug-review.md";
           fi;
           snap=$(git stash create 2>/dev/null || true);
           [ -n "$snap" ] || snap=HEAD;
@@ -171,10 +196,11 @@ steps:
             timeout: 7200
             run: >-
               SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor
-              "Read the latest {{ inputs.state_dir }}/tasks/current/bug-review-N.md
-              and fix all its bug findings. Then run the project's tests/linter if
-              available."
+              PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
+              latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" bugs 2>/dev/null || true);
+              export STATE_DIR="{{ inputs.state_dir }}";
+              export LATEST="$latest";
+              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/bug-fix.md";
 
   - id: bug-pass-check
     type: shell
@@ -196,15 +222,27 @@ steps:
         timeout: 7200
         run: >-
           SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+          PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
           set -euo pipefail;
+          latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" review 2>/dev/null || true);
+          n=1;
+          if [ -n "$latest" ]; then
+          b=$(basename "$latest");
+          num=${b#review-};
+          num=${num%.md};
+          case "$num" in ''|*[!0-9]*) num=0;; esac;
+          n=$((num+1));
+          fi;
+          export STATE_DIR="{{ inputs.state_dir }}";
+          export LATEST="$latest";
+          export N="$n";
           snapfile="{{ inputs.state_dir }}/tasks/current/review-snapshot.sha";
           if [ -s "$snapfile" ]; then
           snap=$(cat "$snapfile");
-          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
-          "Re-review. The executor fixed the findings from the latest review file. Verify each finding is fixed and review ONLY the changes made since the previous review: run git diff $snap and git status (git diff does not show untracked files, so new files made by the executor only appear in git status). Write {{ inputs.state_dir }}/tasks/current/review-N.md (N is the next number after the existing review files) with the first line exactly 'VERDICT: PASS' or 'VERDICT: FIX' followed by findings.";
+          export SNAP="$snap";
+          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/review/review-rereview.md";
           else
-          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
-          "Find correctness and quality issues the SRP and bug stages missed: broken logic, edge cases, unhandled errors, dead code, confusing naming. If {{ inputs.state_dir }}/scope.txt starts with 'branch-diff: ', review only that git diff and also run git status (git diff does not show untracked files, so new files appear only in git status — include them in the review scope). Write {{ inputs.state_dir }}/tasks/current/review-N.md (N is the next number after the existing review files) with the first line exactly 'VERDICT: PASS' or 'VERDICT: FIX' followed by actionable findings.";
+          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/review/review.md";
           fi;
           snap=$(git stash create 2>/dev/null || true);
           [ -n "$snap" ] || snap=HEAD;
@@ -226,9 +264,11 @@ steps:
             timeout: 7200
             run: >-
               SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor
-              "Read the latest {{ inputs.state_dir }}/tasks/current/review-N.md and fix all its
-              findings. Then run the project's tests/linter if available."
+              PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
+              latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" review 2>/dev/null || true);
+              export STATE_DIR="{{ inputs.state_dir }}";
+              export LATEST="$latest";
+              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/fix.md";
 
   - id: pass-check
     type: shell
@@ -250,15 +290,27 @@ steps:
         timeout: 7200
         run: >-
           SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+          PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
           set -euo pipefail;
+          latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" comment 2>/dev/null || true);
+          n=1;
+          if [ -n "$latest" ]; then
+          b=$(basename "$latest");
+          num=${b#comment-review-};
+          num=${num%.md};
+          case "$num" in ''|*[!0-9]*) num=0;; esac;
+          n=$((num+1));
+          fi;
+          export STATE_DIR="{{ inputs.state_dir }}";
+          export LATEST="$latest";
+          export N="$n";
           snapfile="{{ inputs.state_dir }}/tasks/current/comment-snapshot.sha";
           if [ -s "$snapfile" ]; then
           snap=$(cat "$snapfile");
-          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
-          "Re-review for readability traps ONLY. The executor fixed the findings from the latest comment-review file. Verify each finding is fixed and review ONLY the changes made since the previous review: run git diff $snap and git status (git diff does not show untracked files, so new files made by the executor only appear in git status). Write {{ inputs.state_dir }}/tasks/current/comment-review-N.md (N is the next number after the existing comment-review files) with the first line exactly 'VERDICT: PASS' or 'VERDICT: FIX' followed by findings.";
+          export SNAP="$snap";
+          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/review/comment-rereview.md";
           else
-          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
-          "Find readability traps: correct but misleading code — comments that state the obvious or contradict the code (add or fix a why comment, never a what description), names so unclear they deserve a rename. Not bugs, not SRP. If {{ inputs.state_dir }}/scope.txt starts with 'branch-diff: ', review only that git diff and also run git status (git diff does not show untracked files, so new files appear only in git status — include them in the review scope). Write {{ inputs.state_dir }}/tasks/current/comment-review-N.md (N is the next number after the existing comment-review files) with the first line exactly 'VERDICT: PASS' or 'VERDICT: FIX' followed by actionable findings.";
+          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/review/comment-review.md";
           fi;
           snap=$(git stash create 2>/dev/null || true);
           [ -n "$snap" ] || snap=HEAD;
@@ -280,10 +332,11 @@ steps:
             timeout: 7200
             run: >-
               SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor
-              "Read the latest {{ inputs.state_dir }}/tasks/current/comment-review-N.md
-              and fix all its readability findings. Then run the project's
-              tests/linter if available."
+              PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
+              latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" comment 2>/dev/null || true);
+              export STATE_DIR="{{ inputs.state_dir }}";
+              export LATEST="$latest";
+              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/review/comment-fix.md";
 
   - id: comment-pass-check
     type: shell
@@ -300,14 +353,15 @@ steps:
     timeout: 7200
     run: >-
       SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+      PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
       set -euo pipefail;
-      "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
-      "Write {{ inputs.state_dir }}/tasks/current/review-report.md summarizing this review
-      run: the review scope (read {{ inputs.state_dir }}/scope.txt — either 'full', meaning
-      the whole codebase was reviewed, or the base branch the diff was taken
-      against), the reviewed files, and per stage (SRP, bugs, general review,
-      comments) what was found and what the executor fixed, ending with an
-      overall verdict line exactly 'VERDICT: PASS' when nothing remains unfixed
-      or 'VERDICT: REVIEW' when some findings could not be resolved. Read the
-      latest srp-review-N.md, bug-review-N.md, review-N.md and
-      comment-review-N.md files for the history."
+      srp_last=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" srp 2>/dev/null || true);
+      bugs_last=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" bugs 2>/dev/null || true);
+      review_last=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" review 2>/dev/null || true);
+      comment_last=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" comment 2>/dev/null || true);
+      export STATE_DIR="{{ inputs.state_dir }}";
+      export SRP_LAST="$srp_last";
+      export BUGS_LAST="$bugs_last";
+      export REVIEW_LAST="$review_last";
+      export COMMENT_LAST="$comment_last";
+      "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/review/report.md";

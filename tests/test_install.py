@@ -136,7 +136,9 @@ class InstallLayoutTest(InstallerTestCase):
             ".config/opencode/scripts/agent_call.py",
             ".config/spec-kit-llm-client/adr-pipeline.yml",
             ".config/spec-kit-llm-client/config.example.yml",
-            ".config/spec-kit-llm-client/adr-pipeline.yml",
+            ".config/spec-kit-llm-client/prompts/review/srp-review.md",
+            ".config/spec-kit-llm-client/prompts/adr/implement.md",
+            ".config/spec-kit-llm-client/prompts/srp-fix.md",
             ".config/spec-kit-llm-client/install-path.txt",
             ".local/bin/spec-run",
         ]
@@ -620,7 +622,10 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertIn("git branch --show-current", all_runs)
         self.assertIn("date +%Y%m%d-%H%M", all_runs)
         self.assertIn("ln -sfn", all_runs)
-        self.assertIn("review-report.md", all_runs)
+        report_prompt = (
+            self.home / ".config/spec-kit-llm-client/prompts/review/report.md"
+        ).read_text()
+        self.assertIn("review-report.md", report_prompt)
         self.assertNotIn("base=$(cat", all_runs)
         self.assertNotIn("adr.md", all_runs)
         self.assertNotIn("adr_dir", all_runs)
@@ -632,11 +637,11 @@ class WorkflowStructureTest(InstallerTestCase):
         # in every subsequent re-review. Each re-review prompt must also ask
         # for git status so untracked files are in the review scope.
         self.assertEqual(self.install(), 0)
-        review = (self.home / ".config/spec-kit-llm-client/review-pipeline.yml").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("git diff $snap and git status", review)
-        self.assertIn("does not show untracked files", review)
+        prompts = self.home / ".config/spec-kit-llm-client/prompts/review"
+        for name in ("srp-rereview", "bug-rereview", "review-rereview", "comment-rereview"):
+            prompt = (prompts / f"{name}.md").read_text()
+            self.assertIn("run git diff @SNAP@ and git status", prompt)
+            self.assertIn("does not show untracked files", prompt)
 
     def test_review_first_iteration_prompts_include_untracked_files(self):
         # Regression: determine-scope admits branches whose only changes are
@@ -645,26 +650,18 @@ class WorkflowStructureTest(InstallerTestCase):
         # files. Every first-iteration prompt must also ask for git status so
         # untracked files are in the review scope on the first pass too.
         self.assertEqual(self.install(), 0)
-        parsed = self.parsed_workflow(".config/spec-kit-llm-client/review-pipeline.yml")
-        runs: list[str] = []
-
-        def collect(steps):
-            for step in steps:
-                run = step.get("run")
-                if isinstance(run, str):
-                    runs.append(run)
-                for branch in ("steps", "then", "else"):
-                    nested = step.get(branch)
-                    if isinstance(nested, list):
-                        collect(nested)
-
-        collect(parsed["steps"])
-        total = sum(
-            run.count("review only that git diff and also run git status")
-            for run in runs
-        )
+        prompts = self.home / ".config/spec-kit-llm-client/prompts/review"
+        total = 0
+        for name in ("srp-review", "bug-review", "review", "comment-review"):
+            prompt = (prompts / f"{name}.md").read_text()
+            self.assertIn("review only that git diff and also run git status", prompt)
+            total += prompt.count("review only that git diff and also run git status")
         self.assertEqual(total, 4)
-        self.assertIn("new files appear only in git status", " ".join(runs))
+        for name in ("srp-review", "bug-review", "review", "comment-review"):
+            self.assertIn(
+                "new files appear only in git status",
+                (prompts / f"{name}.md").read_text(),
+            )
 
     def test_review_workflow_order(self):
         self.assertEqual(self.install(), 0)
@@ -721,7 +718,10 @@ class WorkflowStructureTest(InstallerTestCase):
         )
         self.assertIn("- id: sync-adr", workflow)
         self.assertIn("deviation.md", workflow)
-        self.assertIn("## Amendments", workflow)
+        sync_prompt = (
+            self.home / ".config/spec-kit-llm-client/prompts/adr/sync-adr.md"
+        ).read_text()
+        self.assertIn("## Amendments", sync_prompt)
         block = workflow.split("- id: sync-adr", 1)[1].split("\n  - id:", 1)[0]
         self.assertIn("set -euo pipefail", block)
         self.assertIn('save_adr.py" sync', block)
@@ -915,7 +915,12 @@ class WorkflowStructureTest(InstallerTestCase):
         srp_loop = self.find_step(parsed["steps"], "srp-loop")
         self.assertIsNotNone(srp_loop)
         self.assertEqual(srp_loop["max_iterations"], 5)
-        self.assertIn("SRP: FIX", self.find_step(parsed["steps"], "srp-review")["run"])
+        srp_review_run = self.find_step(parsed["steps"], "srp-review")["run"]
+        self.assertIn("--prompt-file", srp_review_run)
+        self.assertIn(
+            "SRP: FIX",
+            (self.home / ".config/spec-kit-llm-client/prompts/adr/srp-review.md").read_text(),
+        )
         self.assertIsNotNone(self.find_step(parsed["steps"], "srp-fix-branch"))
         implement_index = workflow.index("- id: implement")
         srp_index = workflow.index("- id: srp-loop")
@@ -941,7 +946,11 @@ class WorkflowStructureTest(InstallerTestCase):
         )["run"]
         self.assertIn('check_implementation.py" check "{{ inputs.adr_dir }}"', implement_verify_run)
         retry_run = self.find_step(self.parsed_workflow()["steps"], "implement-retry")["run"]
-        self.assertIn('"You didn\'t do changes."', retry_run)
+        self.assertIn("--prompt-file", retry_run)
+        self.assertIn(
+            "You didn't do changes.",
+            (self.home / ".config/spec-kit-llm-client/prompts/adr/implement-retry.md").read_text(),
+        )
         self.assertIn("IMPLEMENT OK: changes present", workflow)
         implement_pass_run = self.find_step(
             self.parsed_workflow()["steps"], "implement-pass-check"
@@ -997,8 +1006,12 @@ class WorkflowStructureTest(InstallerTestCase):
         bug_loop = self.find_step(parsed["steps"], "bug-loop")
         self.assertIsNotNone(bug_loop)
         self.assertEqual(bug_loop["max_iterations"], 5)
-        self.assertIn("BUGS: FIX", self.find_step(parsed["steps"], "bug-review")["run"])
-        self.assertIn("bug-review-N.md", self.find_step(parsed["steps"], "bug-review")["run"])
+        bug_review_run = self.find_step(parsed["steps"], "bug-review")["run"]
+        self.assertIn("--prompt-file", bug_review_run)
+        self.assertIn(
+            "BUGS: FIX",
+            (self.home / ".config/spec-kit-llm-client/prompts/adr/bug-review.md").read_text(),
+        )
         self.assertIsNotNone(self.find_step(parsed["steps"], "bug-fix-branch"))
         srp_check_index = workflow.index("- id: srp-pass-check")
         bug_index = workflow.index("- id: bug-loop")
@@ -1034,9 +1047,13 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertIsNotNone(comment_loop)
         self.assertEqual(comment_loop["max_iterations"], 5)
         comment_run = self.find_step(parsed["steps"], "comment-review")["run"]
-        self.assertIn("VERDICT: FIX", comment_run)
-        self.assertIn("Why a reader would be misled:", comment_run)
-        self.assertIn("Verdict: COMMENT | REFACTOR", comment_run)
+        self.assertIn("--prompt-file", comment_run)
+        comment_prompt = (
+            self.home / ".config/spec-kit-llm-client/prompts/adr/comment-review.md"
+        ).read_text()
+        self.assertIn("VERDICT: FIX", comment_prompt)
+        self.assertIn("Why a reader would be misled:", comment_prompt)
+        self.assertIn("Verdict: COMMENT | REFACTOR", comment_prompt)
         self.assertIsNotNone(self.find_step(parsed["steps"], "comment-fix-branch"))
         pass_check_index = workflow.index("- id: pass-check")
         comment_index = workflow.index("- id: comment-review-loop")
@@ -1146,6 +1163,7 @@ class UninstallTest(InstallerTestCase):
             ".config/opencode/scripts/agent_call.py",
             ".config/spec-kit-llm-client/adr-pipeline.yml",
             ".config/spec-kit-llm-client/config.example.yml",
+            ".config/spec-kit-llm-client/prompts/review/srp-review.md",
             ".config/spec-kit-llm-client/install-path.txt",
             ".local/bin/spec-run",
         ):
