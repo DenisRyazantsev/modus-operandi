@@ -8,32 +8,25 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from . import REPO_ROOT, InstallError, Paths, installer, paths, register, uninstall
+from . import InstallError, Paths, installer, paths, uninstall
 
 
 def print_instructions(layout: Paths) -> None:
     print(
         "\nDone. Next steps:\n"
         "  1. Edit {} to choose your models "
-        "(planner = strong, executor = cheap), then rerun install.py.\n"
-        "  2. In any project run (no `specify init` or --register needed):\n"
+        "(planner = strong, executor = cheap), then rerun install.py, or\n"
+        "     re-apply the changes in one go with `spec-run edit`.\n"
+        "  2. In any project run (no `specify init` required):\n"
         '       spec-run adr "your feature description"\n'
         "     or review your code (default: whole codebase):\n"
         "       spec-run review\n"
         "     or review only the changes between branches:\n"
         "       spec-run review --branch-diff\n"
-        "     or, from a Spec Kit project (run 'specify init' first), install by ID once:\n"
-        "       python3 {} --register\n"
-        "     and then:\n"
-        '       specify workflow run adr-pipeline -i feature="..."\n'
-        "     or review your code (default: whole codebase):\n"
-        "       specify workflow run review-pipeline\n"
-        "     or review only the changes between branches:\n"
-        "       specify workflow run review-pipeline -i branch-diff=true\n"
+        "     or open the installed config in your editor and apply it on exit:\n"
+        "       spec-run edit\n"
         "  3. If the run pauses at a gate, review and resume with:\n"
-        "       specify workflow resume <run_id>\n".format(
-            layout["config"], REPO_ROOT / "install.py"
-        )
+        "       specify workflow resume <run_id>\n".format(layout["config"])
     )
 
 
@@ -51,34 +44,25 @@ def print_path_warning(layout: Paths) -> None:
         )
 
 
-def print_register_usage() -> None:
-    print('run them with: specify workflow run adr-pipeline -i feature="..."')
-    print("or: specify workflow run review-pipeline -i branch-diff=true")
-    print("    (default: whole codebase; branch-diff=true: only the changes")
-    print("    between the current branch and the default branch)")
-
-
 def validate_args(args: argparse.Namespace) -> None:
     # Parse-time flag-combination rules; the dispatcher assumes a valid
     # combination.
-    if args.register:
-        if args.home:
-            raise InstallError("--register cannot be combined with --home")
-        if args.uninstall or args.update:
-            raise InstallError("--register cannot be combined with --uninstall/--update")
     if args.uninstall and args.update:
         raise InstallError("--uninstall cannot be combined with --update")
+    if args.apply and (args.uninstall or args.update):
+        raise InstallError("--apply cannot be combined with --uninstall/--update")
 
 
 def dispatch(args: argparse.Namespace) -> None:
     home = Path(args.home).expanduser() if args.home else Path.home()
     layout = paths.build_paths(home)
-    if args.register:
-        register.do_register(layout)
-        print_register_usage()
-        return
     if args.uninstall:
         uninstall.do_uninstall(layout, args.yes)
+        return
+    if args.apply:
+        # Quiet re-apply of the current config (used by `spec-run edit`): no
+        # status lines, path warning or next-steps.
+        installer.apply(layout)
         return
     print("spec-kit-llm-client installer")
     installer.install(layout, args.update)
@@ -98,9 +82,9 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     parser.add_argument("--uninstall", action="store_true", help="remove installed files")
     parser.add_argument(
-        "--register",
+        "--apply",
         action="store_true",
-        help="install the workflow by ID into the current Spec Kit project",
+        help="re-render everything from the current config (used by `spec-run edit`)",
     )
     parser.add_argument(
         "--home",

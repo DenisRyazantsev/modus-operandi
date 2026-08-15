@@ -2,13 +2,16 @@
 """spec-run - global launcher for the spec-kit-llm-client pipelines.
 
 Installed once into ~/.local/bin by install.py and callable from any project
-directory, without `specify init` or `--register`. It delegates to the
-installed run-pipeline.py wrapper with the absolute workflow path, so runs
-keep the timestamps, live step output, run statistics and the victory sound.
+directory, without `specify init` required. It delegates to the installed
+run-pipeline.py wrapper with the absolute workflow path, so runs keep the
+timestamps, live step output, run statistics and the victory sound.
+`spec-run edit` opens the installed config.yml in your terminal editor and
+re-applies it on exit, so the next run already uses the new settings.
 
 Usage:
   spec-run adr "feature description" [-i key=value ...]
   spec-run review [--branch-diff]
+  spec-run edit
   spec-run --help | -h
 
 Examples:
@@ -16,18 +19,24 @@ Examples:
   spec-run adr "build a kanban board" -i task_id=kanban
   spec-run review
   spec-run review --branch-diff
+  spec-run edit
 """
 
 from __future__ import annotations
 
 import os
+import shlex
+import shutil
+import subprocess
 import sys
 
 # Absolute paths baked in at install time; rerun install.py after moving
-# ~/.config/spec-kit-llm-client or ~/.config/opencode.
+# ~/.config/spec-kit-llm-client, ~/.config/opencode or the repo clone.
 RUN_PIPELINE = "${run_pipeline}"
 ADR_WORKFLOW = "${adr_workflow}"
 REVIEW_WORKFLOW = "${review_workflow}"
+INSTALL_PY = "${install_py}"
+CONFIG = "${config}"
 
 USAGE = """Usage: spec-run <subcommand> [args]
 
@@ -40,6 +49,10 @@ USAGE = """Usage: spec-run <subcommand> [args]
       Review the project code (default: the whole codebase). With --branch-diff
       only the changes between the current branch and the default branch.
 
+  spec-run edit
+      Open the installed config.yml in your terminal editor and re-apply it
+      on exit (editor: VISUAL, then EDITOR, then nano, then vi).
+
   spec-run --help | -h
       Print this help and exit 0.
 
@@ -48,15 +61,17 @@ Examples:
   spec-run adr "build a kanban board" -i task_id=kanban
   spec-run review
   spec-run review --branch-diff
+  spec-run edit
 """
 
 
 def build_command(argv: list[str]) -> list[str]:
     """Map spec-run argv to the command to execute (pure dispatch).
 
-    Raises HelpRequested for `--help`/`-h` and InvalidInvocation for an
-    unusable invocation; it never prints anything, so mapping stays separate
-    from presentation. The caller owns the usage output and the exit code.
+    Raises HelpRequested for `--help`/`-h`, EditRequested for `edit` and
+    InvalidInvocation for an unusable invocation; it never prints anything, so
+    mapping stays separate from presentation. The caller owns the usage output
+    and the exit code.
     """
     if not argv:
         raise InvalidInvocation
@@ -67,7 +82,33 @@ def build_command(argv: list[str]) -> list[str]:
         return _build_adr_command(rest)
     if head == "review":
         return _build_review_command(rest)
+    if head == "edit":
+        # `edit` takes no arguments: anything after the subcommand is ignored.
+        # Editor resolution is environment-dependent (os.environ, shutil.which)
+        # and belongs to the edit execution path, not to this pure mapping; a
+        # signal keeps the subcommand -> execution-path decision in one place.
+        raise EditRequested
     raise InvalidInvocation
+
+
+def _resolve_editor() -> list[str]:
+    # VISUAL/EDITOR values may carry arguments (`code --wait`), so they are
+    # split like a shell command line. A malformed value (e.g. an unbalanced
+    # quote) is skipped with a warning instead of crashing with a traceback.
+    for var in ("VISUAL", "EDITOR"):
+        value = os.environ.get(var)
+        if not value:
+            continue
+        try:
+            return shlex.split(value)
+        except ValueError as exc:
+            print(
+                "warning: {} is malformed ({}); skipping it".format(var, exc),
+                file=sys.stderr,
+            )
+    if shutil.which("nano"):
+        return ["nano"]
+    return ["vi"]
 
 
 def _build_adr_command(rest: list[str]) -> list[str]:
@@ -134,11 +175,56 @@ class InvalidInvocation(Exception):
     non-zero."""
 
 
+class EditRequested(Exception):
+    """build_command saw `edit`: open the installed config in the editor and
+    re-apply it on exit (handled by the caller through _run_edit)."""
+
+
 def print_usage(stream=None) -> None:
     """Print the usage text; defaults to stdout, pass sys.stderr for errors."""
     if stream is None:
         stream = sys.stdout
     print(USAGE, file=stream)
+
+
+def _launch_editor(editor_cmd: list[str]) -> int | None:
+    # The editor runs as a child process inheriting stdin/stdout so
+    # full-screen editors keep working. Returns the editor's exit code, or
+    # None when the editor could not be started (an error is printed then);
+    # None is distinguishable from an editor that ran and exited with 1.
+    try:
+        return subprocess.run(editor_cmd, check=False).returncode
+    except OSError as exc:
+        print(
+            "error: cannot start editor {}: {}".format(editor_cmd[0], exc),
+            file=sys.stderr,
+        )
+        return None
+
+
+def _apply_config() -> int:
+    # Re-apply the (possibly edited) config through the repo installer: it
+    # reloads and validates config.yml, re-renders every artifact and verifies
+    # the result, without the install-time prerequisite/dependency checks or
+    # the next-steps output. A config that fails validation surfaces here and
+    # aborts `edit` with the installer's exit code.
+    result = subprocess.run([sys.executable, INSTALL_PY, "--apply"], check=False)
+    if result.returncode == 0:
+        print("config applied - agents, scripts and workflows re-rendered")
+    return result.returncode
+
+
+def _run_edit() -> int:
+    # `edit` takes no arguments; the config path is baked in at install time.
+    # Resolve and run the editor, then re-apply the config whenever the editor
+    # actually launched. The editor's own exit code does not gate the apply: a
+    # user can save a valid edit and still close the editor non-zero (vim
+    # :cq, ...), and `--apply` re-validates the config anyway, failing loudly
+    # on an invalid edit. Only a failure to start the editor aborts.
+    editor_cmd = _resolve_editor() + [CONFIG]
+    if _launch_editor(editor_cmd) is None:
+        return 1
+    return _apply_config()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -152,6 +238,8 @@ def main(argv: list[str] | None = None) -> int:
     except InvalidInvocation:
         print_usage(sys.stderr)
         return 1
+    except EditRequested:
+        return _run_edit()
     try:
         # os.execv replaces this process with run-pipeline.py, so its live
         # output, timestamps and exit code pass through unchanged; it returns

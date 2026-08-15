@@ -14,7 +14,7 @@ specify workflow run ~/.config/spec-kit-llm-client/adr-pipeline.yml -i feature="
 ```
 
 Or use the installed global launcher `spec-run` (also from any project, no
-`specify init` or `--register` required):
+`specify init` required):
 
 ```
 spec-run adr "build a kanban board"
@@ -138,13 +138,6 @@ specify workflow run ~/.config/spec-kit-llm-client/adr-pipeline.yml -i feature="
 `task_id` is required: it names the artifacts (`.workflow/tasks/<task_id>/`) and the
 warm sessions (`.workflow/sessions-<task_id>.json`). Use a short, unique id per task —
 running a different task with the same `task_id` reuses that task's sessions.
-
-Optional per-project registration (requires `specify init` in the project first):
-
-```
-python3 <repo>/install.py --register
-specify workflow run adr-pipeline -i feature="describe the feature"
-```
 
 Both commands create the task artifacts in `.workflow/tasks/<task_id>/` (add to your
 `.gitignore` — see `templates/gitignore.snippet`).
@@ -320,8 +313,7 @@ python3 install.py --uninstall
 
 Removes the generated agents, script, workflow and example config (keeps
 `config.yml`), then asks whether to uninstall `specify-cli`/PyYAML (`--yes` answers
-yes). Projects where you ran `--register` keep their installed copy — remove it with
-`specify workflow remove adr-pipeline`.
+yes).
 
 ## Troubleshooting
 
@@ -349,7 +341,6 @@ spec_utils/
   cli.py                    argument parsing, flag validation, --update diff
   config.py                 paths, defaults, config.yml loading and validation
   deps.py                   python/uv/pip/specify/pyyaml install AND uninstall
-  register.py               --register: install workflows into a Spec Kit project
   uninstall.py              --uninstall: remove installed files and dependencies
   render.py                 render agents, scripts and workflows
   verify.py                 validate the installed pipeline

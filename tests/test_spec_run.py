@@ -21,6 +21,8 @@ _TEMPLATE = (REPO_ROOT / "templates" / "spec_run.py.tpl").read_text(encoding="ut
 RUN_PIPELINE = "/home/user/.config/opencode/scripts/run-pipeline.py"
 ADR_WORKFLOW = "/home/user/.config/spec-kit-llm-client/adr-pipeline.yml"
 REVIEW_WORKFLOW = "/home/user/.config/spec-kit-llm-client/review-pipeline.yml"
+CONFIG = "/home/user/.config/spec-kit-llm-client/config.yml"
+INSTALL_PY = "/home/user/spec-kit-llm-client/install.py"
 
 
 def load_spec_run() -> types.ModuleType:
@@ -28,6 +30,8 @@ def load_spec_run() -> types.ModuleType:
         run_pipeline=RUN_PIPELINE,
         adr_workflow=ADR_WORKFLOW,
         review_workflow=REVIEW_WORKFLOW,
+        config=CONFIG,
+        install_py=INSTALL_PY,
     )
     tmpdir = Path(tempfile.mkdtemp(prefix="spec_run_test_"))
     path = tmpdir / "spec_run.py"
@@ -109,6 +113,66 @@ class BuildCommandTest(unittest.TestCase):
             for arg in self.mod.build_command(argv):
                 self.assertNotIn('"', arg)
 
+    def test_edit_signals_edit_requested(self):
+        # build_command only dispatches; the editor resolution happens in the
+        # edit execution path (_run_edit), so `edit` maps to a signal, not to
+        # an argv list.
+        with self.assertRaises(self.mod.EditRequested):
+            self.mod.build_command(["edit"])
+
+    def test_edit_ignores_extra_arguments(self):
+        # `edit` takes no arguments: extra argv elements must not change the
+        # dispatch decision.
+        with self.assertRaises(self.mod.EditRequested):
+            self.mod.build_command(["edit", "--help", "stray"])
+
+    def test_editor_prefers_visual_over_editor(self):
+        with mock.patch.dict(
+            "os.environ",
+            {"VISUAL": "code --wait", "EDITOR": "vim"},
+            clear=True,
+        ):
+            self.assertEqual(self.mod._resolve_editor(), ["code", "--wait"])
+
+    def test_editor_uses_editor_when_visual_unset(self):
+        with mock.patch.dict("os.environ", {"EDITOR": "emacs -nw"}, clear=True):
+            self.assertEqual(self.mod._resolve_editor(), ["emacs", "-nw"])
+
+    def test_editor_falls_back_to_nano_then_vi(self):
+        with (
+            mock.patch.dict("os.environ", {}, clear=True),
+            mock.patch.object(self.mod.shutil, "which", side_effect=lambda name: None),
+        ):
+            self.assertEqual(self.mod._resolve_editor(), ["vi"])
+        with (
+            mock.patch.dict("os.environ", {}, clear=True),
+            mock.patch.object(
+                self.mod.shutil, "which", side_effect=lambda name: "/usr/bin/" + name
+            ),
+        ):
+            self.assertEqual(self.mod._resolve_editor(), ["nano"])
+
+    def test_editor_malformed_visual_falls_back_to_editor(self):
+        with (
+            mock.patch.dict(
+                "os.environ", {"VISUAL": 'code --wait"', "EDITOR": "vim"}, clear=True
+            ),
+            mock.patch("sys.stderr", io.StringIO()) as err,
+        ):
+            self.assertEqual(self.mod._resolve_editor(), ["vim"])
+        self.assertIn("malformed", err.getvalue())
+
+    def test_editor_malformed_value_falls_back_to_default(self):
+        # An unbalanced quote makes shlex.split raise ValueError; the value is
+        # skipped (with a warning) instead of crashing with a traceback.
+        with (
+            mock.patch.dict("os.environ", {"EDITOR": "emacs '"}, clear=True),
+            mock.patch.object(self.mod.shutil, "which", return_value="/usr/bin/nano"),
+            mock.patch("sys.stderr", io.StringIO()) as err,
+        ):
+            self.assertEqual(self.mod._resolve_editor(), ["nano"])
+        self.assertIn("malformed", err.getvalue())
+
     def test_build_command_is_pure(self):
         # Mapping must never print: help/invalid are signalled by exceptions,
         # and the usage text lives in print_usage, so build_command writes to
@@ -126,6 +190,8 @@ class BuildCommandTest(unittest.TestCase):
                 self.mod.build_command([])
             with self.assertRaises(self.mod.InvalidInvocation):
                 self.mod.build_command(["frobnicate"])
+            with self.assertRaises(self.mod.EditRequested):
+                self.mod.build_command(["edit"])
         self.assertEqual(stdout.getvalue(), "")
         self.assertEqual(stderr.getvalue(), "")
 
@@ -212,6 +278,83 @@ class MainTest(unittest.TestCase):
             mock.patch("sys.stderr", io.StringIO()) as err,
         ):
             rc = mod.main(["review"])
+        self.assertEqual(rc, 1)
+        self.assertIn("error:", err.getvalue())
+
+    def test_main_edit_runs_editor_then_installer(self):
+        mod = load_spec_run()
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, check=True):
+            calls.append(cmd)
+            return types.SimpleNamespace(returncode=0)
+
+        with (
+            mock.patch.dict("os.environ", {}, clear=True),
+            mock.patch.object(mod.shutil, "which", return_value="/usr/bin/nano"),
+            mock.patch("subprocess.run", side_effect=fake_run),
+            mock.patch("sys.stdout", io.StringIO()),
+        ):
+            rc = mod.main(["edit"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls, [["nano", CONFIG], [sys.executable, INSTALL_PY, "--apply"]])
+
+    def test_main_edit_propagates_installer_exit_code(self):
+        mod = load_spec_run()
+        results = iter(
+            [types.SimpleNamespace(returncode=0), types.SimpleNamespace(returncode=3)]
+        )
+
+        def fake_run(cmd, check=True):
+            return next(results)
+
+        with (
+            mock.patch.dict("os.environ", {}, clear=True),
+            mock.patch.object(mod.shutil, "which", return_value="/usr/bin/nano"),
+            mock.patch("subprocess.run", side_effect=fake_run),
+            mock.patch("sys.stdout", io.StringIO()),
+        ):
+            rc = mod.main(["edit"])
+        self.assertEqual(rc, 3)
+
+    def test_main_edit_applies_after_nonzero_editor_exit(self):
+        # A user can save a valid edit and still close the editor non-zero
+        # (vim :cq, ...); the config must still be re-applied then.
+        mod = load_spec_run()
+        calls: list[list[str]] = []
+        results = iter(
+            [types.SimpleNamespace(returncode=7), types.SimpleNamespace(returncode=0)]
+        )
+
+        def fake_run(cmd, check=True):
+            calls.append(cmd)
+            return next(results)
+
+        with (
+            mock.patch.dict("os.environ", {}, clear=True),
+            mock.patch.object(mod.shutil, "which", return_value="/usr/bin/nano"),
+            mock.patch("subprocess.run", side_effect=fake_run),
+            mock.patch("sys.stdout", io.StringIO()),
+        ):
+            rc = mod.main(["edit"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls, [["nano", CONFIG], [sys.executable, INSTALL_PY, "--apply"]])
+
+    def test_main_edit_editor_start_failure_returns_nonzero(self):
+        mod = load_spec_run()
+
+        def fake_run(cmd, check=True):
+            if cmd[0] == "nano":
+                raise OSError("no such file")
+            return types.SimpleNamespace(returncode=0)
+
+        with (
+            mock.patch.dict("os.environ", {}, clear=True),
+            mock.patch.object(mod.shutil, "which", return_value="/usr/bin/nano"),
+            mock.patch("subprocess.run", side_effect=fake_run),
+            mock.patch("sys.stderr", io.StringIO()) as err,
+        ):
+            rc = mod.main(["edit"])
         self.assertEqual(rc, 1)
         self.assertIn("error:", err.getvalue())
 

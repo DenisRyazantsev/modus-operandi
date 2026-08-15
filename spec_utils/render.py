@@ -163,8 +163,10 @@ def render_review_workflow(cfg: dict[str, Any], paths: Paths) -> None:
 def render_spec_run(cfg: dict[str, Any], paths: Paths) -> None:
     # Global launcher: a thin entry point installed once into the user bin
     # directory and callable from any project, delegating to the installed
-    # run-pipeline.py wrapper. The absolute paths to the wrapper and both
-    # workflows are baked in at install time.
+    # run-pipeline.py wrapper. The absolute paths to the wrapper, both
+    # workflows, the installed config.yml and the repo's install.py (the last
+    # two power `spec-run edit`'s editor-open and re-apply steps) are baked in
+    # at install time.
     render_file(
         TEMPLATES_DIR / "spec_run.py.tpl",
         paths["spec_run"],
@@ -172,6 +174,8 @@ def render_spec_run(cfg: dict[str, Any], paths: Paths) -> None:
             "run_pipeline": str(paths["run_pipeline"]),
             "adr_workflow": str(paths["workflow"]),
             "review_workflow": str(paths["review_workflow"]),
+            "config": str(paths["config"]),
+            "install_py": str(REPO_ROOT / "install.py"),
         },
     )
     paths["spec_run"].chmod(0o755)

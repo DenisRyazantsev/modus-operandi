@@ -22,10 +22,13 @@ def ensure_config(paths: Paths) -> None:
         print("created {} with defaults (edit it to change models)".format(paths["config"]))
 
 
-def install(paths: Paths, update: bool) -> None:
-    verify.check_prerequisites()
-    deps.ensure_pyyaml()
-    deps.ensure_specify()
+def apply(paths: Paths, update: bool = False) -> None:
+    # Re-render every artifact from the current config without the install-time
+    # prerequisite/dependency checks and without the next-steps output: this is
+    # the `install.py --apply` mode used by `spec-run edit` after the user
+    # leaves the editor. The config is loaded and validated again, so an
+    # invalid edit fails here (raised as InstallError) instead of silently
+    # applying stale artifacts.
     for directory in (paths["agents"], paths["scripts"], paths["config_dir"], paths["user_bin"]):
         directory.mkdir(parents=True, exist_ok=True)
     ensure_config(paths)
@@ -45,3 +48,10 @@ def install(paths: Paths, update: bool) -> None:
     render.render_review_workflow(cfg, paths)
     render.render_spec_run(cfg, paths)
     verify.verify_install(paths)
+
+
+def install(paths: Paths, update: bool) -> None:
+    verify.check_prerequisites()
+    deps.ensure_pyyaml()
+    deps.ensure_specify()
+    apply(paths, update)

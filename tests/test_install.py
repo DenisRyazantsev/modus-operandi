@@ -4,7 +4,6 @@ Run with: python3 -m unittest tests.test_install  (from the repo root)
 All installs go through --home <tempdir>; external commands are faked.
 """
 
-import contextlib
 import io
 import os
 import sys
@@ -45,8 +44,6 @@ def make_run(records=None):
             return FakeResult(1, "", "Error: Required input 'feature' not provided.\n")
         if cmd[-3:] == ["opencode", "agent", "list"]:
             return FakeResult(0, "build (primary)\nplanner (subagent)\nexecutor (subagent)\n")
-        if cmd[1:3] == ["workflow", "add"]:
-            return FakeResult(0)
         return FakeResult(0)
 
     return _run
@@ -58,16 +55,6 @@ def which_fake(name):
         "python3": "/usr/bin/python3",
         "specify": "/usr/bin/specify",
     }.get(name)
-
-
-@contextlib.contextmanager
-def _chdir(path):
-    cwd = os.getcwd()
-    os.chdir(path)
-    try:
-        yield
-    finally:
-        os.chdir(cwd)
 
 
 class InstallerTest(unittest.TestCase):
@@ -144,43 +131,6 @@ class InstallerTest(unittest.TestCase):
         self.assertEqual(self.install(), 0)
         self.assertIn("# USER EDITED", self.read_config())
         self.assertIn("my-model", self.read_config())
-
-    def test_register_is_idempotent(self):
-        self.assertEqual(self.install(), 0)
-        workflow = self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"
-        project = tempfile.TemporaryDirectory()
-        self.addCleanup(project.cleanup)
-        (Path(project.name) / ".specify").mkdir()
-        with (
-            mock.patch.object(Path, "home", return_value=self.home),
-            _chdir(Path(project.name)),
-        ):
-            self.assertEqual(self.run_main(["--register"])[0], 0)
-            self.assertEqual(self.run_main(["--register"])[0], 0)
-        adds = [cmd for cmd in self.records if cmd[1:3] == ["workflow", "add"]]
-        # Two --register invocations x two workflows (adr + review).
-        self.assertEqual(len(adds), 4)
-        self.assertEqual(len([c for c in adds if "adr-pipeline.yml" in c[3]]), 2)
-        self.assertEqual(len([c for c in adds if "review-pipeline.yml" in c[3]]), 2)
-        self.assertTrue(workflow.exists())
-        review = self.home / ".config/spec-kit-llm-client/review-pipeline.yml"
-        self.assertTrue(review.exists())
-
-    def test_register_requires_project(self):
-        self.assertEqual(self.install(), 0)
-        project = tempfile.TemporaryDirectory()
-        self.addCleanup(project.cleanup)
-        with (
-            mock.patch.object(Path, "home", return_value=self.home),
-            _chdir(Path(project.name)),
-        ):
-            rc, err = self.run_main(["--register"])
-        self.assertEqual(rc, 1)
-        self.assertIn("specify init", err)
-
-    def test_register_conflicts_with_home(self):
-        rc, _ = self.run_main(["--home", str(self.home), "--register"])
-        self.assertEqual(rc, 1)
 
     def test_missing_opencode_fails_with_message(self):
         def which(name):
@@ -824,13 +774,53 @@ class InstallerTest(unittest.TestCase):
     def test_flag_conflicts_rejected(self):
         cases = [
             ["--uninstall", "--update"],
-            ["--register", "--uninstall"],
-            ["--register", "--update"],
+            ["--apply", "--uninstall"],
+            ["--apply", "--update"],
         ]
         for extra in cases:
             rc, err = self.run_main(["--home", str(self.home), *extra])
             self.assertEqual(rc, 1, extra)
             self.assertIn("error:", err)
+
+    def test_apply_rerenders_from_current_config(self):
+        self.assertEqual(self.install(), 0)
+        self.write_config(
+            self.read_config().replace("max_fix_iterations: 5", "max_fix_iterations: 9")
+        )
+        stdout = io.StringIO()
+        with mock.patch("sys.stdout", stdout):
+            rc = self.run_main(["--home", str(self.home), "--apply"])[0]
+        self.assertEqual(rc, 0)
+        # --apply is quiet: no status lines, path warning or next-steps.
+        self.assertNotIn("Next steps", stdout.getvalue())
+        self.assertNotIn("installation verified", stdout.getvalue())
+        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("max_iterations: 9", workflow)
+
+    def test_apply_invalid_config_fails(self):
+        self.assertEqual(self.install(), 0)
+        self.write_config(
+            self.read_config().replace("max_fix_iterations: 5", "max_fix_iterations: true")
+        )
+        rc, err = self.run_main(["--home", str(self.home), "--apply"])
+        self.assertEqual(rc, 1)
+        self.assertIn("max_fix_iterations must be an integer", err)
+
+    def test_apply_skips_prerequisite_checks(self):
+        # --apply re-renders from the existing config without the install-time
+        # python3/opencode presence checks, so it works even when opencode is
+        # not on PATH (the verify subprocesses still run, faked here).
+        self.assertEqual(self.install(), 0)
+
+        def which_no_opencode(name):
+            if name == "opencode":
+                return None
+            return which_fake(name)
+
+        rc, err = self.run_main(["--home", str(self.home), "--apply"], which=which_no_opencode)
+        self.assertEqual(rc, 0, err)
 
     def test_specify_candidates_finds_local_bin(self):
         (self.home / ".local" / "bin").mkdir(parents=True)
