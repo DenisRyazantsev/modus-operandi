@@ -43,6 +43,11 @@ steps:
 
   - id: determine-scope
     type: shell
+    # `git diff --quiet` ignores untracked files, so a branch (or fresh repo)
+    # containing only NEW files would falsely report "no changes"; the
+    # untracked-file check counts them as changes too. (YAML comments do not
+    # survive rendering into the installed workflow, and #-comments inside the
+    # folded >- run block would swallow the rest of the script.)
     run: >-
       set -euo pipefail;
       if [ "{{ inputs.branch-diff }}" = "true" ]; then
@@ -59,9 +64,6 @@ steps:
       echo "WARNING: no main/master branch found; reviewing against HEAD";
       base="HEAD";
       fi;
-      # `git diff --quiet` ignores untracked files, so a branch (or fresh
-      # repo) containing only NEW files would falsely report "no changes";
-      # count untracked files as changes too.
       if git diff "$base" --quiet && [ -z "$(git ls-files --others --exclude-standard)" ]; then
       echo "error: no changes against $base - nothing to review" >&2; exit 1;
       fi;
@@ -92,7 +94,7 @@ steps:
           "Re-review for SRP ONLY. The executor fixed the findings from the latest srp-review file. Verify each finding is fixed and review ONLY the changes made since the previous review: run git diff $snap and git status (git diff does not show untracked files, so new files made by the executor only appear in git status). Skip files with fewer than 300 lines of code. Write {{ inputs.state_dir }}/tasks/current/srp-review-N.md (N is the next number after the existing srp-review files) with the first line exactly 'SRP: PASS' or 'SRP: FIX' followed by findings.";
           else
           "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
-          "Find SRP violations in the code: every class, function and module must have one clear responsibility, no god classes, no mixed concerns. Do not review bugs or style (a later stage does). Skip files with fewer than 300 lines of code. If {{ inputs.state_dir }}/scope.txt starts with 'branch-diff: ', review only that git diff and also run git status (git diff does not show untracked files, so new files appear only in git status — include them in the review scope). Write {{ inputs.state_dir }}/tasks/current/srp-review-N.md (N is the next number after the existing srp-review files) with the first line exactly 'SRP: PASS' or 'SRP: FIX' followed by actionable findings.";
+          "Find SRP violations in the code. Do not review bugs or style (a later stage does). Skip files with fewer than 300 lines of code. If {{ inputs.state_dir }}/scope.txt starts with 'branch-diff: ', review only that git diff and also run git status (git diff does not show untracked files, so new files appear only in git status — include them in the review scope). Write {{ inputs.state_dir }}/tasks/current/srp-review-N.md (N is the next number after the existing srp-review files) with the first line exactly 'SRP: PASS' or 'SRP: FIX' followed by actionable findings.";
           fi;
           snap=$(git stash create 2>/dev/null || true);
           [ -n "$snap" ] || snap=HEAD;

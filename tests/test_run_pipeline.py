@@ -463,8 +463,8 @@ class LiveMonitorGateTest(unittest.TestCase):
             # gate step id and the log line are all captured instead.
             self.assertEqual(captured.getvalue(), "")
             self.assertEqual(monitor.gate._gate_step_id, "adr-gate")
-            self.assertEqual(len(monitor._buffered_steps), 1)
-            self.assertEqual(monitor._buffered_logs, [("executor", "agent work")])
+            self.assertEqual(len(monitor._emitter.buffered_steps), 1)
+            self.assertEqual(monitor._emitter.buffered_logs, [("executor", "agent work")])
 
     def test_flushes_buffer_when_engine_moves_past_gate(self):
         mod = load_run_pipeline()
@@ -486,8 +486,8 @@ class LiveMonitorGateTest(unittest.TestCase):
                 with mock.patch("sys.stdout", captured):
                     monitor._poll_once()
             self.assertFalse(monitor.gate.is_open)
-            self.assertEqual(monitor._buffered_steps, [])
-            self.assertEqual(monitor._buffered_logs, [])
+            self.assertEqual(monitor._emitter.buffered_steps, [])
+            self.assertEqual(monitor._emitter.buffered_logs, [])
             self.assertIn("done", captured.getvalue())
             self.assertIn("agent work", captured.getvalue())
 
@@ -531,8 +531,8 @@ class LiveMonitorGateTest(unittest.TestCase):
                     monitor.stop()
                     monitor.join()
             self.assertFalse(monitor.gate.is_open)
-            self.assertEqual(monitor._buffered_steps, [])
-            self.assertEqual(monitor._buffered_logs, [])
+            self.assertEqual(monitor._emitter.buffered_steps, [])
+            self.assertEqual(monitor._emitter.buffered_logs, [])
             self.assertIn("done", captured.getvalue())
             self.assertIn("agent work", captured.getvalue())
 

@@ -168,6 +168,56 @@ class BuildCommandTest(unittest.TestCase):
         with self.assertRaises(self.mod.EditRequested):
             self.mod.build_command(["edit", "--help", "stray"])
 
+    def test_build_command_is_pure(self):
+        # Mapping must never print: help/invalid are signalled by exceptions,
+        # and the usage text lives in print_usage, so build_command writes to
+        # neither stream for any outcome.
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with (
+            mock.patch("sys.stdout", stdout),
+            mock.patch("sys.stderr", stderr),
+        ):
+            self.mod.build_command(["adr", "feat"])
+            self.mod.build_command(["review", "--branch-diff"])
+            with self.assertRaises(self.mod.HelpRequested):
+                self.mod.build_command(["--help"])
+            with self.assertRaises(self.mod.InvalidInvocation):
+                self.mod.build_command([])
+            with self.assertRaises(self.mod.InvalidInvocation):
+                self.mod.build_command(["frobnicate"])
+            with self.assertRaises(self.mod.EditRequested):
+                self.mod.build_command(["edit"])
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_help_signals_help_requested(self):
+        for argv in (["--help"], ["-h"]):
+            with self.assertRaises(self.mod.HelpRequested):
+                self.mod.build_command(argv)
+
+    def test_no_args_is_invalid(self):
+        with self.assertRaises(self.mod.InvalidInvocation):
+            self.mod.build_command([])
+
+    def test_unknown_subcommand_is_invalid(self):
+        with self.assertRaises(self.mod.InvalidInvocation):
+            self.mod.build_command(["frobnicate"])
+
+    def test_adr_without_feature_is_invalid(self):
+        with self.assertRaises(self.mod.InvalidInvocation):
+            self.mod.build_command(["adr"])
+
+
+class EditorResolutionTest(unittest.TestCase):
+    """The launcher's editor resolution chain: $VISUAL -> $EDITOR -> nano ->
+    vi, each candidate validated on PATH, with malformed values skipped."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.xdg = self.tmp.name
+        self.mod = load_spec_run(self.xdg)
+
     def test_editor_prefers_visual_over_editor(self):
         with mock.patch.dict(
             "os.environ",
@@ -214,45 +264,6 @@ class BuildCommandTest(unittest.TestCase):
         ):
             self.assertEqual(self.mod._resolve_editor(), ["nano"])
         self.assertIn("malformed", err.getvalue())
-
-    def test_build_command_is_pure(self):
-        # Mapping must never print: help/invalid are signalled by exceptions,
-        # and the usage text lives in print_usage, so build_command writes to
-        # neither stream for any outcome.
-        stdout, stderr = io.StringIO(), io.StringIO()
-        with (
-            mock.patch("sys.stdout", stdout),
-            mock.patch("sys.stderr", stderr),
-        ):
-            self.mod.build_command(["adr", "feat"])
-            self.mod.build_command(["review", "--branch-diff"])
-            with self.assertRaises(self.mod.HelpRequested):
-                self.mod.build_command(["--help"])
-            with self.assertRaises(self.mod.InvalidInvocation):
-                self.mod.build_command([])
-            with self.assertRaises(self.mod.InvalidInvocation):
-                self.mod.build_command(["frobnicate"])
-            with self.assertRaises(self.mod.EditRequested):
-                self.mod.build_command(["edit"])
-        self.assertEqual(stdout.getvalue(), "")
-        self.assertEqual(stderr.getvalue(), "")
-
-    def test_help_signals_help_requested(self):
-        for argv in (["--help"], ["-h"]):
-            with self.assertRaises(self.mod.HelpRequested):
-                self.mod.build_command(argv)
-
-    def test_no_args_is_invalid(self):
-        with self.assertRaises(self.mod.InvalidInvocation):
-            self.mod.build_command([])
-
-    def test_unknown_subcommand_is_invalid(self):
-        with self.assertRaises(self.mod.InvalidInvocation):
-            self.mod.build_command(["frobnicate"])
-
-    def test_adr_without_feature_is_invalid(self):
-        with self.assertRaises(self.mod.InvalidInvocation):
-            self.mod.build_command(["adr"])
 
 
 class PrintUsageTest(unittest.TestCase):

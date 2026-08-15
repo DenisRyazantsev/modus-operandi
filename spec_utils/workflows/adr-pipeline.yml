@@ -278,13 +278,11 @@ steps:
         run: >-
           SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
           "$SKLC_SCRIPTS_DIR/run-agent.sh" planner
-          "Review the git changes for SRP violations ONLY: the single-responsibility
-          principle — every class, function and module must have one clear
-          responsibility, with no god classes/functions and no mixed concerns in one
-          unit. Do NOT review ADR compliance, tests, or any other quality aspect
-          (a later stage does that). Run git status, then git diff HEAD (includes
-          staged changes). Write {{ inputs.state_dir }}/tasks/current/srp-review-N.md
-          (N is the next number after the existing srp-review files) with the first
+          "Review the git changes for SRP violations ONLY. Do NOT review ADR
+          compliance, tests, or any other quality aspect (a later stage does that).
+          Run git status, then git diff HEAD (includes staged changes). Write
+          {{ inputs.state_dir }}/tasks/current/srp-review-N.md (N is the next number
+          after the existing srp-review files) with the first
           line exactly 'SRP: PASS' or 'SRP: FIX' followed by actionable findings."
 
       - id: srp-verdict

@@ -205,6 +205,29 @@ def existing_run_ids(state_dir: Path) -> set[str]:
         return set()
 
 
+class RunIdDiscoverer:
+    """Find the run id of the workflow this wrapper started.
+
+    `specify workflow run` prints "Run ID: <id>" only AFTER the workflow
+    finishes, so during the run the id can only come from the run directory
+    that appeared under .specify/workflows/runs/ since the wrapper started.
+    The prior-run snapshot (taken BEFORE the workflow starts) is the
+    baseline: everything newer than it belongs to this invocation. Guessing
+    by newest mtime is not reliable either — a resumed run keeps its
+    original mtime, and a concurrent run could be newer.
+    """
+
+    def __init__(self, state_dir: Path, prior_runs: set[str]) -> None:
+        self._state_dir = state_dir
+        self._prior_runs = prior_runs
+
+    def discover(self) -> str:
+        """Return the id of the first new run directory, or "" when none yet."""
+        for name in sorted(existing_run_ids(self._state_dir) - self._prior_runs):
+            return name
+        return ""
+
+
 class StepResultPoller:
     """Polls state.json for step results that finished since the last poll."""
 
@@ -216,6 +239,21 @@ class StepResultPoller:
     def _run_dir(self) -> Path:
         return self.state_dir / "workflows" / "runs" / self.run_id
 
+    def read_state(self) -> dict | None:
+        """Read the current run's state.json, or None when unavailable.
+
+        The raw state.json I/O for the current run: the monitor calls this
+        once per tick and hands the same dict to poll() (which only parses
+        finished-step events out of it) and to the gate lifecycle (which
+        needs current_step_id).
+        """
+        try:
+            return json.loads(
+                (self._run_dir() / "state.json").read_text(encoding="utf-8")
+            )
+        except Exception:
+            return None
+
     def poll(self, data: dict | None = None) -> list[tuple[str, dict]]:
         """Return (step_id, result) pairs for steps finished since the last poll.
 
@@ -224,11 +262,8 @@ class StepResultPoller:
         and passes the same data in.
         """
         if data is None:
-            try:
-                data = json.loads(
-                    (self._run_dir() / "state.json").read_text(encoding="utf-8")
-                )
-            except Exception:
+            data = self.read_state()
+            if data is None:
                 return []
         events: list[tuple[str, dict]] = []
         for step_id, result in data.get("step_results", {}).items():
@@ -458,104 +493,35 @@ class GateState:
             return False
 
 
-class LiveMonitor:
-    """Coordinates step-result polling and agent-log tailing while specify runs.
+class BufferedEmitter:
+    """Owns the gate-open output buffering policy for live events.
 
     While a human-gate menu is on screen (GateState raised by the stdout
-    reader), finished steps and agent-log lines are buffered instead of
-    printed; the buffer is flushed when the engine moves past the gate or
-    when the wrapper stops.
+    reader), finished steps and agent-log lines are appended to the buffer
+    instead of printed; flush() prints them — logs before step markers — and
+    is called when the engine moves past the gate or the wrapper stops.
     """
 
-    def __init__(
-        self,
-        state_dir: Path,
-        prior_runs: set[str],
-        logs_dir: Path | None = None,
-    ) -> None:
-        self.run_id: str = ""
-        self._poller = StepResultPoller(state_dir, self.run_id)
-        if logs_dir is None:
-            logs_dir = Path.cwd() / ".workflow" / "logs"
-        self._tailer = AgentLogTailer(logs_dir)
-        self._stop = threading.Event()
-        self._state_dir = state_dir
-        self._prior_runs = prior_runs
-        self.gate = GateState()
+    def __init__(self, gate: GateState) -> None:
+        self._gate = gate
         self._buffered_steps: list[tuple[str, dict]] = []
         self._buffered_logs: list[tuple[str, str]] = []
 
-    def _discover_run_id(self) -> str:
-        """Find the run id for the workflow this wrapper started, if unknown.
-
-        `specify workflow run` prints "Run ID: <id>" only AFTER the workflow
-        finishes, so during the run the id can only come from the run
-        directory that appeared under .specify/workflows/runs/ since the
-        wrapper started; without it the step-result poller would poll
-        runs/<empty> for the whole run and never print live step output.
-        """
-        if self.run_id:
-            return self.run_id
-        for name in sorted(existing_run_ids(self._state_dir) - self._prior_runs):
-            return name
-        return ""
-
-    def start(self) -> None:
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-
-    def stop(self) -> None:
-        self._stop.set()
-
-    def join(self) -> None:
-        self._thread.join()
-
-    def _read_state(self) -> dict | None:
-        """Read the current run's state.json, or None when unavailable."""
-        try:
-            return json.loads(
-                (
-                    self._state_dir
-                    / "workflows"
-                    / "runs"
-                    / self.run_id
-                    / "state.json"
-                ).read_text(encoding="utf-8")
-            )
-        except Exception:
-            return None
-
-    def discover_and_read_state(self) -> dict | None:
-        """Read the current run's state.json, discovering the run id first.
-
-        Used by main() for the synchronous gate-id capture at the moment a
-        menu opener line arrives; the monitor's own poll may not have
-        discovered the run id yet. Runs on the calling (main) thread, with
-        no lock — that is deliberate: both this method and the monitor's
-        poll write the same deterministic value (the single new run
-        directory), and attribute assignment is atomic under the GIL, so a
-        torn state cannot be observed.
-        """
-        run_id = self.run_id or self._discover_run_id()
-        if not run_id:
-            return None
-        self.run_id = run_id
-        self._poller.run_id = run_id
-        return self._read_state()
-
-    def _emit_step(self, step_id: str, result: dict) -> None:
-        if self.gate.is_open:
+    def emit_step(self, step_id: str, result: dict) -> None:
+        """Buffer or print one finished step result, per the gate state."""
+        if self._gate.is_open:
             self._buffered_steps.append((step_id, result))
         else:
             print_step_result(step_id, result)
 
-    def _emit_log(self, role: str, text: str) -> None:
-        if self.gate.is_open:
+    def emit_log(self, role: str, text: str) -> None:
+        """Buffer or print one agent-log line, per the gate state."""
+        if self._gate.is_open:
             self._buffered_logs.append((role, text))
         else:
             print_log_event(role, text)
 
-    def _flush_buffer(self) -> None:
+    def flush(self) -> None:
         """Print the events that were buffered while the gate menu was open.
 
         Logs are flushed before the step markers so the "agent lines precede
@@ -570,34 +536,100 @@ class LiveMonitor:
             print_step_result(step_id, result)
         self._buffered_steps.clear()
 
+    @property
+    def buffered_steps(self) -> list[tuple[str, dict]]:
+        return self._buffered_steps
+
+    @property
+    def buffered_logs(self) -> list[tuple[str, str]]:
+        return self._buffered_logs
+
+
+class LiveMonitor:
+    """Coordinates step-result polling and agent-log tailing while specify runs.
+
+    Owns only the poll loop that wires its components together: the poller
+    (state.json reads + finished-step events), the tailer (agent-log lines),
+    the run-id discoverer and the buffered emitter (the gate-open output
+    policy). Each component owns its own concern.
+    """
+
+    def __init__(
+        self,
+        state_dir: Path,
+        prior_runs: set[str],
+        logs_dir: Path | None = None,
+    ) -> None:
+        self.run_id: str = ""
+        self._poller = StepResultPoller(state_dir, self.run_id)
+        if logs_dir is None:
+            logs_dir = Path.cwd() / ".workflow" / "logs"
+        self._tailer = AgentLogTailer(logs_dir)
+        self._stop = threading.Event()
+        self._discoverer = RunIdDiscoverer(state_dir, prior_runs)
+        self.gate = GateState()
+        self._emitter = BufferedEmitter(self.gate)
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def join(self) -> None:
+        self._thread.join()
+
+    def read_current_state(self) -> dict | None:
+        """Read the current run's state.json, discovering the run id first.
+
+        Used by main() for the synchronous gate-id capture at the moment a
+        menu opener line arrives; the monitor's own poll may not have
+        discovered the run id yet. Runs on the calling (main) thread, with
+        no lock — that is deliberate: both this method and the monitor's
+        poll write the same deterministic value (the single new run
+        directory), and attribute assignment is atomic under the GIL, so a
+        torn state cannot be observed. The discovery is delegated to the
+        discoverer; the raw state.json read to the poller (which owns it).
+        """
+        run_id = self.run_id or self._discoverer.discover()
+        if not run_id:
+            return None
+        self.run_id = run_id
+        self._poller.run_id = run_id
+        return self._poller.read_state()
+
     def _poll_once(self, run_id: str | None = None) -> None:
         if run_id is None:
-            run_id = self._discover_run_id()
+            # The known run id (from the stdout "Run ID:" line) is
+            # authoritative; only when it is still unknown is a new run
+            # directory discovered.
+            run_id = self.run_id or self._discoverer.discover()
         state: dict | None = None
         if run_id:
             self.run_id = run_id
             self._poller.run_id = run_id
             # state.json is read once per tick: the gate check needs
             # current_step_id, the poller reuses the same data.
-            state = self._read_state()
+            state = self._poller.read_state()
             if self.gate.update(state):
                 # The engine moved past the gate: flush what was buffered
                 # while the menu was open, then resume live emission.
-                self._flush_buffer()
+                self._emitter.flush()
         # Agent logs are drained BEFORE the step results: a step's final
         # agent lines must print before its "--- step X (completed)" marker,
         # not after it. The logs do not depend on the run id, so they are
         # drained on every tick regardless.
         for role, text in self._tailer.tail():
-            self._emit_log(role, text)
+            self._emitter.emit_log(role, text)
         if run_id:
             for step_id, result in self._poller.poll(state):
                 # One more tailer drain per finished step: lines written
                 # after the drain above (e.g. the agent's final reply before
                 # the step completed) print before this step's marker.
                 for role, text in self._tailer.tail():
-                    self._emit_log(role, text)
-                self._emit_step(step_id, result)
+                    self._emitter.emit_log(role, text)
+                self._emitter.emit_step(step_id, result)
 
     def finish(self) -> None:
         """One final poll after specify exits: late step results may still land.
@@ -620,7 +652,7 @@ class LiveMonitor:
             # its own: close it here and flush whatever was buffered while
             # it was open — nothing is lost.
             self.gate.close()
-            self._flush_buffer()
+            self._emitter.flush()
 
 
 def fmt_thousands(n: int | float) -> str:
@@ -992,39 +1024,28 @@ def build_specify_invocation(
     return specify_cmd, env, state_dir, logs_dir
 
 
-def main() -> int:
-    argv = sys.argv[1:]
-    if not argv or argv[0] in ("-h", "--help"):
-        print(__doc__)
-        return 0
-    source = argv[0]
-    extra = argv[1:]
+def _spawn_specify(
+    specify_cmd: list[str], env: dict[str, str]
+) -> tuple[
+    subprocess.Popen, int | None, threading.Event, threading.Event, threading.Thread | None
+]:
+    """Spawn specify and own its stdin plumbing; returns the live run parts.
 
-    # Map the installed config + argv to the specify invocation; main() only
-    # orchestrates the live run from the result.
-    cfg = load_config()
-    specify_cmd, env, state_dir, logs_dir = build_specify_invocation(cfg, source, extra)
+    The wrapper owns specify's stdin only on a terminal run: a pty keeps
+    sys.stdin.isatty() True inside specify (its gate step goes PAUSED on a
+    non-TTY stdin, see ADR-0002), so interactive gates prompt as before
+    while the wrapper can still inject the feedback-gate answer itself. On a
+    non-TTY run specify keeps the inherited stdin (also non-TTY), so gates
+    go PAUSED and no "┌─ Gate" menu is drawn — exactly the documented
+    non-interactive behavior.
 
-    state_root = Path.cwd() / ".specify"
-    # Snapshot the existing run directories BEFORE the workflow starts: the
-    # run id is only printed by specify after the run finishes, so the
-    # monitor recognizes the current run as the run dir that appears now.
-    prior_runs = existing_run_ids(state_root)
-    monitor = LiveMonitor(state_root, prior_runs, logs_dir)
-    # Wall-clock run time is measured directly around the child process; it
-    # covers every completion path (success, failure, abort).
-    t0 = time.monotonic()
-
-    # The wrapper owns specify's stdin only on a terminal run: a pty keeps
-    # sys.stdin.isatty() True inside specify (its gate step goes PAUSED on a
-    # non-TTY stdin, see ADR-0002), so interactive gates prompt as before
-    # while the wrapper can still inject the feedback-gate answer itself.
-    # On a non-TTY run specify keeps the inherited stdin (also non-TTY), so
-    # gates go PAUSED and no "┌─ Gate" menu is drawn — exactly the
-    # documented non-interactive behavior.
+    Returns (proc, master_fd, forward_pause, forward_stop, forward_thread);
+    on a non-TTY run master_fd and forward_thread are None.
+    """
     master_fd: int | None = None
     forward_pause = threading.Event()
     forward_stop = threading.Event()
+    forward_thread: threading.Thread | None = None
     if sys.stdin.isatty():
         master_fd, slave_fd = pty.openpty()
         set_pty_no_echo(slave_fd)
@@ -1053,77 +1074,120 @@ def main() -> int:
             bufsize=1,
             env=env,
         )
-    monitor.start()
-    run_id = ""
-    try:
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            line = line.rstrip()
-            if not line:
-                continue
-            if is_gate_menu_opener(line):
-                # A human-gate menu window appeared on screen: pause the
-                # monitor's own output (buffered until the gate closes).
-                # The gate's step id is captured synchronously from the
-                # state read right now — not on a later monitor tick, when
-                # a fast answer could already have moved current_step_id.
-                # Echo of the menu lines themselves is unchanged below.
-                state = monitor.discover_and_read_state()
-                monitor.gate.open(state)
-                if is_feedback_gate((state or {}).get("current_step_id")):
-                    # The ADR revise feedback gate: the wrapper owns the
-                    # answer. feedback.md is created (never overwritten) and
-                    # opened in the terminal editor; on editor close the
-                    # gate is answered with `continue` so the workflow
-                    # continues (adr-revise reads feedback.md). If no editor
-                    # can run, the gate stays interactive for manual input.
-                    # No victory sound is played for this gate in any path.
-                    if master_fd is not None:
-                        open_feedback_editor(
-                            Path.cwd()
-                            / state_dir
-                            / "tasks"
-                            / "current"
-                            / "feedback.md",
-                            forward_pause,
-                            master_fd,
-                        )
-                else:
-                    # The human is needed: play the same signal used for a
-                    # finished run (success or failure alike).
-                    notify()
-            print(f"[{stamp()}] {line}", flush=True)
-            if not run_id:
-                run_id = run_id_from_text(line)
-                if run_id:
-                    monitor.run_id = run_id
-    finally:
-        # Stop stdin forwarding and release the pty before reaping the
-        # child: the forward thread would otherwise keep writing into the
-        # pty while the wrapper exits.
-        forward_stop.set()
+    return proc, master_fd, forward_pause, forward_stop, forward_thread
+
+
+def _handle_gate_menu(
+    monitor: LiveMonitor,
+    state_dir: str,
+    master_fd: int | None,
+    forward_pause: threading.Event,
+) -> None:
+    """Own the wrapper's response to a human-gate menu window on screen.
+
+    The gate's step id is captured synchronously from the state read right
+    now — not on a later monitor tick, when a fast answer could already have
+    moved current_step_id. The ADR revise feedback gate is answered by the
+    wrapper through the terminal editor (and never signals); every other
+    gate plays the victory.wav signal for the human.
+    """
+    state = monitor.read_current_state()
+    monitor.gate.open(state)
+    if is_feedback_gate((state or {}).get("current_step_id")):
+        # The ADR revise feedback gate: the wrapper owns the answer.
+        # feedback.md is created (never overwritten) and opened in the
+        # terminal editor; on editor close the gate is answered with
+        # `continue` so the workflow continues (adr-revise reads
+        # feedback.md). If no editor can run, the gate stays interactive for
+        # manual input. No victory sound is played for this gate in any path.
         if master_fd is not None:
-            forward_thread.join(timeout=1)
-            with contextlib.suppress(OSError):
-                os.close(master_fd)
-        # Reap the child even when the read loop above raised (OSError,
-        # KeyboardInterrupt) before reaching proc.wait(): otherwise
-        # proc.returncode would be None and the failure message would print
-        # "run failed (exit None)". wait() is a no-op when the process
-        # already exited.
-        proc.wait()
-        t1 = time.monotonic()
-        # Stop and join the monitor thread first: finish() below would
-        # otherwise race _run()'s poll() on the shared _seen_steps state and
-        # can duplicate a step's output.
-        monitor.stop()
-        monitor.join()
-        # The stdout "Run ID:" line may never appear (e.g. the workflow
-        # failed before the final status block), but the run directory was
-        # already discovered; drain late results and logs either way.
-        if run_id or monitor.run_id:
-            time.sleep(0.2)
-            monitor.finish()
+            open_feedback_editor(
+                Path.cwd() / state_dir / "tasks" / "current" / "feedback.md",
+                forward_pause,
+                master_fd,
+            )
+    else:
+        # The human is needed: play the same signal used for a finished run
+        # (success or failure alike).
+        notify()
+
+
+def _consume_output(
+    proc: subprocess.Popen,
+    monitor: LiveMonitor,
+    state_dir: str,
+    master_fd: int | None,
+    forward_pause: threading.Event,
+) -> str:
+    """Read specify's stdout until EOF, echoing it timestamped and handling gates.
+
+    Echo of the menu lines themselves is unchanged: every line prints as-is.
+    Returns the run id parsed from specify's final "Run ID:" line ("" if the
+    line never appeared); the run id is also stored on the monitor so late
+    state reads can locate the run directory.
+    """
+    run_id = ""
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        line = line.rstrip()
+        if not line:
+            continue
+        if is_gate_menu_opener(line):
+            _handle_gate_menu(monitor, state_dir, master_fd, forward_pause)
+        print(f"[{stamp()}] {line}", flush=True)
+        if not run_id:
+            run_id = run_id_from_text(line)
+            if run_id:
+                monitor.run_id = run_id
+    return run_id
+
+
+def _finalize_run(
+    proc: subprocess.Popen,
+    monitor: LiveMonitor,
+    run_id: str,
+    t0: float,
+    state_dir: str,
+    master_fd: int | None,
+    forward_thread: threading.Thread | None,
+    forward_stop: threading.Event,
+) -> int:
+    """Stop forwarding and the monitor, reap specify, and report the outcome.
+
+    Runs on every completion path (including when the read loop raised):
+    reaping the child even then keeps proc.returncode set, so the failure
+    message never prints "exit None". Returns the run's exit code after
+    printing the failure message, the resume command, the statistics block
+    and the victory signal — none of the reporting ever changes the exit
+    code.
+    """
+    # Stop stdin forwarding and release the pty before reaping the child:
+    # the forward thread would otherwise keep writing into the pty while the
+    # wrapper exits.
+    forward_stop.set()
+    if master_fd is not None:
+        assert forward_thread is not None
+        forward_thread.join(timeout=1)
+        with contextlib.suppress(OSError):
+            os.close(master_fd)
+    # Reap the child even when the read loop above raised (OSError,
+    # KeyboardInterrupt) before reaching proc.wait(): otherwise
+    # proc.returncode would be None and the failure message would print
+    # "run failed (exit None)". wait() is a no-op when the process already
+    # exited.
+    proc.wait()
+    t1 = time.monotonic()
+    # Stop and join the monitor thread first: finish() below would
+    # otherwise race _run()'s poll() on the shared _seen_steps state and
+    # can duplicate a step's output.
+    monitor.stop()
+    monitor.join()
+    # The stdout "Run ID:" line may never appear (e.g. the workflow failed
+    # before the final status block), but the run directory was already
+    # discovered; drain late results and logs either way.
+    if run_id or monitor.run_id:
+        time.sleep(0.2)
+        monitor.finish()
     rc = proc.returncode
     if rc is None:
         rc = 1
@@ -1139,6 +1203,43 @@ def main() -> int:
     print_run_statistics(Path.cwd() / state_dir, t1 - t0)
     # One victory.wav signal for every event: gate open, success, failure.
     notify()
+    return rc
+
+
+def main() -> int:
+    argv = sys.argv[1:]
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+    source = argv[0]
+    extra = argv[1:]
+
+    # Map the installed config + argv to the specify invocation; main() only
+    # orchestrates the live run from the result.
+    cfg = load_config()
+    specify_cmd, env, state_dir, logs_dir = build_specify_invocation(cfg, source, extra)
+
+    state_root = Path.cwd() / ".specify"
+    # Snapshot the existing run directories BEFORE the workflow starts: the
+    # run id is only printed by specify after the run finishes, so the
+    # monitor recognizes the current run as the run dir that appears now.
+    prior_runs = existing_run_ids(state_root)
+    monitor = LiveMonitor(state_root, prior_runs, logs_dir)
+    # Wall-clock run time is measured directly around the child process; it
+    # covers every completion path (success, failure, abort).
+    t0 = time.monotonic()
+
+    proc, master_fd, forward_pause, forward_stop, forward_thread = _spawn_specify(
+        specify_cmd, env
+    )
+    monitor.start()
+    run_id = ""
+    try:
+        run_id = _consume_output(proc, monitor, state_dir, master_fd, forward_pause)
+    finally:
+        rc = _finalize_run(
+            proc, monitor, run_id, t0, state_dir, master_fd, forward_thread, forward_stop
+        )
     return rc
 
 
