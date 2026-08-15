@@ -158,3 +158,20 @@ def render_review_workflow(cfg: dict[str, Any], paths: Paths) -> None:
             "max_comment_iterations": str(workflow["max_comment_iterations"]),
         },
     )
+
+
+def render_spec_run(cfg: dict[str, Any], paths: Paths) -> None:
+    # Global launcher: a thin entry point installed once into the user bin
+    # directory and callable from any project, delegating to the installed
+    # run-pipeline.py wrapper. The absolute paths to the wrapper and both
+    # workflows are baked in at install time.
+    render_file(
+        TEMPLATES_DIR / "spec_run.py.tpl",
+        paths["spec_run"],
+        {
+            "run_pipeline": str(paths["run_pipeline"]),
+            "adr_workflow": str(paths["workflow"]),
+            "review_workflow": str(paths["review_workflow"]),
+        },
+    )
+    paths["spec_run"].chmod(0o755)

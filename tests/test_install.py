@@ -120,11 +120,13 @@ class InstallerTest(unittest.TestCase):
             ".config/spec-kit-llm-client/config.yml",
             ".config/spec-kit-llm-client/config.example.yml",
             ".config/spec-kit-llm-client/adr-pipeline.yml",
+            ".local/bin/spec-run",
         ]
         for rel in expected:
             self.assertTrue((self.home / rel).exists(), rel)
         self.assertTrue(os.access(self.home / ".config/opencode/scripts/run-agent.sh", os.X_OK))
         self.assertTrue(os.access(self.home / ".config/opencode/scripts/name-task.sh", os.X_OK))
+        self.assertTrue(os.access(self.home / ".local/bin/spec-run", os.X_OK))
 
     def test_reinstall_preserves_user_config(self):
         self.assertEqual(self.install(), 0)
@@ -411,6 +413,17 @@ class InstallerTest(unittest.TestCase):
         self.assertIn(str(wav), text)
         self.assertNotIn("PYEOF", text)
         self.assertNotIn("#!/usr/bin/env bash", text)
+
+    def test_spec_run_launcher_rendered(self):
+        self.assertEqual(self.install(), 0)
+        launcher = self.home / ".local/bin/spec-run"
+        self.assertTrue(launcher.exists())
+        self.assertTrue(os.access(launcher, os.X_OK))
+        text = launcher.read_text(encoding="utf-8")
+        self.assertIn(str(self.home / ".config/opencode/scripts/run-pipeline.py"), text)
+        self.assertIn(str(self.home / ".config/spec-kit-llm-client/adr-pipeline.yml"), text)
+        self.assertIn(str(self.home / ".config/spec-kit-llm-client/review-pipeline.yml"), text)
+        self.assertIn("os.execv", text)
 
     def test_victory_wav_shipped_next_to_wrapper(self):
         self.assertEqual(self.install(), 0)
@@ -864,6 +877,7 @@ class InstallerTest(unittest.TestCase):
             ".config/opencode/scripts/agent_call.py",
             ".config/spec-kit-llm-client/adr-pipeline.yml",
             ".config/spec-kit-llm-client/config.example.yml",
+            ".local/bin/spec-run",
         ):
             self.assertFalse((self.home / rel).exists(), rel)
         self.assertTrue((self.home / ".config/spec-kit-llm-client/config.yml").exists())

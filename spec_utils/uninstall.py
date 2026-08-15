@@ -24,13 +24,14 @@ def do_uninstall(paths: Paths, yes: bool) -> None:
         paths["workflow"],
         paths["review_workflow"],
         paths["config_example"],
+        paths["spec_run"],
     ):
         if path.exists():
             path.unlink()
             removed.append(str(path))
     if removed:
         print("removed:\n  " + "\n  ".join(removed))
-    for directory in (paths["agents"], paths["scripts"], paths["config_dir"]):
+    for directory in (paths["agents"], paths["scripts"], paths["config_dir"], paths["user_bin"]):
         with contextlib.suppress(OSError):
             directory.rmdir()
     print("kept your configuration: {}".format(paths["config"]))

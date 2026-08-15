@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -15,8 +16,12 @@ def print_instructions(layout: Paths) -> None:
         "\nDone. Next steps:\n"
         "  1. Edit {} to choose your models "
         "(planner = strong, executor = cheap), then rerun install.py.\n"
-        "  2. In any project run:\n"
-        '       specify workflow run {} -i feature="your feature description"\n'
+        "  2. In any project run (no `specify init` or --register needed):\n"
+        '       spec-run adr "your feature description"\n'
+        "     or review your code (default: whole codebase):\n"
+        "       spec-run review\n"
+        "     or review only the changes between branches:\n"
+        "       spec-run review --branch-diff\n"
         "     or, from a Spec Kit project (run 'specify init' first), install by ID once:\n"
         "       python3 {} --register\n"
         "     and then:\n"
@@ -27,9 +32,23 @@ def print_instructions(layout: Paths) -> None:
         "       specify workflow run review-pipeline -i branch-diff=true\n"
         "  3. If the run pauses at a gate, review and resume with:\n"
         "       specify workflow resume <run_id>\n".format(
-            layout["config"], layout["workflow"], REPO_ROOT / "install.py"
+            layout["config"], REPO_ROOT / "install.py"
         )
     )
+
+
+def print_path_warning(layout: Paths) -> None:
+    # The launcher resolves only when its bin directory is on PATH. The
+    # installer never edits shell configs: print a warning with the two
+    # workarounds (add the directory to PATH, or call the launcher by its
+    # full path). The install itself already succeeded.
+    bin_dir = layout["user_bin"]
+    if str(bin_dir) not in os.environ.get("PATH", "").split(os.pathsep):
+        print(
+            "\nwarning: {} is not on your PATH - add it (e.g. "
+            'export PATH="$HOME/.local/bin:$PATH") or call the launcher by '
+            "its full path: {}".format(bin_dir, layout["spec_run"])
+        )
 
 
 def print_register_usage() -> None:
@@ -64,6 +83,7 @@ def dispatch(args: argparse.Namespace) -> None:
     print("spec-kit-llm-client installer")
     installer.install(layout, args.update)
     print("installation verified")
+    print_path_warning(layout)
     print_instructions(layout)
 
 

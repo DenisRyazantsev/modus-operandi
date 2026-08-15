@@ -26,7 +26,7 @@ def install(paths: Paths, update: bool) -> None:
     verify.check_prerequisites()
     deps.ensure_pyyaml()
     deps.ensure_specify()
-    for directory in (paths["agents"], paths["scripts"], paths["config_dir"]):
+    for directory in (paths["agents"], paths["scripts"], paths["config_dir"], paths["user_bin"]):
         directory.mkdir(parents=True, exist_ok=True)
     ensure_config(paths)
     raw = config.load_config(paths["config"])
@@ -43,4 +43,5 @@ def install(paths: Paths, update: bool) -> None:
     render.render_adr_scripts(paths)
     render.render_workflow(cfg, paths)
     render.render_review_workflow(cfg, paths)
+    render.render_spec_run(cfg, paths)
     verify.verify_install(paths)

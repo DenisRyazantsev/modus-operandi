@@ -13,6 +13,23 @@ Run `install.py` once, edit one config file, and then in any project:
 specify workflow run ~/.config/spec-kit-llm-client/adr-pipeline.yml -i feature="build a kanban board"
 ```
 
+Or use the installed global launcher `spec-run` (also from any project, no
+`specify init` or `--register` required):
+
+```
+spec-run adr "build a kanban board"
+spec-run review
+spec-run review --branch-diff
+```
+
+`spec-run adr "feature"` runs the installed `adr-pipeline` with `-i feature=<feature>`
+(all non-flag arguments are joined), `spec-run review` runs the `review-pipeline`
+(whole codebase by default, `--branch-diff` adds `-i branch-diff=true`), and other
+`-i key=value` arguments (e.g. `-i task_id=my-feature`) are passed through unchanged.
+`spec-run --help` prints usage. The launcher lives at `~/.local/bin/spec-run` and is
+created by `install.py`; add `~/.local/bin` to your `PATH` if it is not there
+already (the installer warns about this).
+
 Full cycle: ADR → executor questions → planner answers → implementation → review → fixes until the reviewer says
 `VERDICT: PASS`.
 
@@ -72,8 +89,9 @@ The installer:
 2. installs `specify-cli` (uv → pipx → pip) and PyYAML if missing;
 3. creates `~/.config/opencode/agent/{planner,executor}.md`,
    `~/.config/opencode/scripts/` (`run-agent.sh`, `name-task.sh`,
-   `save_adr.py`, `check_review.py`, `task_utils.py`) and
-   `~/.config/spec-kit-llm-client/{config.yml,adr-pipeline.yml,review-pipeline.yml}`;
+   `save_adr.py`, `check_review.py`, `task_utils.py`),
+   `~/.config/spec-kit-llm-client/{config.yml,adr-pipeline.yml,review-pipeline.yml}`
+   and the global `~/.local/bin/spec-run` launcher;
 4. validates everything (agents visible to opencode, workflow accepted by the
    spec-kit engine, `run-agent.sh` executable).
 
@@ -340,6 +358,7 @@ templates/
   executor.md.tpl           executor agent (cheap model)
   adr-pipeline.yml.tpl      spec-kit workflow
   review-pipeline.yml.tpl   review-only workflow
+  spec_run.py.tpl           global spec-run launcher (~/.local/bin/spec-run)
   run-agent.sh.tpl          session glue (planner/executor roles)
   name-task.sh.tpl          one-shot task-slug generator (generate-task-id)
   save_adr.py               release/sync an ADR (save, sync)
