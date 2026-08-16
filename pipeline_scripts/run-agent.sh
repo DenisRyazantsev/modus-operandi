@@ -57,9 +57,42 @@ usage() {
 
 [ $# -ge 2 ] || usage
 ROLE="$1"
-if [ "${2:-}" = "--prompt-file" ]; then
-  [ $# -ge 3 ] || usage
-  PROMPT_FILE="$3"
+shift
+[ "$ROLE" = "planner" ] || [ "$ROLE" = "executor" ] || usage
+
+# Flags are order-independent; --prompt-file is recognized at any position
+# (the parallel fan-out calls `planner --fork --prompt-file <path>`).
+PROMPT=""
+PROMPT_FILE=""
+TASK_ID=""
+RESET=0
+FORK=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --prompt-file)
+      [ $# -ge 2 ] || usage
+      PROMPT_FILE="$2"
+      shift 2 ;;
+    --task)
+      [ $# -ge 2 ] || usage
+      TASK_ID="$2"
+      shift 2 ;;
+    --reset)
+      RESET=1; shift ;;
+    --fork)
+      FORK=1; shift ;;
+    *)
+      # The bare positional prompt is accepted once, anywhere among the flags.
+      if [ -z "$PROMPT" ] && [ -z "$PROMPT_FILE" ]; then
+        PROMPT="$1"; shift
+      else
+        usage
+      fi ;;
+  esac
+done
+[ -n "$PROMPT" ] || [ -n "$PROMPT_FILE" ] || usage
+
+if [ -n "$PROMPT_FILE" ]; then
   [ -f "$PROMPT_FILE" ] || { echo "error: prompt file not found: $PROMPT_FILE" >&2; exit 2; }
   # Substitute @TOKEN@ placeholders from the environment: the workflow step
   # exports STATE_DIR/LATEST/N/SNAP/etc. before the call, so the prompt files
@@ -67,24 +100,7 @@ if [ "${2:-}" = "--prompt-file" ]; then
   # itself lives in prompt_subst.sh, so the prompt format is the only thing
   # that changes that file.
   PROMPT="$("$SCRIPT_DIR/prompt_subst.sh" "$PROMPT_FILE")"
-  shift 3
-else
-  PROMPT="$2"
-  shift 2
 fi
-[ "$ROLE" = "planner" ] || [ "$ROLE" = "executor" ] || usage
-
-TASK_ID=""
-RESET=0
-FORK=0
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --task) [ $# -ge 2 ] || usage; TASK_ID="$2"; shift 2 ;;
-    --reset) RESET=1; shift ;;
-    --fork) FORK=1; shift ;;
-    *) usage ;;
-  esac
-done
 
 STATE_DIR="${SKLC_STATE_DIR:-.workflow}"
 ATTACH_FLAG="${SKLC_ATTACH_FLAG:-}"

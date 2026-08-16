@@ -197,7 +197,11 @@ class InstallLayoutTest(InstallerTestCase):
         session_store = (
             self.home / ".config/opencode/scripts/session_store.sh"
         ).read_text(encoding="utf-8")
-        self.assertIn("--task) [ $# -ge 2 ] || usage", run_agent)
+        self.assertIn("--task)\n      [ $# -ge 2 ] || usage", run_agent)
+        # --prompt-file is parsed in the same order-independent flag loop as
+        # --task (the parallel fan-out calls `--fork --prompt-file <path>`).
+        self.assertIn("--prompt-file)\n      [ $# -ge 2 ] || usage", run_agent)
+        self.assertIn("--fork)", run_agent)
         # The stale-process cleanup lives in session_store.sh (one concern
         # per file): the pid file, the backend process-name pattern and the
         # kill are all owned there, shared by both backends.

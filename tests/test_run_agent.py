@@ -279,6 +279,24 @@ class RunAgentTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("no warm session to fork", result.stderr)
 
+    def test_opencode_fork_with_prompt_file_parses_flags_in_any_order(self):
+        # The parallel fan-out invokes `planner --fork --prompt-file <path>`
+        # (ADR-0009): --prompt-file must be recognized at any position, not
+        # only as the second argument, or the leftover flag hits usage().
+        _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
+        self._seed_session("planner", "warm-999")
+        prompt = self.tmp / "review.md"
+        prompt.write_text("review now", encoding="utf-8")
+        result = self._run("planner", "--fork", "--prompt-file", str(prompt))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        invs = read_invocations(self.opencode_log)
+        self.assertEqual(
+            invs[0],
+            ["run", "--session", "warm-999", "--fork", "--agent", "planner",
+             "--auto", "--format", "json", "review now"],
+        )
+        self.assertEqual(self._sessions().get("planner"), "warm-999")
+
     def test_cursor_fork_mints_fresh_chat_without_saving(self):
         # cursor-agent has no fork primitive (ADR-0009 deviation, documented
         # in run-agent-cursor.sh): a fork invocation mints a FRESH chat and
