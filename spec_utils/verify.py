@@ -89,6 +89,7 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
         "live_monitor",
         "config_invocation",
         "run_statistics",
+        "latency_table",
         "notify",
         "feedback_editor",
         "pty_spawn",

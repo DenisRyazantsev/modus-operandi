@@ -31,6 +31,11 @@ _MODULES = (
     "live_monitor",
     "config_invocation",
     "run_statistics",
+    "latency_table",
+    # latency_table imports KIND_ORDER from check_review.py (single source of
+    # truth for the review order), which itself imports task_utils.py.
+    "check_review",
+    "task_utils",
     "notify",
     "feedback_editor",
     "pty_spawn",

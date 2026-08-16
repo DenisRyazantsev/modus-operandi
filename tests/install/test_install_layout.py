@@ -37,6 +37,7 @@ class InstallLayoutTest(InstallerTestCase):
             ".config/opencode/scripts/live_monitor.py",
             ".config/opencode/scripts/config_invocation.py",
             ".config/opencode/scripts/run_statistics.py",
+            ".config/opencode/scripts/latency_table.py",
             ".config/opencode/scripts/notify.py",
             ".config/opencode/scripts/feedback_editor.py",
             ".config/opencode/scripts/pty_spawn.py",

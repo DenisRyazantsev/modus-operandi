@@ -55,6 +55,9 @@ def build_paths(home: str | Path) -> Paths:
         "run_statistics": (
             base / ".config" / "opencode" / "scripts" / "run_statistics.py"
         ),
+        "latency_table": (
+            base / ".config" / "opencode" / "scripts" / "latency_table.py"
+        ),
         "notify": base / ".config" / "opencode" / "scripts" / "notify.py",
         "feedback_editor": (
             base / ".config" / "opencode" / "scripts" / "feedback_editor.py"

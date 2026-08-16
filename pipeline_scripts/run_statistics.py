@@ -1,7 +1,10 @@
 """Query opencode for the session usage and print the run statistics block.
 
 One responsibility: read the per-role session ids, export their token/cost
-usage from opencode and print the `=== run statistics ===` block. Missing
+usage from opencode and print the `=== run statistics ===` block. The
+per-stage latency table (ADR-0009) lives in its own module
+(latency_table.py) and is printed from here; this module does not parse the
+engine's log.jsonl/state.json or know the fan-out step-id grammar. Missing
 data always degrades to zero/dash values — the wrapper never fails here.
 """
 
@@ -13,6 +16,7 @@ import tempfile
 from pathlib import Path
 
 from _run_pipeline_common import fmt_duration, fmt_thousands
+from latency_table import print_latency_table
 
 
 def read_session_ids(state_dir: Path) -> dict[str, str]:
@@ -112,12 +116,15 @@ def collect_usage(state_dir: Path) -> dict[str, int | float]:
     return totals
 
 
-def print_run_statistics(state_dir: Path, elapsed: float) -> None:
+def print_run_statistics(state_dir: Path, elapsed: float, run_dir: Path | None = None) -> None:
     """Print the final `=== run statistics ===` block.
 
     Printed after the run on every completion path (success, failure, abort).
     Token counts use space thousand separators; wall time is HH:MM:SS.
     Missing session data degrades to zeros — the wrapper never fails here.
+    When the run's log.jsonl is available, the per-stage latency table
+    follows (printed by latency_table.print_latency_table, ADR-0009); missing
+    data degrades to an empty table.
     """
     usage = collect_usage(state_dir)
     print()
@@ -137,3 +144,4 @@ def print_run_statistics(state_dir: Path, elapsed: float) -> None:
         )
     )
     print("cost: ${:.2f}".format(usage["cost"]))
+    print_latency_table(state_dir, run_dir)

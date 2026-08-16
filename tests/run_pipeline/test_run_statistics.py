@@ -1,4 +1,8 @@
-"""Unit tests for the run statistics block (sessions, export, formatting)."""
+"""Unit tests for the run statistics block (sessions, export, formatting).
+
+The per-stage latency table tests live in test_latency_table.py (ADR-0009
+split the two concerns into run_statistics.py and latency_table.py).
+"""
 
 import io
 import json
