@@ -14,6 +14,13 @@ XDG_CONFIG_HOME/$HOME, and the repo's install.py path (used by `edit`) is
 read from the install-path.txt file the installer writes into the config
 directory. Nothing is baked into this file at install time.
 
+This file is the entry point of a module split, one concern per file: the
+`edit` execution flow lives in edit_command.py and the shared editor
+resolution in editor.py (the same editor.py the run-pipeline wrapper uses
+for its feedback gate); the exceptions package ships one class per file.
+This module owns the launcher dispatch and re-exports the shared names so
+the launcher keeps its single import surface.
+
 Usage:
   spec-run adr "feature description" [-i key=value ...]
   spec-run review [--branch-diff]
@@ -33,20 +40,34 @@ Examples:
 from __future__ import annotations
 
 import os
-import shlex
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
-# The exceptions package (one class per file) ships next to this launcher —
-# source: pipeline_scripts/exceptions/, installed: <bin dir>/exceptions/.
-# `__file__` is the launcher itself, so its directory is the one place the
-# package is guaranteed to be found, however the launcher is loaded (as an
-# installed script, through exec, or by tests via importlib).
+# The exceptions package (one class per file) and the edit/editor modules
+# ship next to this launcher — source: pipeline_scripts/, installed: <bin
+# dir>/. `__file__` is the launcher itself, so its directory is the one place
+# the package is guaranteed to be found, however the launcher is loaded (as
+# an installed script, through exec, or by tests via importlib).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from edit_command import _run_edit
+from editor import resolve_editor
 from exceptions import EditRequested, HelpRequested, InvalidInvocation
+
+# Public surface of the launcher: the pure mapping, the shared editor
+# resolution and the signals, so tests and callers keep a single import
+# target (the spec_run module).
+__all__ = [
+    "ADR_WORKFLOW",
+    "CONFIG",
+    "INSTALL_PATH_FILE",
+    "REVIEW_WORKFLOW",
+    "RUN_PIPELINE",
+    "USAGE",
+    "build_command",
+    "print_usage",
+    "resolve_editor",
+]
 
 
 def _config_base() -> Path:
@@ -136,36 +157,11 @@ def build_command(argv: list[str]) -> list[str]:
     if head == "edit":
         # `edit` takes no arguments: anything after the subcommand is ignored.
         # Editor resolution is environment-dependent (os.environ, shutil.which)
-        # and belongs to the edit execution path, not to this pure mapping; a
-        # signal keeps the subcommand -> execution-path decision in one place.
+        # and belongs to the edit execution path (edit_command._run_edit), not
+        # to this pure mapping; a signal keeps the subcommand ->
+        # execution-path decision in one place.
         raise EditRequested
     raise InvalidInvocation
-
-
-def _resolve_editor() -> list[str] | None:
-    # VISUAL/EDITOR values may carry arguments (`code --wait`), so they are
-    # split like a shell command line. A malformed value (e.g. an unbalanced
-    # quote) is skipped with a warning, and a candidate whose binary is not
-    # on PATH falls through to the next one (mirroring run_pipeline.py's
-    # resolve_editor); None means no editor is available at all.
-    for var in ("VISUAL", "EDITOR"):
-        value = os.environ.get(var)
-        if not value:
-            continue
-        try:
-            cmd = shlex.split(value)
-        except ValueError as exc:
-            print(
-                f"warning: {var} is malformed ({exc}); skipping it",
-                file=sys.stderr,
-            )
-            continue
-        if cmd and shutil.which(cmd[0]):
-            return cmd
-    for name in ("nano", "vi"):
-        if shutil.which(name):
-            return [name]
-    return None
 
 
 def _build_adr_command(rest: list[str], backend: str | None = None) -> list[str]:
@@ -236,76 +232,6 @@ def print_usage(stream=None) -> None:
     print(USAGE, file=stream)
 
 
-def _launch_editor(editor_cmd: list[str]) -> int | None:
-    # The editor runs as a child process inheriting stdin/stdout so
-    # full-screen editors keep working. Returns the editor's exit code, or
-    # None when the editor could not be started (an error is printed then);
-    # None is distinguishable from an editor that ran and exited with 1.
-    try:
-        return subprocess.run(editor_cmd, check=False).returncode
-    except OSError as exc:
-        print(
-            f"error: cannot start editor {editor_cmd[0]}: {exc}",
-            file=sys.stderr,
-        )
-        return None
-
-
-def _install_py() -> str:
-    """Return the recorded repo install.py path, or "" when not recorded.
-
-    The installer writes the absolute path of the repo's install.py into
-    install-path.txt; `spec-run edit` needs it to re-apply the config. The
-    path cannot be derived from the launcher's own location (the repo clone
-    may live anywhere), so a missing file means the installer metadata is
-    gone (clone moved/deleted) and edit must fail with a readable error.
-    """
-    try:
-        return INSTALL_PATH_FILE.read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
-
-
-def _apply_config() -> int:
-    # Re-apply the (possibly edited) config through the repo installer: it
-    # reloads and validates config.yml, re-renders every artifact and verifies
-    # the result, without the install-time prerequisite/dependency checks or
-    # the next-steps output. A config that fails validation surfaces here and
-    # aborts `edit` with the installer's exit code.
-    install_py = _install_py()
-    if not install_py:
-        print(
-            f"error: cannot find the recorded install.py path ({INSTALL_PATH_FILE}); rerun "
-            "install.py from the repo clone to record it",
-            file=sys.stderr,
-        )
-        return 1
-    result = subprocess.run([sys.executable, install_py, "--apply"], check=False)
-    if result.returncode == 0:
-        print("config applied - agents, scripts and workflows re-rendered")
-    return result.returncode
-
-
-def _run_edit() -> int:
-    # `edit` takes no arguments; the config path is derived from the
-    # launcher's location at import time. Resolve and run the editor, then
-    # re-apply the config whenever the editor actually launched. The editor's
-    # own exit code does not gate the apply: a user can save a valid edit and
-    # still close the editor non-zero (vim :cq, ...), and `--apply`
-    # re-validates the config anyway, failing loudly on an invalid edit. Only
-    # a failure to start the editor aborts.
-    editor_cmd = _resolve_editor()
-    if editor_cmd is None:
-        print(
-            "error: no editor found; set VISUAL or EDITOR, or install nano/vi",
-            file=sys.stderr,
-        )
-        return 1
-    if _launch_editor(editor_cmd + [CONFIG]) is None:
-        return 1
-    return _apply_config()
-
-
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
@@ -318,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
         print_usage(sys.stderr)
         return 1
     except EditRequested:
-        return _run_edit()
+        return _run_edit(CONFIG, INSTALL_PATH_FILE)
     try:
         # os.execv replaces this process with run-pipeline.py, so its live
         # output, timestamps and exit code pass through unchanged; it returns

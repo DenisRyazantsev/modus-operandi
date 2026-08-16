@@ -92,9 +92,15 @@ class RunAgentTest(unittest.TestCase):
         self.scripts.mkdir()
         self.bin.mkdir()
         self.state.mkdir()
+        # run-agent.sh is split one concern per file: the session store and
+        # the cursor backend are sourced, prompt_subst.sh is called.
+        for name in ("run-agent.sh", "session_store.sh", "run-agent-cursor.sh",
+                     "prompt_subst.sh"):
+            dst = self.scripts / name
+            shutil.copy2(REPO_ROOT / "pipeline_scripts" / name, dst)
+            if name in ("run-agent.sh", "prompt_subst.sh"):
+                dst.chmod(0o755)
         self.run_agent = self.scripts / "run-agent.sh"
-        shutil.copy2(RUN_AGENT, self.run_agent)
-        self.run_agent.chmod(0o755)
         (self.scripts / "planner-body.txt").write_text(PLANNER_BODY, encoding="utf-8")
         (self.scripts / "executor-body.txt").write_text(EXECUTOR_BODY, encoding="utf-8")
         self.cursor_log = self.tmp / "cursor.log"

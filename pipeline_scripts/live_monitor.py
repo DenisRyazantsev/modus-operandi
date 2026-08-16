@@ -102,10 +102,10 @@ class LiveMonitor:
     def finish(self) -> None:
         """One final poll after specify exits: late step results may still land.
 
-        The tail thread has already stopped by now, so also drain the agent
-        logs once here — otherwise lines written between the last 0.5s poll
-        tick and process exit (e.g. the agent's final reply before a step
-        completes) are never shown and stay only in the .jsonl files.
+        The monitor thread has already stopped by now, so also drain the
+        agent logs once here — otherwise lines written between the last 0.5s
+        poll tick and process exit (e.g. the agent's final reply before a
+        step completes) are never shown and stay only in the .jsonl files.
         """
         self._poll_once()
 

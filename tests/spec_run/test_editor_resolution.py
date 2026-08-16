@@ -10,7 +10,9 @@ from .helpers import load_spec_run
 
 class EditorResolutionTest(unittest.TestCase):
     """The launcher's editor resolution chain: $VISUAL -> $EDITOR -> nano ->
-    vi, each candidate validated on PATH, with malformed values skipped."""
+    vi, each candidate validated on PATH, with malformed values skipped. The
+    chain itself lives in the shared editor.py, re-exported by the launcher
+    (and used by the run-pipeline wrapper's feedback gate too)."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -28,33 +30,33 @@ class EditorResolutionTest(unittest.TestCase):
                 {"VISUAL": "code --wait", "EDITOR": "vim"},
                 clear=True,
             ),
-            mock.patch.object(self.mod.shutil, "which", side_effect=self._on_path),
+            mock.patch("shutil.which", side_effect=self._on_path),
         ):
-            self.assertEqual(self.mod._resolve_editor(), ["code", "--wait"])
+            self.assertEqual(self.mod.resolve_editor(), ["code", "--wait"])
 
     def test_editor_uses_editor_when_visual_unset(self):
         with (
             mock.patch.dict("os.environ", {"EDITOR": "emacs -nw"}, clear=True),
-            mock.patch.object(self.mod.shutil, "which", side_effect=self._on_path),
+            mock.patch("shutil.which", side_effect=self._on_path),
         ):
-            self.assertEqual(self.mod._resolve_editor(), ["emacs", "-nw"])
+            self.assertEqual(self.mod.resolve_editor(), ["emacs", "-nw"])
 
     def test_editor_falls_back_to_nano_then_vi(self):
         # nano wins over vi when both are on PATH.
         with (
             mock.patch.dict("os.environ", {}, clear=True),
-            mock.patch.object(self.mod.shutil, "which", side_effect=self._on_path),
+            mock.patch("shutil.which", side_effect=self._on_path),
         ):
-            self.assertEqual(self.mod._resolve_editor(), ["nano"])
+            self.assertEqual(self.mod.resolve_editor(), ["nano"])
         # vi is used only when nano is missing.
         def which_vi_only(name):
             return self._on_path(name) if name == "vi" else None
 
         with (
             mock.patch.dict("os.environ", {}, clear=True),
-            mock.patch.object(self.mod.shutil, "which", side_effect=which_vi_only),
+            mock.patch("shutil.which", side_effect=which_vi_only),
         ):
-            self.assertEqual(self.mod._resolve_editor(), ["vi"])
+            self.assertEqual(self.mod.resolve_editor(), ["vi"])
 
     def test_editor_stale_visual_falls_back_to_a_working_editor(self):
         # Regression: a $VISUAL/$EDITOR pointing at a removed binary (e.g.
@@ -67,28 +69,28 @@ class EditorResolutionTest(unittest.TestCase):
             mock.patch.dict(
                 "os.environ", {"VISUAL": "code --wait", "EDITOR": "vim"}, clear=True
             ),
-            mock.patch.object(self.mod.shutil, "which", side_effect=which),
+            mock.patch("shutil.which", side_effect=which),
         ):
-            self.assertEqual(self.mod._resolve_editor(), ["nano"])
+            self.assertEqual(self.mod.resolve_editor(), ["nano"])
 
     def test_editor_no_editor_returns_none(self):
         # A fully empty chain (no $VISUAL/$EDITOR binary and no nano/vi)
         # signals "no editor" instead of returning a missing binary.
         with (
             mock.patch.dict("os.environ", {}, clear=True),
-            mock.patch.object(self.mod.shutil, "which", return_value=None),
+            mock.patch("shutil.which", return_value=None),
         ):
-            self.assertIsNone(self.mod._resolve_editor())
+            self.assertIsNone(self.mod.resolve_editor())
 
     def test_editor_malformed_visual_falls_back_to_editor(self):
         with (
             mock.patch.dict(
                 "os.environ", {"VISUAL": 'code --wait"', "EDITOR": "vim"}, clear=True
             ),
-            mock.patch.object(self.mod.shutil, "which", side_effect=self._on_path),
+            mock.patch("shutil.which", side_effect=self._on_path),
             mock.patch("sys.stderr", io.StringIO()) as err,
         ):
-            self.assertEqual(self.mod._resolve_editor(), ["vim"])
+            self.assertEqual(self.mod.resolve_editor(), ["vim"])
         self.assertIn("malformed", err.getvalue())
 
     def test_editor_malformed_value_falls_back_to_default(self):
@@ -96,8 +98,8 @@ class EditorResolutionTest(unittest.TestCase):
         # skipped (with a warning) instead of crashing with a traceback.
         with (
             mock.patch.dict("os.environ", {"EDITOR": "emacs '"}, clear=True),
-            mock.patch.object(self.mod.shutil, "which", return_value="/usr/bin/nano"),
+            mock.patch("shutil.which", return_value="/usr/bin/nano"),
             mock.patch("sys.stderr", io.StringIO()) as err,
         ):
-            self.assertEqual(self.mod._resolve_editor(), ["nano"])
+            self.assertEqual(self.mod.resolve_editor(), ["nano"])
         self.assertIn("malformed", err.getvalue())

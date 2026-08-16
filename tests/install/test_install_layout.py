@@ -20,6 +20,11 @@ class InstallLayoutTest(InstallerTestCase):
             ".config/opencode/scripts/name-task.sh",
             ".config/opencode/scripts/planner-body.txt",
             ".config/opencode/scripts/executor-body.txt",
+            # run-agent.sh is split one concern per file: the session store
+            # and the cursor backend are sourced, prompt_subst.sh is called.
+            ".config/opencode/scripts/session_store.sh",
+            ".config/opencode/scripts/run-agent-cursor.sh",
+            ".config/opencode/scripts/prompt_subst.sh",
             ".config/opencode/scripts/run-pipeline.py",
             # run-pipeline.py is split one class per file: the modules are
             # installed next to it so the wrapper stays importable.
@@ -30,6 +35,12 @@ class InstallLayoutTest(InstallerTestCase):
             ".config/opencode/scripts/gate_state.py",
             ".config/opencode/scripts/buffered_emitter.py",
             ".config/opencode/scripts/live_monitor.py",
+            ".config/opencode/scripts/config_invocation.py",
+            ".config/opencode/scripts/run_statistics.py",
+            ".config/opencode/scripts/notify.py",
+            ".config/opencode/scripts/feedback_editor.py",
+            ".config/opencode/scripts/pty_spawn.py",
+            ".config/opencode/scripts/editor.py",
             ".config/opencode/scripts/victory.wav",
             ".config/opencode/scripts/save_adr.py",
             ".config/opencode/scripts/check_review.py",
@@ -44,16 +55,22 @@ class InstallLayoutTest(InstallerTestCase):
             ".config/spec-kit-llm-client/prompts/srp-fix.md",
             ".config/spec-kit-llm-client/install-path.txt",
             ".local/bin/spec-run",
-            # spec-run's exceptions package (one class per file).
+            # spec-run's exceptions package (one class per file) and the
+            # edit/editor modules copied next to the launcher.
             ".local/bin/exceptions/__init__.py",
             ".local/bin/exceptions/help_requested.py",
             ".local/bin/exceptions/invalid_invocation.py",
             ".local/bin/exceptions/edit_requested.py",
+            ".local/bin/edit_command.py",
+            ".local/bin/editor.py",
         ]
         for rel in expected:
             self.assertTrue((self.home / rel).exists(), rel)
         self.assertTrue(os.access(self.home / ".config/opencode/scripts/run-agent.sh", os.X_OK))
         self.assertTrue(os.access(self.home / ".config/opencode/scripts/name-task.sh", os.X_OK))
+        self.assertTrue(
+            os.access(self.home / ".config/opencode/scripts/prompt_subst.sh", os.X_OK)
+        )
         self.assertTrue(os.access(self.home / ".local/bin/spec-run", os.X_OK))
 
     def test_reinstall_preserves_user_config(self):
@@ -176,19 +193,25 @@ class InstallLayoutTest(InstallerTestCase):
         run_agent = (self.home / ".config/opencode/scripts/run-agent.sh").read_text(
             encoding="utf-8"
         )
+        session_store = (
+            self.home / ".config/opencode/scripts/session_store.sh"
+        ).read_text(encoding="utf-8")
         self.assertIn("--task) [ $# -ge 2 ] || usage", run_agent)
-        self.assertIn("ps -p", run_agent)
-        # Stale-process cleanup matches the active backend's process name:
-        # opencode vs cursor-agent/agent.
+        # The stale-process cleanup lives in session_store.sh (one concern
+        # per file): the pid file, the backend process-name pattern and the
+        # kill are all owned there, shared by both backends.
+        self.assertNotIn("ps -p", run_agent)
+        self.assertIn("ps -p", session_store)
+        self.assertIn("STALE_PROC_PATTERN", session_store)
+        self.assertIn("^(cursor-agent|agent)$", session_store)
         self.assertIn("SKLC_BACKEND", run_agent)
-        self.assertIn("STALE_PROC_PATTERN", run_agent)
-        self.assertIn("^(cursor-agent|agent)$", run_agent)
         self.assertIn('> "$LOG_FILE" 2>&1', run_agent)
         self.assertNotIn('tail -c 4096 "$LOG_FILE"', run_agent)
         self.assertNotIn('cat "$LOG_FILE"', run_agent)
         self.assertIn("full log: $LOG_FILE", run_agent)
         self.assertNotIn('OUTPUT="$(opencode', run_agent)
-        self.assertEqual(run_agent.count("session[_]?[iI][dD]"), 1)
+        self.assertEqual(run_agent.count("session[_]?[iI][dD]"), 0)
+        self.assertEqual(session_store.count("session[_]?[iI][dD]"), 1)
         self.assertNotIn("'name'", run_agent)
 
     def test_run_agent_cursor_dispatch_present(self):
@@ -196,16 +219,23 @@ class InstallLayoutTest(InstallerTestCase):
         run_agent = (self.home / ".config/opencode/scripts/run-agent.sh").read_text(
             encoding="utf-8"
         )
-        # The cursor branch: create-chat to mint a chat, --resume to resume,
-        # --model from the role model env, --output-format json, and the role
-        # body prefixed only on the first message of a fresh session.
-        self.assertIn('command -v cursor-agent', run_agent)
-        self.assertIn('create-chat', run_agent)
-        self.assertIn('--resume "$SESSION_ID"', run_agent)
-        self.assertIn('--model "$ROLE_MODEL"', run_agent)
-        self.assertIn('--output-format json', run_agent)
-        self.assertIn('ROLE_BODY_FILE', run_agent)
-        self.assertIn('PROMPT_FULL="$BODY', run_agent)
+        # The whole cursor backend lives in run-agent-cursor.sh, sourced by
+        # run-agent.sh on demand: create-chat to mint a chat, --resume to
+        # resume, --model from the role model env, --output-format json, and
+        # the role body prefixed only on the first message of a fresh chat.
+        cursor = (self.home / ".config/opencode/scripts/run-agent-cursor.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("run-agent-cursor.sh", run_agent)
+        self.assertIn("session_store.sh", run_agent)
+        self.assertIn("prompt_subst.sh", run_agent)
+        self.assertIn('command -v cursor-agent', cursor)
+        self.assertIn('create-chat', cursor)
+        self.assertIn('--resume "$SESSION_ID"', cursor)
+        self.assertIn('--model "$ROLE_MODEL"', cursor)
+        self.assertIn('--output-format json', cursor)
+        self.assertIn('ROLE_BODY_FILE', cursor)
+        self.assertIn('PROMPT_FULL="$BODY', cursor)
 
     def test_cursor_only_install_writes_no_agent_files(self):
         # A cursor-only config (no opencode section) installs without opencode

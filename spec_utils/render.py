@@ -133,6 +133,15 @@ def _install_script(source_name: str, target: Any, executable: bool = False) -> 
 
 def render_run_agent(paths: Paths) -> None:
     _install_script("run-agent.sh", paths["run_agent"], executable=True)
+    # run-agent.sh is split one concern per file: session_store.sh and
+    # run-agent-cursor.sh are sourced (no exec bit needed), prompt_subst.sh
+    # is called as a helper and must be executable.
+    for key, source_name in (
+        ("session_store", "session_store.sh"),
+        ("run_agent_cursor", "run-agent-cursor.sh"),
+    ):
+        _install_script(source_name, paths[key])
+    _install_script("prompt_subst.sh", paths["prompt_subst"], executable=True)
 
 
 def render_name_task(paths: Paths) -> None:
@@ -152,17 +161,27 @@ def render_run_pipeline(paths: Paths) -> None:
         ("gate_state", "gate_state.py"),
         ("buffered_emitter", "buffered_emitter.py"),
         ("live_monitor", "live_monitor.py"),
+        ("config_invocation", "config_invocation.py"),
+        ("run_statistics", "run_statistics.py"),
+        ("notify", "notify.py"),
+        ("feedback_editor", "feedback_editor.py"),
+        ("pty_spawn", "pty_spawn.py"),
+        # The shared editor resolution, copied next to the wrapper too.
+        ("editor", "editor.py"),
     ):
         _install_script(source_name, paths[key])
 
 
 def render_spec_run(paths: Paths) -> None:
     _install_script("spec_run.py", paths["spec_run"], executable=True)
-    # spec-run is split one class per file: the exceptions package is copied
-    # next to the launcher so the submodules stay importable.
+    # spec-run is split one class per file: the exceptions package, the
+    # edit command and the shared editor module are copied next to the
+    # launcher so the submodules stay importable.
     paths["exceptions_dir"].mkdir(parents=True, exist_ok=True)
     for name in ("__init__.py", "help_requested.py", "invalid_invocation.py", "edit_requested.py"):
         shutil.copy2(PIPELINE_SCRIPTS_DIR / "exceptions" / name, paths["exceptions_dir"] / name)
+    shutil.copy2(PIPELINE_SCRIPTS_DIR / "edit_command.py", paths["edit_command"])
+    shutil.copy2(PIPELINE_SCRIPTS_DIR / "editor.py", paths["launcher_editor"])
 
 
 def render_victory_wav(paths: Paths) -> None:

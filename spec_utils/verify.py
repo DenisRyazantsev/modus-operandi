@@ -72,6 +72,11 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
         errors.append("run-agent.sh is not executable: {}".format(paths["run_agent"]))
     if not os.access(paths["name_task"], os.X_OK):
         errors.append("name-task.sh is not executable: {}".format(paths["name_task"]))
+    if not os.access(paths["prompt_subst"], os.X_OK):
+        errors.append("prompt_subst.sh is not executable: {}".format(paths["prompt_subst"]))
+    for key in ("session_store", "run_agent_cursor"):
+        if not paths[key].is_file():
+            errors.append(f"generated script missing: {paths[key]}")
     if not os.access(paths["run_pipeline"], os.X_OK):
         errors.append("run-pipeline.py is not executable: {}".format(paths["run_pipeline"]))
     for key in (
@@ -82,11 +87,20 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
         "gate_state",
         "buffered_emitter",
         "live_monitor",
+        "config_invocation",
+        "run_statistics",
+        "notify",
+        "feedback_editor",
+        "pty_spawn",
+        "editor",
     ):
         if not paths[key].is_file():
             errors.append(f"generated script missing: {paths[key]}")
     if not os.access(paths["spec_run"], os.X_OK):
         errors.append("spec-run is not executable: {}".format(paths["spec_run"]))
+    for key in ("edit_command", "launcher_editor"):
+        if not paths[key].is_file():
+            errors.append(f"generated script missing: {paths[key]}")
     for name in ("__init__.py", "help_requested.py", "invalid_invocation.py", "edit_requested.py"):
         if not (paths["exceptions_dir"] / name).is_file():
             errors.append(f"generated script missing: {paths['exceptions_dir'] / name}")

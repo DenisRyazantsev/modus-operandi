@@ -18,7 +18,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _SRC_DIR = REPO_ROOT / "pipeline_scripts"
 
 # The modules that make up the run-pipeline wrapper: the entry plus the
-# one-class-per-file modules and the shared helpers module.
+# one-class-per-file modules, the shared helpers module and the
+# one-concern-per-file modules.
 _MODULES = (
     "run_pipeline",
     "_run_pipeline_common",
@@ -28,6 +29,12 @@ _MODULES = (
     "gate_state",
     "buffered_emitter",
     "live_monitor",
+    "config_invocation",
+    "run_statistics",
+    "notify",
+    "feedback_editor",
+    "pty_spawn",
+    "editor",
 )
 
 # Submodules exposed on the loaded entry module so tests can patch their
@@ -71,7 +78,11 @@ def load_run_pipeline() -> types.ModuleType:
     sys.modules["run_pipeline_under_test"] = module
     spec.loader.exec_module(module)
     for name in _SUBMODULE_NAMES:
-        setattr(module, name, sys.modules[name])
+        # Skip names the entry module already defines: the wrapper
+        # re-exports e.g. the `notify` function, which must not be shadowed
+        # by the `notify` submodule when tests patch mod.notify.
+        if not hasattr(module, name):
+            setattr(module, name, sys.modules[name])
     return module
 
 

@@ -17,6 +17,9 @@ def do_uninstall(paths: Paths, yes: bool) -> None:
         paths["name_task"],
         paths["planner_body"],
         paths["executor_body"],
+        paths["session_store"],
+        paths["run_agent_cursor"],
+        paths["prompt_subst"],
         paths["run_pipeline"],
         paths["run_pipeline_common"],
         paths["run_id_discoverer"],
@@ -25,6 +28,12 @@ def do_uninstall(paths: Paths, yes: bool) -> None:
         paths["gate_state"],
         paths["buffered_emitter"],
         paths["live_monitor"],
+        paths["config_invocation"],
+        paths["run_statistics"],
+        paths["notify"],
+        paths["feedback_editor"],
+        paths["pty_spawn"],
+        paths["editor"],
         paths["victory_wav"],
         paths["save_adr"],
         paths["check_review"],
@@ -37,6 +46,8 @@ def do_uninstall(paths: Paths, yes: bool) -> None:
         paths["config_example"],
         paths["install_path"],
         paths["spec_run"],
+        paths["edit_command"],
+        paths["launcher_editor"],
     ):
         if path.exists():
             path.unlink()

@@ -62,11 +62,11 @@ class GateState:
         open. A failed read (None) only skips the tick: it says nothing
         about the gate, and closing on it would print straight over the
         still-open menu — only a readable state with an empty or different
-        current_step_id may close the gate. "Pure" refers to I/O and output
-        only: update() never emits output and never touches anything but the
-        gate's own state (under its lock) — the "never emits output" clause
-        is the contract the caller relies on, since it decides the flush.
-        Loop iterations carry distinct suffixed ids (adr-loop:adr-gate:1,
+        current_step_id may close the gate. update() performs no I/O and
+        emits no output — it only mutates the gate's own state (under its
+        lock). The "never emits output" clause is the contract the caller
+        relies on, since the caller decides the flush. Loop iterations carry
+        distinct suffixed ids (adr-loop:adr-gate:1,
         :2, …), so each re-drawn menu is tracked anew.
         """
         with self._lock:

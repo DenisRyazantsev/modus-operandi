@@ -86,7 +86,7 @@ class MainTest(unittest.TestCase):
 
         with (
             mock.patch.dict("os.environ", {}, clear=True),
-            mock.patch.object(mod.shutil, "which", return_value="/usr/bin/nano"),
+            mock.patch("shutil.which", return_value="/usr/bin/nano"),
             mock.patch("subprocess.run", side_effect=fake_run),
             mock.patch("sys.stdout", io.StringIO()),
         ):
@@ -108,7 +108,7 @@ class MainTest(unittest.TestCase):
 
         with (
             mock.patch.dict("os.environ", {}, clear=True),
-            mock.patch.object(mod.shutil, "which", return_value="/usr/bin/nano"),
+            mock.patch("shutil.which", return_value="/usr/bin/nano"),
             mock.patch("subprocess.run", side_effect=fake_run),
             mock.patch("sys.stdout", io.StringIO()),
         ):
@@ -131,7 +131,7 @@ class MainTest(unittest.TestCase):
 
         with (
             mock.patch.dict("os.environ", {}, clear=True),
-            mock.patch.object(mod.shutil, "which", return_value="/usr/bin/nano"),
+            mock.patch("shutil.which", return_value="/usr/bin/nano"),
             mock.patch("subprocess.run", side_effect=fake_run),
             mock.patch("sys.stdout", io.StringIO()),
         ):
@@ -152,7 +152,7 @@ class MainTest(unittest.TestCase):
 
         with (
             mock.patch.dict("os.environ", {}, clear=True),
-            mock.patch.object(mod.shutil, "which", return_value="/usr/bin/nano"),
+            mock.patch("shutil.which", return_value="/usr/bin/nano"),
             mock.patch("subprocess.run", side_effect=fake_run),
             mock.patch("sys.stderr", io.StringIO()) as err,
         ):
@@ -166,7 +166,7 @@ class MainTest(unittest.TestCase):
         mod = self.mod
         with (
             mock.patch.dict("os.environ", {}, clear=True),
-            mock.patch.object(mod.shutil, "which", return_value="/usr/bin/nano"),
+            mock.patch("shutil.which", return_value="/usr/bin/nano"),
             mock.patch("subprocess.run") as run,
             mock.patch("sys.stderr", io.StringIO()) as err,
         ):
@@ -183,7 +183,7 @@ class MainTest(unittest.TestCase):
         mod = self.mod
         with (
             mock.patch.dict("os.environ", {"EDITOR": "vim"}, clear=True),
-            mock.patch.object(mod.shutil, "which", return_value=None),
+            mock.patch("shutil.which", return_value=None),
             mock.patch("subprocess.run") as run,
             mock.patch("sys.stderr", io.StringIO()) as err,
         ):

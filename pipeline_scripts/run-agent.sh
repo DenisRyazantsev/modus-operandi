@@ -19,6 +19,13 @@
 # When --task is omitted, the id is taken from the <state_dir>/tasks/current
 # symlink that the workflow's generate-task-id step maintains.
 #
+# This file is the entry point of a module split, one concern per file: the
+# session records and the stale-process cleanup live in session_store.sh
+# (sourced), the whole cursor backend in run-agent-cursor.sh (sourced when
+# SKLC_BACKEND=cursor) and the @TOKEN@ prompt substitution in
+# prompt_subst.sh. This script owns the argv parsing, the task-id
+# resolution, the backend dispatch and the opencode branch.
+#
 # The one-shot task-slug generator used by generate-task-id lives in
 # name-task.sh, not here.
 #
@@ -30,6 +37,8 @@
 #   SKLC_PLANNER_MODEL / SKLC_EXECUTOR_MODEL
 #                      role model of the active backend (used only by cursor)
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 usage() {
   echo "usage: $0 <role> \"<prompt>\" [--task <task-id>] [--reset]" >&2
@@ -46,15 +55,10 @@ if [ "${2:-}" = "--prompt-file" ]; then
   [ -f "$PROMPT_FILE" ] || { echo "error: prompt file not found: $PROMPT_FILE" >&2; exit 2; }
   # Substitute @TOKEN@ placeholders from the environment: the workflow step
   # exports STATE_DIR/LATEST/N/SNAP/etc. before the call, so the prompt files
-  # stay plain .md text with no shell or template escapes.
-  PROMPT="$(python3 - "$PROMPT_FILE" <<'PYEOF'
-import os
-import re
-import sys
-text = open(sys.argv[1], encoding="utf-8").read()
-sys.stdout.write(re.sub(r"@([A-Z0-9_]+)@", lambda m: os.environ.get(m.group(1), m.group(0)), text))
-PYEOF
-)"
+  # stay plain .md text with no shell or template escapes. The substitution
+  # itself lives in prompt_subst.sh, so the prompt format is the only thing
+  # that changes that file.
+  PROMPT="$("$SCRIPT_DIR/prompt_subst.sh" "$PROMPT_FILE")"
   shift 3
 else
   PROMPT="$2"
@@ -106,149 +110,13 @@ if [ -n "$TASK_ID" ] && ! printf '%s' "$TASK_ID" | grep -qE '^[A-Za-z0-9_-]+$'; 
   echo "error: invalid --task value '$TASK_ID'; use only letters, digits, '_' or '-'" >&2
   exit 2
 fi
-if [ -n "$TASK_ID" ]; then
-  SESSIONS_FILE="$STATE_DIR/sessions-$TASK_ID.json"
-else
-  SESSIONS_FILE="$STATE_DIR/sessions.json"
-fi
-PID_FILE="$STATE_DIR/pids/$(basename "$SESSIONS_FILE").$ROLE.pid"
-LOG_DIR="$STATE_DIR/logs"
-LOG_FILE="$LOG_DIR/$(basename "$SESSIONS_FILE" .json)-$ROLE.jsonl"
 
-mkdir -p "$STATE_DIR/pids" "$LOG_DIR"
-if ! touch "$SESSIONS_FILE"; then
-  echo "error: cannot write $SESSIONS_FILE" >&2
-  exit 2
-fi
-
-# Kill any agent process left over from a previously killed step (e.g. a
-# shell-step timeout that killed the shell but not the agent), so a zombie
-# cannot keep writing to this session or burn tokens. The process name to
-# match depends on the backend: opencode vs cursor-agent/agent.
-if [ "$BACKEND" = "cursor" ]; then
-  STALE_PROC_PATTERN='^(cursor-agent|agent)$'
-else
-  STALE_PROC_PATTERN='^opencode'
-fi
-if [ -f "$PID_FILE" ]; then
-  OLD_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
-  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
-    if ps -p "$OLD_PID" -o comm= 2>/dev/null | grep -qE "$STALE_PROC_PATTERN"; then
-      echo "warning: killing stale $BACKEND process $OLD_PID for role '$ROLE'" >&2
-      kill "$OLD_PID" 2>/dev/null || true
-    fi
-  fi
-  rm -f "$PID_FILE"
-fi
-echo "$$" > "$PID_FILE"
-trap 'rm -f "$PID_FILE"' EXIT
-
-read_session() {
-  python3 -c 'import json,sys
-p, r = sys.argv[1], sys.argv[2]
-try:
-    d = json.load(open(p))
-    sys.stdout.write(d.get(r, ""))
-except Exception:
-    pass' "$SESSIONS_FILE" "$ROLE"
-}
-
-save_session() {
-  python3 -c 'import json,sys
-p, r, i = sys.argv[1], sys.argv[2], sys.argv[3]
-d = {}
-try:
-    d = json.load(open(p))
-except Exception:
-    pass
-d[r] = i
-with open(p, "w") as f:
-    json.dump(d, f, indent=2)' "$SESSIONS_FILE" "$ROLE" "$1"
-}
-
-extract_session_id() {
-  # Read the session id straight from the log file with python instead of
-  # piping sed into head: on a large log sed is still writing matches when
-  # head has already exited, gets SIGPIPE, and with set -o pipefail the
-  # whole script dies with exit 141. The regex covers opencode's "sessionID"
-  # and cursor's "session_id" JSON fields alike.
-  python3 -c 'import re, sys
-m = re.search(rb"\"session[_]?[iI][dD]\":\"([^\"]*)\"", open(sys.argv[1], "rb").read())
-if m:
-    sys.stdout.write(m.group(1).decode())' "$LOG_FILE"
-}
-
-resolve_cursor_binary() {
-  # The specific `cursor-agent` name is probed FIRST because it is
-  # unambiguous: a bare `agent` on PATH may be an unrelated binary (Cursor
-  # documents `agent` as its CLI entrypoint and ships `cursor-agent` as a
-  # backward-compatible alias, but other tools install an `agent` too).
-  # `agent` is therefore only the fallback, and the name actually found is
-  # used for the invocation and for the stale process matching.
-  if command -v cursor-agent >/dev/null 2>&1; then
-    echo "cursor-agent"
-    return 0
-  fi
-  if command -v agent >/dev/null 2>&1; then
-    echo "agent"
-    return 0
-  fi
-  return 1
-}
-
-role_body_file() {
-  # The role body (the same PLANNER_BODY/EXECUTOR_BODY the installer writes
-  # into the opencode agent files) lives next to this script as plain text;
-  # cursor has no agent files, so the body prefixes the FIRST message of a
-  # fresh chat and the model remembers its role from then on.
-  local file
-  file="$(dirname "$0")/$ROLE-body.txt"
-  if [ ! -f "$file" ] && [ -n "${SKLC_SCRIPTS_DIR:-}" ]; then
-    file="$SKLC_SCRIPTS_DIR/$ROLE-body.txt"
-  fi
-  if [ -f "$file" ]; then
-    echo "$file"
-    return 0
-  fi
-  return 1
-}
-
-extract_chat_id() {
-  # Parse the `create-chat` output into a chat id: the CLI prints the id as
-  # plain text or as a JSON object; empty input prints nothing. The cursor
-  # CLI is in beta and `create-chat`'s output key is undocumented and
-  # changes between versions, so every plausible key is parsed defensively
-  # instead of breaking on a rename.
-  python3 -c 'import json,sys
-s = sys.stdin.read().strip()
-if not s:
-    sys.exit(1)
-if s.startswith("{"):
-    try:
-        d = json.loads(s)
-        for k in ("chat_id", "chatId", "id", "session_id", "sessionId"):
-            if d.get(k):
-                print(d[k])
-                sys.exit(0)
-    except Exception:
-        pass
-print(s)'
-}
-
-cursor_run() {
-  # One headless cursor-agent invocation for the current turn; `--resume` is
-  # added only when a saved chat id exists. Nothing is echoed from the JSON
-  # stream to the step's stdout: the workflow runner captures step output
-  # through a pipe, and a large stream made the reader close early,
-  # SIGPIPE-ing this script (exit 141). The full log stays in $LOG_FILE.
-  local rc=0
-  if [ -n "$SESSION_ID" ]; then
-    "$CURSOR_BIN" -p --output-format json --force --trust --workspace "$(pwd)" --model "$ROLE_MODEL" --resume "$SESSION_ID" "$PROMPT_FULL" > "$LOG_FILE" 2>&1 || rc=$?
-  else
-    "$CURSOR_BIN" -p --output-format json --force --trust --workspace "$(pwd)" --model "$ROLE_MODEL" "$PROMPT_FULL" > "$LOG_FILE" 2>&1 || rc=$?
-  fi
-  return "$rc"
-}
+# The session store owns the per-role records, the pid files and the
+# stale-agent cleanup (session_store.sh, sourced: it reads the variables
+# above and sets SESSIONS_FILE/PID_FILE/LOG_FILE).
+source "$SCRIPT_DIR/session_store.sh"
+session_paths
+manage_pid_file "$BACKEND"
 
 SESSION_ID=""
 if [ "${RESET:-0}" -eq 0 ]; then
@@ -257,58 +125,10 @@ fi
 
 if [ "$BACKEND" = "cursor" ]; then
   # --- cursor backend: cursor-agent/agent headless with warm chats --------
-  CURSOR_BIN="$(resolve_cursor_binary)" || {
-    echo "error: cursor-agent (or agent) not found in PATH - install the Cursor CLI (https://cursor.com/docs/cli)" >&2
-    exit 2
-  }
-  if [ -z "$ROLE_MODEL" ]; then
-    echo "error: model for role '$ROLE' is not set ($ROLE_MODEL_VAR); run through run-pipeline.py or export it" >&2
-    exit 2
-  fi
-  ROLE_BODY_FILE="$(role_body_file)" || {
-    echo "error: role body file not found for role '$ROLE' (rerun install.py)" >&2
-    exit 2
-  }
-
-  FIRST=0
-  if [ -z "$SESSION_ID" ]; then
-    FIRST=1
-    # Mint a fresh chat through `create-chat`: its id always comes from
-    # Cursor. A synthesized id in --resume is silently accepted by cursor
-    # and starts an EMPTY chat, losing the context - so never invent one.
-    # If create-chat fails, fall back to a bare run: cursor mints the chat
-    # itself and the id is recovered from the JSON output below.
-    CHAT_ID="$( "$CURSOR_BIN" create-chat 2>/dev/null | extract_chat_id )" || CHAT_ID=""
-    if [ -n "$CHAT_ID" ]; then
-      SESSION_ID="$CHAT_ID"
-      save_session "$SESSION_ID"
-    fi
-  fi
-
-  PROMPT_FULL="$PROMPT"
-  if [ "$FIRST" -eq 1 ]; then
-    # The chat is fresh and the LLM does not know its role yet: prefix the
-    # role body once. Resumed chats stay hot and get the bare prompt.
-    BODY="$(cat "$ROLE_BODY_FILE" 2>/dev/null || true)"
-    PROMPT_FULL="$BODY
-
-$PROMPT"
-  fi
-
-  RC=0
-  cursor_run || RC=$?
-  if [ "$RC" -ne 0 ]; then
-    echo "run-agent: $CURSOR_BIN exited $RC; full log: $LOG_FILE" >&2
-    exit "$RC"
-  fi
-  if [ -z "$SESSION_ID" ]; then
-    # Fallback: the id was not obtained from create-chat, so recover it from
-    # the JSON output (always a Cursor-minted id, never synthesized).
-    SESSION_ID="$(extract_session_id)"
-    if [ -n "$SESSION_ID" ]; then
-      save_session "$SESSION_ID"
-    fi
-  fi
+  # The whole backend lives in run-agent-cursor.sh (sourced on demand): it
+  # resolves the binary, mints/resumes warm chats and sets SESSION_ID.
+  source "$SCRIPT_DIR/run-agent-cursor.sh"
+  run_cursor
 else
   # --- opencode backend ----------------------------------------------------
   if [ -z "$SESSION_ID" ]; then
