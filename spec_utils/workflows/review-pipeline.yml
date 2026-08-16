@@ -76,292 +76,114 @@ steps:
       echo "mode: full codebase review";
       fi;
 
-  - id: srp-loop
-    type: do-while
-    max_iterations: 5
-    condition: "{{ steps.srp-verdict.output.exit_code != 0 }}"
-    steps:
-      - id: srp-review
-        type: shell
-        timeout: 7200
-        run: >-
-          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-          PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
-          set -euo pipefail;
-          latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" srp 2>/dev/null || true);
-          n=1;
-          if [ -n "$latest" ]; then
-          b=$(basename "$latest");
-          num=${b#srp-review-};
-          num=${num%.md};
-          case "$num" in ''|*[!0-9]*) num=0;; esac;
-          n=$((num+1));
-          fi;
-          export STATE_DIR="{{ inputs.state_dir }}";
-          export LATEST="$latest";
-          export N="$n";
-          snapfile="{{ inputs.state_dir }}/tasks/current/srp-snapshot.sha";
-          if [ -s "$snapfile" ]; then
-          snap=$(cat "$snapfile");
-          export SNAP="$snap";
-          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/review/srp-rereview.md";
-          else
-          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/review/srp-review.md";
-          fi;
-          snap=$(git stash create 2>/dev/null || true);
-          [ -n "$snap" ] || snap=HEAD;
-          printf '%s' "$snap" > "$snapfile";
-
-      - id: srp-verdict
-        type: shell
-        continue_on_error: true
-        run: >-
-          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-          python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" srp
-
-      - id: srp-fix-branch
-        type: if
-        condition: "{{ steps.srp-verdict.output.exit_code != 0 }}"
-        then:
-          - id: srp-fix
-            type: shell
-            timeout: 7200
-            run: >-
-              SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-              PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
-              latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" srp 2>/dev/null || true);
-              export STATE_DIR="{{ inputs.state_dir }}";
-              export LATEST="$latest";
-              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/srp-fix.md";
-
-  - id: srp-pass-check
-    type: shell
-    run: >-
-      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-      if last=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" srp 2>/dev/null); then
-      echo "SRP REVIEW OK: final verdict PASS ($last)";
-      else
-      echo "WARNING: SRP review loop exhausted all iterations without 'SRP: PASS' (latest review: ${last:-none}); inspect the latest srp-review file and the code";
-      fi
-
-  - id: bug-loop
-    type: do-while
-    max_iterations: 5
-    condition: "{{ steps.bug-verdict.output.exit_code != 0 }}"
-    steps:
-      - id: bug-review
-        type: shell
-        timeout: 7200
-        run: >-
-          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-          PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
-          set -euo pipefail;
-          latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" bugs 2>/dev/null || true);
-          n=1;
-          if [ -n "$latest" ]; then
-          b=$(basename "$latest");
-          num=${b#bug-review-};
-          num=${num%.md};
-          case "$num" in ''|*[!0-9]*) num=0;; esac;
-          n=$((num+1));
-          fi;
-          export STATE_DIR="{{ inputs.state_dir }}";
-          export LATEST="$latest";
-          export N="$n";
-          snapfile="{{ inputs.state_dir }}/tasks/current/bug-snapshot.sha";
-          if [ -s "$snapfile" ]; then
-          snap=$(cat "$snapfile");
-          export SNAP="$snap";
-          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/review/bug-rereview.md";
-          else
-          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/review/bug-review.md";
-          fi;
-          snap=$(git stash create 2>/dev/null || true);
-          [ -n "$snap" ] || snap=HEAD;
-          printf '%s' "$snap" > "$snapfile";
-
-      - id: bug-verdict
-        type: shell
-        continue_on_error: true
-        run: >-
-          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-          python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" bugs
-
-      - id: bug-fix-branch
-        type: if
-        condition: "{{ steps.bug-verdict.output.exit_code != 0 }}"
-        then:
-          - id: bug-fix
-            type: shell
-            timeout: 7200
-            run: >-
-              SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-              PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
-              latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" bugs 2>/dev/null || true);
-              export STATE_DIR="{{ inputs.state_dir }}";
-              export LATEST="$latest";
-              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/bug-fix.md";
-
-  - id: bug-pass-check
-    type: shell
-    run: >-
-      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-      if last=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" bugs 2>/dev/null); then
-      echo "BUGS REVIEW OK: final verdict PASS ($last)";
-      else
-      echo "WARNING: bug review loop exhausted all iterations without 'BUGS: PASS' (latest review: ${last:-none}); inspect the latest bug-review file and the code";
-      fi
-
-  - id: review-loop
-    type: do-while
-    max_iterations: 5
-    condition: "{{ steps.verdict.output.exit_code != 0 }}"
-    steps:
-      - id: review
-        type: shell
-        timeout: 7200
-        run: >-
-          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-          PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
-          set -euo pipefail;
-          latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" review 2>/dev/null || true);
-          n=1;
-          if [ -n "$latest" ]; then
-          b=$(basename "$latest");
-          num=${b#review-};
-          num=${num%.md};
-          case "$num" in ''|*[!0-9]*) num=0;; esac;
-          n=$((num+1));
-          fi;
-          export STATE_DIR="{{ inputs.state_dir }}";
-          export LATEST="$latest";
-          export N="$n";
-          snapfile="{{ inputs.state_dir }}/tasks/current/review-snapshot.sha";
-          if [ -s "$snapfile" ]; then
-          snap=$(cat "$snapfile");
-          export SNAP="$snap";
-          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/review/review-rereview.md";
-          else
-          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/review/review.md";
-          fi;
-          snap=$(git stash create 2>/dev/null || true);
-          [ -n "$snap" ] || snap=HEAD;
-          printf '%s' "$snap" > "$snapfile";
-
-      - id: verdict
-        type: shell
-        continue_on_error: true
-        run: >-
-          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-          python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" review
-
-      - id: fix-branch
-        type: if
-        condition: "{{ steps.verdict.output.exit_code != 0 }}"
-        then:
-          - id: fix
-            type: shell
-            timeout: 7200
-            run: >-
-              SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-              PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
-              latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" review 2>/dev/null || true);
-              export STATE_DIR="{{ inputs.state_dir }}";
-              export LATEST="$latest";
-              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/fix.md";
-
-  - id: pass-check
-    type: shell
-    run: >-
-      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-      if last=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" review 2>/dev/null); then
-      echo "REVIEW OK: final verdict PASS ($last)";
-      else
-      echo "WARNING: review loop exhausted all iterations without 'VERDICT: PASS' (latest review: ${last:-none}); inspect the latest review file and the code";
-      fi
-
-  - id: comment-review-loop
-    type: do-while
-    max_iterations: 5
-    condition: "{{ steps.comment-verdict.output.exit_code != 0 }}"
-    steps:
-      - id: comment-review
-        type: shell
-        timeout: 7200
-        run: >-
-          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-          PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
-          set -euo pipefail;
-          latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" comment 2>/dev/null || true);
-          n=1;
-          if [ -n "$latest" ]; then
-          b=$(basename "$latest");
-          num=${b#comment-review-};
-          num=${num%.md};
-          case "$num" in ''|*[!0-9]*) num=0;; esac;
-          n=$((num+1));
-          fi;
-          export STATE_DIR="{{ inputs.state_dir }}";
-          export LATEST="$latest";
-          export N="$n";
-          snapfile="{{ inputs.state_dir }}/tasks/current/comment-snapshot.sha";
-          if [ -s "$snapfile" ]; then
-          snap=$(cat "$snapfile");
-          export SNAP="$snap";
-          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/review/comment-rereview.md";
-          else
-          "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/review/comment-review.md";
-          fi;
-          snap=$(git stash create 2>/dev/null || true);
-          [ -n "$snap" ] || snap=HEAD;
-          printf '%s' "$snap" > "$snapfile";
-
-      - id: comment-verdict
-        type: shell
-        continue_on_error: true
-        run: >-
-          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-          python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" comment
-
-      - id: comment-fix-branch
-        type: if
-        condition: "{{ steps.comment-verdict.output.exit_code != 0 }}"
-        then:
-          - id: comment-fix
-            type: shell
-            timeout: 7200
-            run: >-
-              SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-              PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
-              latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" comment 2>/dev/null || true);
-              export STATE_DIR="{{ inputs.state_dir }}";
-              export LATEST="$latest";
-              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/review/comment-fix.md";
-
-  - id: comment-pass-check
-    type: shell
-    run: >-
-      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-      if last=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" comment 2>/dev/null); then
-      echo "COMMENT REVIEW OK: final verdict PASS ($last)";
-      else
-      echo "WARNING: comment review loop exhausted all iterations without 'VERDICT: PASS' (latest review: ${last:-none}); inspect the latest comment-review file and the code";
-      fi
-
-  - id: report
+  - id: warm-planner
     type: shell
     timeout: 7200
     run: >-
       SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
       PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
-      set -euo pipefail;
-      srp_last=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" srp 2>/dev/null || true);
-      bugs_last=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" bugs 2>/dev/null || true);
-      review_last=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" review 2>/dev/null || true);
-      comment_last=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" comment 2>/dev/null || true);
+      # The four parallel checks each run in a FORK of this warm planner
+      # session (ADR-0009). The cursor backend has no fork primitive, so the
+      # checks there mint fresh chats and the warm-up is pointless: skip it.
+      if [ "${SKLC_BACKEND:-opencode}" = "cursor" ]; then
+      echo "cursor backend: skipping warm-up (parallel checks mint fresh chats)";
+      exit 0;
+      fi;
       export STATE_DIR="{{ inputs.state_dir }}";
-      export SRP_LAST="$srp_last";
-      export BUGS_LAST="$bugs_last";
-      export REVIEW_LAST="$review_last";
-      export COMMENT_LAST="$comment_last";
-      "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/review/report.md";
+      "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/review/warmup.md";
+
+  - id: review-fix-loop
+    type: do-while
+    max_iterations: 5
+    condition: "{{ steps.merge-reports.output.exit_code != 0 }}"
+    steps:
+      - id: pending-kinds
+        type: shell
+        run: >-
+          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+          python3 "$SKLC_SCRIPTS_DIR/check_review.py" pending "{{ inputs.state_dir }}" ""
+
+      - id: review-fan
+        type: fan-out
+        max_concurrency: 4
+        items: "{{ steps.pending-kinds.output.stdout | from_json }}"
+        step:
+          id: check
+          type: shell
+          timeout: 7200
+          run: |-
+            SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+            PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
+            set -euo pipefail;
+            # One review per kind, each in its own FORK of the warm planner
+            # session (ADR-0009): the checks run in parallel and never mutate
+            # the parent session, whose id stays in the session store. A
+            # snapshot file from a previous iteration selects the re-review
+            # prompt, which diffs the fixed code against @SNAP@.
+            ITEM="{{ item }}";
+            case "$ITEM" in
+              srp) PREFIX=srp-review; PROMPT=review/srp-review.md; REREVIEW=review/srp-rereview.md;;
+              bugs) PREFIX=bug-review; PROMPT=review/bug-review.md; REREVIEW=review/bug-rereview.md;;
+              review) PREFIX=review; PROMPT=review/review.md; REREVIEW=review/review-rereview.md;;
+              comment) PREFIX=comment-review; PROMPT=review/comment-review.md; REREVIEW=review/comment-rereview.md;;
+              *) echo "error: unknown review kind '$ITEM'" >&2; exit 2;;
+            esac;
+            latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" "$ITEM" 2>/dev/null || true);
+            n=1;
+            if [ -n "$latest" ]; then
+            b=$(basename "$latest");
+            num=${b#$PREFIX-};
+            num=${num%.md};
+            case "$num" in ''|*[!0-9]*) num=0;; esac;
+            n=$((num+1));
+            fi;
+            export STATE_DIR="{{ inputs.state_dir }}";
+            export LATEST="$latest";
+            export N="$n";
+            snapfile="{{ inputs.state_dir }}/tasks/current/$ITEM-snapshot.sha";
+            if [ -s "$snapfile" ]; then
+            snap=$(cat "$snapfile");
+            export SNAP="$snap";
+            "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --fork --prompt-file "$PROMPTS_DIR/$REREVIEW";
+            else
+            "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --fork --prompt-file "$PROMPTS_DIR/$PROMPT";
+            fi;
+            snap=$(git stash create 2>/dev/null || true);
+            [ -n "$snap" ] || snap=HEAD;
+            printf '%s' "$snap" > "$snapfile";
+
+      - id: merge-reports
+        type: shell
+        continue_on_error: true
+        run: >-
+          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+          python3 "$SKLC_SCRIPTS_DIR/check_review.py" merge "{{ inputs.state_dir }}" ""
+
+      - id: fix-branch
+        type: if
+        condition: "{{ steps.merge-reports.output.exit_code != 0 }}"
+        then:
+          - id: fix-all
+            type: shell
+            timeout: 7200
+            run: >-
+              SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+              PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
+              export STATE_DIR="{{ inputs.state_dir }}";
+              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/fix-all.md"
+
+  - id: pass-check
+    type: shell
+    run: >-
+      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
+      fails="";
+      for kind in srp bugs review comment; do
+      if ! python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "" "$kind" >/dev/null 2>&1; then
+      fails="$fails $kind";
+      fi;
+      done;
+      if [ -z "$fails" ]; then
+      echo "REVIEW OK: all verdicts PASS";
+      else
+      echo "WARNING: review loop exhausted all iterations without pass (kinds:$fails); inspect the latest review files and the code";
+      fi

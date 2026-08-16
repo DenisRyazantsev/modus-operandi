@@ -252,5 +252,62 @@ class RunAgentTest(unittest.TestCase):
         )
 
 
+    # -- fork (ADR-0009): isolated sessions for the parallel checks ---------
+
+    def test_opencode_fork_forks_warm_session_and_keeps_parent_id(self):
+        _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
+        self._seed_session("planner", "warm-999")
+        result = self._run("planner", "review now", "--fork")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        invs = read_invocations(self.opencode_log)
+        self.assertEqual(
+            invs[0],
+            ["run", "--session", "warm-999", "--fork", "--agent", "planner",
+             "--auto", "--format", "json", "review now"],
+        )
+        # The fork's new session id is NOT written into the store: the parent
+        # stays authoritative for the next fork (ADR-0009).
+        self.assertEqual(self._sessions().get("planner"), "warm-999")
+        # The fork wrote its own per-invocation log file, so four concurrent
+        # forks never truncate one shared role log over each other.
+        fork_logs = list((self.state / "logs").glob("*-fork-*.jsonl"))
+        self.assertEqual(len(fork_logs), 1)
+
+    def test_opencode_fork_without_warm_session_errors(self):
+        _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
+        result = self._run("planner", "review now", "--fork")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("no warm session to fork", result.stderr)
+
+    def test_cursor_fork_mints_fresh_chat_without_saving(self):
+        # cursor-agent has no fork primitive (ADR-0009 deviation, documented
+        # in run-agent-cursor.sh): a fork invocation mints a FRESH chat and
+        # never resumes the stored warm chat, so four concurrent checks
+        # cannot corrupt a shared chat.
+        _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_SCRIPT)
+        self._seed_session("planner", "warm-456")
+        result = self._run("planner", "review now", "--fork", SKLC_BACKEND="cursor")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        invs = read_invocations(self.cursor_log)
+        self.assertEqual(invs[0], ["create-chat"])
+        run = invs[1]
+        self.assertEqual(run[9], "--resume")
+        self.assertEqual(run[10], "chat-fresh-123")  # the FRESH chat
+        self.assertTrue(run[-1].startswith(PLANNER_BODY))
+        # The fresh chat id is ephemeral: the warm id stays in the store.
+        self.assertEqual(self._sessions().get("planner"), "warm-456")
+
+    def test_cursor_fork_with_failed_create_chat_never_resumes_warm_chat(self):
+        _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_NO_CREATE_SCRIPT)
+        self._seed_session("planner", "warm-456")
+        result = self._run("planner", "review now", "--fork", SKLC_BACKEND="cursor")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        invs = read_invocations(self.cursor_log)
+        self.assertEqual(invs[0], ["create-chat"])  # attempted, failed
+        run = invs[1]
+        self.assertNotIn("--resume", run)  # bare run: cursor mints its own
+        self.assertEqual(self._sessions().get("planner"), "warm-456")
+
+
 if __name__ == "__main__":
     unittest.main()

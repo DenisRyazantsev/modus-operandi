@@ -86,18 +86,18 @@ class WorkflowStructureTest(InstallerTestCase):
             encoding="utf-8"
         )
         self.assertIn("do-while", workflow)
-        self.assertIn("{{ steps.verdict.output.exit_code != 0 }}", workflow)
+        self.assertIn("{{ steps.merge-reports.output.exit_code != 0 }}", workflow)
         self.assertIn("continue_on_error: true", workflow)
         self.assertIn("check_review.py", workflow)
-        self.assertIn('check_review.py" check-review', workflow)
-        verdict_run = self.find_step(self.parsed_workflow()["steps"], "verdict")["run"]
+        self.assertIn('check_review.py" merge', workflow)
+        merge_run = self.find_step(self.parsed_workflow()["steps"], "merge-reports")["run"]
         self.assertIn(
-            'check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" review',
-            verdict_run,
+            'check_review.py" merge "{{ inputs.state_dir }}" "{{ inputs.task_id }}"',
+            merge_run,
         )
         pass_check_run = self.find_step(self.parsed_workflow()["steps"], "pass-check")["run"]
-        self.assertIn("REVIEW OK: final verdict PASS", pass_check_run)
-        self.assertIn("WARNING: review loop exhausted", pass_check_run)
+        self.assertIn("REVIEW OK: all verdicts PASS", pass_check_run)
+        self.assertIn("WARNING: review loop exhausted all iterations without pass", pass_check_run)
         self.assertIn("- id: fix-branch", workflow)
         self.assertNotIn("sort -V", workflow)
 
@@ -153,24 +153,55 @@ class WorkflowStructureTest(InstallerTestCase):
                     nested = step.get(branch)
                     if isinstance(nested, list):
                         collect(nested)
+                fan = step.get("step")
+                if isinstance(fan, dict) and isinstance(fan.get("run"), str):
+                    runs.append(fan["run"])
 
         collect(parsed["steps"])
         all_runs = " ".join(runs)
         self.assertIn("id: review-pipeline", review)
         self.assertNotIn("inputs: {}", review)
         self.assertIn("branch-diff:", review)
+        # ADR-0009: a warm-up step, then one parallel retry loop, then the
+        # deterministic final pass-check; the agentic report step is gone.
         for step in (
             "generate-task-id",
             "determine-scope",
-            "srp-loop",
-            "bug-loop",
-            "review-loop",
-            "comment-review-loop",
-            "report",
+            "warm-planner",
+            "review-fix-loop",
+            "pass-check",
         ):
             self.assertIn(f"- id: {step}", review, step)
-        for kind in ("srp", "bugs", "review", "comment"):
-            self.assertIn(f'check-review "{{{{ inputs.state_dir }}}}" "" {kind}', all_runs, kind)
+        self.assertNotIn("- id: report", review)
+        self.assertNotIn("- id: srp-loop", review)
+        self.assertNotIn("- id: bug-loop", review)
+        self.assertNotIn("- id: review-loop", review)
+        self.assertNotIn("- id: comment-review-loop", review)
+        # The fan-out item runs each check in a fork of the warm session and
+        # dispatches the per-kind prompt + rereview-vs-review on the snapshot.
+        fan = self.find_step(parsed["steps"], "review-fan")
+        self.assertIsNotNone(fan)
+        check = fan["step"]
+        check_run = check["run"]
+        self.assertIn('run-agent.sh" planner --fork --prompt-file', check_run)
+        for kind, prompt in (
+            ("srp", "review/srp-review.md"),
+            ("bugs", "review/bug-review.md"),
+            ("review", "review/review.md"),
+            ("comment", "review/comment-review.md"),
+        ):
+            self.assertIn(prompt, check_run, kind)
+        self.assertIn("review/srp-rereview.md", check_run)
+        self.assertIn("-snapshot.sha", check_run)
+        self.assertIn("git stash create", check_run)
+        self.assertIn('merge "{{ inputs.state_dir }}" ""', all_runs)
+        self.assertIn('pending "{{ inputs.state_dir }}" ""', all_runs)
+        self.assertIn("fix-all.md", all_runs)
+        # The warm-up is skipped on the cursor backend (no fork primitive).
+        warm_run = self.find_step(parsed["steps"], "warm-planner")["run"]
+        self.assertIn("SKLC_BACKEND", warm_run)
+        self.assertIn('"cursor"', warm_run)
+        self.assertIn("review/warmup.md", warm_run)
         self.assertIn("scope.txt", all_runs)
         self.assertIn("refs/remotes/origin/HEAD", all_runs)
         self.assertIn("origin/main", all_runs)
@@ -184,10 +215,10 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertIn("git branch --show-current", all_runs)
         self.assertIn("date +%Y%m%d-%H%M", all_runs)
         self.assertIn("ln -sfn", all_runs)
-        report_prompt = (
-            self.home / ".config/spec-kit-llm-client/prompts/review/report.md"
-        ).read_text()
-        self.assertIn("review-report.md", report_prompt)
+        # The merged review-report.md is the only writer of the name now.
+        self.assertFalse(
+            (self.home / ".config/spec-kit-llm-client/prompts/review/report.md").exists()
+        )
         self.assertNotIn("base=$(cat", all_runs)
         self.assertNotIn("adr.md", all_runs)
         self.assertNotIn("adr_dir", all_runs)
@@ -238,15 +269,9 @@ class WorkflowStructureTest(InstallerTestCase):
             for s in (
                 "generate-task-id",
                 "determine-scope",
-                "srp-loop",
-                "srp-pass-check",
-                "bug-loop",
-                "bug-pass-check",
-                "review-loop",
+                "warm-planner",
+                "review-fix-loop",
                 "pass-check",
-                "comment-review-loop",
-                "comment-pass-check",
-                "report",
             )
         ]
         self.assertEqual(order, sorted(order))
@@ -296,7 +321,7 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertIn("adr-saved.txt", save_adr)
         sync_index = workflow.index("- id: sync-adr")
         pass_index = workflow.index("- id: pass-check")
-        review_loop_index = workflow.index("- id: review-loop")
+        review_loop_index = workflow.index("- id: review-fix-loop")
         self.assertLess(review_loop_index, sync_index)
         self.assertLess(sync_index, pass_index)
 
@@ -423,16 +448,9 @@ class WorkflowStructureTest(InstallerTestCase):
             "planner-answers",
             "implement",
             "implement-retry",
-            "review",
-            "fix",
+            "fix-all",
             "sync-adr",
             "save-adr",
-            "srp-review",
-            "srp-fix",
-            "bug-review",
-            "bug-fix",
-            "comment-review",
-            "comment-fix",
         ):
             found = self.find_step(parsed["steps"], step)
             self.assertIsNotNone(found, step)
@@ -441,58 +459,108 @@ class WorkflowStructureTest(InstallerTestCase):
             "implement-loop",
             "implement-verify",
             "implement-pass-check",
-            "verdict",
+            "pending-kinds",
+            "merge-reports",
+            "fix-branch",
             "pass-check",
             "adr-feedback-clear",
             "validate-task-id",
             "validate-feature",
             "generate-task-id",
-            "srp-verdict",
-            "srp-pass-check",
-            "bug-verdict",
-            "bug-pass-check",
-            "comment-verdict",
-            "comment-pass-check",
         ):
             found = self.find_step(parsed["steps"], step)
             self.assertIsNotNone(found, step)
             self.assertNotIn("timeout", found, step)
+        # The fan-out item template is an agent step too (ADR-0009): its
+        # timeout must be patched with the configured shell timeout.
+        fan = self.find_step(parsed["steps"], "review-fan")
+        self.assertIsNotNone(fan)
+        self.assertEqual(fan["step"].get("timeout"), 7200)
 
-    def test_workflow_srp_loop_structure(self):
+    def test_workflow_fan_out_item_timeout_is_patched(self):
+        # The engine accepts only a literal timeout; the renderer's
+        # _patch_workflow_numbers must reach into the fan-out `step:` template
+        # and overwrite its literal with the configured shell_timeout.
+        self.assertEqual(self.install(), 0)
+        self.write_config(
+            self.read_config().replace("shell_timeout: 7200", "shell_timeout: 1234")
+        )
+        self.assertEqual(self.install(), 0)
+        parsed = self.parsed_workflow()
+        fan = self.find_step(parsed["steps"], "review-fan")
+        self.assertIsNotNone(fan)
+        self.assertEqual(fan["step"].get("timeout"), 1234)
+
+    def test_workflow_unified_review_loop_structure(self):
+        # ADR-0009: the four sequential review loops (srp/bug/review/comment)
+        # are replaced by one retry do-while whose fan-out runs only the
+        # still-failing kinds in parallel forks of the warm planner session.
         self.assertEqual(self.install(), 0)
         workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
             encoding="utf-8"
         )
-        self.assertIn("- id: srp-loop", workflow)
-        self.assertIn("- id: srp-review", workflow)
-        self.assertIn("- id: srp-verdict", workflow)
-        self.assertIn("- id: srp-fix", workflow)
-        self.assertIn("- id: srp-pass-check", workflow)
-        srp_verdict_run = self.find_step(self.parsed_workflow()["steps"], "srp-verdict")["run"]
-        self.assertIn(
-            'check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" srp', srp_verdict_run
-        )
-        srp_pass_run = self.find_step(self.parsed_workflow()["steps"], "srp-pass-check")["run"]
-        self.assertIn("SRP REVIEW OK: final verdict PASS", srp_pass_run)
-        self.assertIn("WARNING: SRP review loop exhausted", srp_pass_run)
-        self.assertIn("{{ steps.srp-verdict.output.exit_code != 0 }}", workflow)
         parsed = self.parsed_workflow()
-        srp_loop = self.find_step(parsed["steps"], "srp-loop")
-        self.assertIsNotNone(srp_loop)
-        self.assertEqual(srp_loop["max_iterations"], 5)
-        srp_review_run = self.find_step(parsed["steps"], "srp-review")["run"]
-        self.assertIn("--prompt-file", srp_review_run)
+        loop = self.find_step(parsed["steps"], "review-fix-loop")
+        self.assertIsNotNone(loop)
+        self.assertEqual(loop["type"], "do-while")
+        self.assertEqual(loop["max_iterations"], 5)
+        self.assertIn("steps.merge-reports.output.exit_code", loop["condition"])
+        pending_run = self.find_step(parsed["steps"], "pending-kinds")["run"]
         self.assertIn(
-            "SRP: FIX",
-            (self.home / ".config/spec-kit-llm-client/prompts/adr/srp-review.md").read_text(),
+            'check_review.py" pending "{{ inputs.state_dir }}" "{{ inputs.task_id }}"',
+            pending_run,
         )
-        self.assertIsNotNone(self.find_step(parsed["steps"], "srp-fix-branch"))
-        implement_index = workflow.index("- id: implement")
-        srp_index = workflow.index("- id: srp-loop")
-        srp_check_index = workflow.index("- id: srp-pass-check")
-        review_index = workflow.index("- id: review-loop")
-        self.assertLess(implement_index, srp_index)
-        self.assertLess(srp_check_index, review_index)
+        fan = self.find_step(parsed["steps"], "review-fan")
+        self.assertIsNotNone(fan)
+        self.assertEqual(fan["type"], "fan-out")
+        self.assertEqual(fan["max_concurrency"], 4)
+        self.assertIn("{{ steps.pending-kinds.output.stdout | from_json }}", fan["items"])
+        check = fan["step"]
+        self.assertEqual(check["id"], "check")
+        self.assertEqual(check.get("timeout"), 7200)
+        check_run = check["run"]
+        self.assertIn('run-agent.sh" planner --fork --prompt-file', check_run)
+        # The item dispatches on {{ item }}: per-kind report prefix, prompt
+        # file and PASS marker via check_review.py.
+        kind_prompts = {
+            "srp": "PROMPT=adr/srp-review.md",
+            "bugs": "PROMPT=adr/bug-review.md",
+            "review": "PROMPT=adr/review.md",
+            "comment": "PROMPT=adr/comment-review.md",
+        }
+        for kind, prefix in (
+            ("srp", "srp-review"),
+            ("bugs", "bug-review"),
+            ("review", "review"),
+            ("comment", "comment-review"),
+        ):
+            self.assertIn(prefix, check_run)
+            self.assertIn(kind_prompts[kind], check_run)
+        fix_all = self.find_step(parsed["steps"], "fix-all")
+        self.assertIsNotNone(fix_all)
+        self.assertIn("--prompt-file", fix_all["run"])
+        self.assertIn("fix-all.md", fix_all["run"])
+        # The four sequential loops and their per-kind pass-checks are gone.
+        for old in (
+            "srp-loop",
+            "bug-loop",
+            "review-loop",
+            "comment-review-loop",
+            "srp-pass-check",
+            "bug-pass-check",
+            "comment-pass-check",
+        ):
+            self.assertNotIn(old, workflow)
+        # The per-type fix prompts are no longer invoked (ADR-0009).
+        for old_fix in ('srp-fix.md"', 'bug-fix.md"', 'comment-fix.md"', '"$PROMPTS_DIR/fix.md"'):
+            self.assertNotIn(old_fix, workflow)
+        implement_index = workflow.index("- id: implement-pass-check")
+        loop_index = workflow.index("- id: review-fix-loop")
+        sync_index = workflow.index("- id: sync-adr")
+        pass_index = workflow.index("- id: pass-check")
+        self.assertLess(implement_index, loop_index)
+        self.assertLess(loop_index, sync_index)
+        self.assertLess(sync_index, pass_index)
 
     def test_workflow_implement_loop_structure(self):
         # ADR-0007: after implement, a verify loop guards against an executor
@@ -529,10 +597,10 @@ class WorkflowStructureTest(InstallerTestCase):
         )
         implement_index = workflow.index("- id: implement")
         loop_index = workflow.index("- id: implement-loop")
-        srp_index = workflow.index("- id: srp-loop")
+        review_loop_index = workflow.index("- id: review-fix-loop")
         pass_index = workflow.index("- id: implement-pass-check")
         self.assertLess(implement_index, loop_index)
-        self.assertLess(loop_index, srp_index)
+        self.assertLess(loop_index, review_loop_index)
         self.assertLess(loop_index, pass_index)
 
     def test_workflow_implement_iterations_configurable(self):
@@ -548,81 +616,28 @@ class WorkflowStructureTest(InstallerTestCase):
             self.find_step(parsed["steps"], "implement-loop")["max_iterations"], 3
         )
 
-    def test_workflow_bug_loop_structure(self):
+    def test_workflow_per_kind_review_prompts_still_ship(self):
+        # ADR-0009 retires the per-kind FIX prompts and the sequential loops,
+        # but the four per-kind REVIEW prompts are still the prompt files the
+        # parallel fan-out dispatches on (one per kind).
         self.assertEqual(self.install(), 0)
-        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("- id: bug-loop", workflow)
-        self.assertIn("- id: bug-review", workflow)
-        self.assertIn("- id: bug-verdict", workflow)
-        self.assertIn("- id: bug-fix-branch", workflow)
-        self.assertIn("- id: bug-fix", workflow)
-        self.assertIn("- id: bug-pass-check", workflow)
-        bug_verdict_run = self.find_step(self.parsed_workflow()["steps"], "bug-verdict")["run"]
+        adr_prompts = self.home / ".config/spec-kit-llm-client/prompts/adr"
         self.assertIn(
-            'check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" bugs', bug_verdict_run
+            "SRP: FIX",
+            (adr_prompts / "srp-review.md").read_text(encoding="utf-8"),
         )
-        bug_pass_run = self.find_step(self.parsed_workflow()["steps"], "bug-pass-check")["run"]
-        self.assertIn("BUGS REVIEW OK: final verdict PASS", bug_pass_run)
-        self.assertIn("WARNING: bug review loop exhausted", bug_pass_run)
-        self.assertIn("{{ steps.bug-verdict.output.exit_code != 0 }}", workflow)
-        parsed = self.parsed_workflow()
-        bug_loop = self.find_step(parsed["steps"], "bug-loop")
-        self.assertIsNotNone(bug_loop)
-        self.assertEqual(bug_loop["max_iterations"], 5)
-        bug_review_run = self.find_step(parsed["steps"], "bug-review")["run"]
-        self.assertIn("--prompt-file", bug_review_run)
         self.assertIn(
             "BUGS: FIX",
-            (self.home / ".config/spec-kit-llm-client/prompts/adr/bug-review.md").read_text(),
+            (adr_prompts / "bug-review.md").read_text(encoding="utf-8"),
         )
-        self.assertIsNotNone(self.find_step(parsed["steps"], "bug-fix-branch"))
-        srp_check_index = workflow.index("- id: srp-pass-check")
-        bug_index = workflow.index("- id: bug-loop")
-        review_index = workflow.index("- id: review-loop")
-        self.assertLess(srp_check_index, bug_index)
-        self.assertLess(bug_index, review_index)
-
-    def test_workflow_comment_review_loop_structure(self):
-        self.assertEqual(self.install(), 0)
-        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("- id: comment-review-loop", workflow)
-        self.assertIn("- id: comment-review", workflow)
-        self.assertIn("- id: comment-verdict", workflow)
-        self.assertIn("- id: comment-fix", workflow)
-        self.assertIn("- id: comment-pass-check", workflow)
-        comment_verdict_run = self.find_step(
-            self.parsed_workflow()["steps"], "comment-verdict"
-        )["run"]
         self.assertIn(
-            'check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" comment',
-            comment_verdict_run,
+            "VERDICT: FIX",
+            (adr_prompts / "review.md").read_text(encoding="utf-8"),
         )
-        comment_pass_run = self.find_step(
-            self.parsed_workflow()["steps"], "comment-pass-check"
-        )["run"]
-        self.assertIn("COMMENT REVIEW OK: final verdict PASS", comment_pass_run)
-        self.assertIn("WARNING: comment review loop exhausted", comment_pass_run)
-        self.assertIn("{{ steps.comment-verdict.output.exit_code != 0 }}", workflow)
-        parsed = self.parsed_workflow()
-        comment_loop = self.find_step(parsed["steps"], "comment-review-loop")
-        self.assertIsNotNone(comment_loop)
-        self.assertEqual(comment_loop["max_iterations"], 5)
-        comment_run = self.find_step(parsed["steps"], "comment-review")["run"]
-        self.assertIn("--prompt-file", comment_run)
-        comment_prompt = (
-            self.home / ".config/spec-kit-llm-client/prompts/adr/comment-review.md"
-        ).read_text()
+        comment_prompt = (adr_prompts / "comment-review.md").read_text(encoding="utf-8")
         self.assertIn("VERDICT: FIX", comment_prompt)
         self.assertIn("Why a reader would be misled:", comment_prompt)
         self.assertIn("Verdict: COMMENT | REFACTOR", comment_prompt)
-        self.assertIsNotNone(self.find_step(parsed["steps"], "comment-fix-branch"))
-        pass_check_index = workflow.index("- id: pass-check")
-        comment_index = workflow.index("- id: comment-review-loop")
-        self.assertLess(pass_check_index, comment_index)
 
     def test_workflow_shell_blocks_are_syntactically_valid(self):
         # Every inline shell block must parse with /bin/sh (what specify uses).

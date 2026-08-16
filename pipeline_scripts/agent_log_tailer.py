@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import re
 from pathlib import Path
 
 from _run_pipeline_common import render_log_event
@@ -41,7 +42,12 @@ class AgentLogTailer:
             lines, _ = self._read_appended(path)
             if not lines:
                 continue
-            role = path.stem.rsplit("-", 1)[-1]
+            # Parallel review forks write per-invocation log files
+            # (sessions-<task>-<role>-fork-<pid>.jsonl, see run-agent.sh): strip
+            # the -fork-<pid> suffix so the role is still derived from the log
+            # file's last dash segment.
+            stem = re.sub(r"-fork-\d+$", "", path.stem)
+            role = stem.rsplit("-", 1)[-1]
             for line in lines:
                 # The role is fixed per log file; render_log_event maps the
                 # line to a (role, text) pair and never varies the role.

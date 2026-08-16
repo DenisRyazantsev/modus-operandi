@@ -118,7 +118,7 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
         "review/review-rereview.md",
         "review/comment-review.md",
         "review/comment-rereview.md",
-        "review/report.md",
+        "review/warmup.md",
         "review/comment-fix.md",
         "adr/write-adr.md",
         "adr/adr-revise.md",
@@ -135,6 +135,7 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
         "srp-fix.md",
         "bug-fix.md",
         "fix.md",
+        "fix-all.md",
     ):
         if not (paths["prompts"] / rel).is_file():
             errors.append(f"generated prompt missing: {paths['prompts'] / rel}")

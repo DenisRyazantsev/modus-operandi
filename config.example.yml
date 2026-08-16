@@ -24,10 +24,10 @@ cursor:                    # models for the cursor backend (passed to cursor-age
 
 workflow:
   state_dir: .workflow           # task artifact directory inside a project
-  max_fix_iterations: 5          # ceiling for the review-fix loop
-  max_srp_iterations: 5          # ceiling for the SRP review-fix loop (before the bug review)
-  max_bug_iterations: 5          # ceiling for the bug review-fix loop (before the main review)
-  max_comment_iterations: 5      # ceiling for the comment (readability) review-fix loop (after the main review)
+  max_fix_iterations: 5          # ceiling for the unified parallel review-fix loop (SRP, bugs, general review, comments, ADR-0009)
+  max_srp_iterations: 5          # legacy: no longer binds a separate SRP loop (kept for backward compatibility)
+  max_bug_iterations: 5          # legacy: no longer binds a separate bug loop (kept for backward compatibility)
+  max_comment_iterations: 5      # legacy: no longer binds a separate comment loop (kept for backward compatibility)
   max_adr_iterations: 3          # ceiling for the human ADR approve/revise/reject loop
   max_implement_iterations: 2    # ceiling for the implement verify/retry loop (guard against an empty implementation)
   shell_timeout: 7200            # per-step timeout in seconds for agent steps (2h)

@@ -122,3 +122,14 @@ class AgentLogTailerTest(unittest.TestCase):
             '{"part": {"type": "text", "text": "fresh"}}\n', encoding="utf-8"
         )
         self.assertEqual(tailer.tail(), [("planner", "fresh")])
+
+    def test_fork_log_files_still_derive_the_role(self):
+        # Parallel review forks write per-invocation logs
+        # (sessions-<task>-<role>-fork-<pid>.jsonl, ADR-0009): the -fork-<pid>
+        # suffix must not leak into the role label.
+        tailer = self.mod.AgentLogTailer(self.dir)
+        log = self.dir / "sessions-parallel-review-20260816-planner-fork-4242.jsonl"
+        log.write_text(
+            '{"part": {"type": "text", "text": "fork line"}}\n', encoding="utf-8"
+        )
+        self.assertEqual(tailer.tail(), [("planner", "fork line")])

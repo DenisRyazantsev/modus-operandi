@@ -6,6 +6,16 @@
 # SKLC_BACKEND=cursor: it reads the role/prompt/model/session variables and
 # writes back SESSION_ID, so run-agent.sh's final "SESSION:<id>" line works
 # for both backends. A change to the cursor backend touches only this file.
+#
+# Deviation from ADR-0009 (documented per the answers): cursor-agent has no
+# fork primitive — `opencode run --session <id> --fork` is opencode-only, so
+# a --fork invocation here cannot fork the warm chat. Each parallel check
+# therefore mints its OWN fresh chat via `agent create-chat` (FORK=1 makes
+# run_cursor behave like a fresh-chat run: the stored warm chat id is never
+# resumed and the minted chat id is never saved to the session store), so
+# four concurrent checks never resume/corrupt one shared warm chat. The warm
+# context is lost on cursor — unavoidable without a fork primitive, and the
+# review prompts already instruct each check to read scope.txt itself.
 
 resolve_cursor_binary() {
   # The specific `cursor-agent` name is probed FIRST because it is
@@ -98,7 +108,7 @@ run_cursor() {
   }
 
   FIRST=0
-  if [ -z "$SESSION_ID" ]; then
+  if [ -z "$SESSION_ID" ] || [ "${FORK:-0}" -eq 1 ]; then
     FIRST=1
     # Mint a fresh chat through `create-chat`: its id always comes from
     # Cursor. A synthesized id in --resume is silently accepted by cursor
@@ -108,7 +118,15 @@ run_cursor() {
     CHAT_ID="$( "$CURSOR_BIN" create-chat 2>/dev/null | extract_chat_id )" || CHAT_ID=""
     if [ -n "$CHAT_ID" ]; then
       SESSION_ID="$CHAT_ID"
-      save_session "$SESSION_ID"
+      # Fork chats are per-check ephemeral: never write them into the shared
+      # session store (the parent warm chat id must stay authoritative).
+      if [ "${FORK:-0}" -ne 1 ]; then
+        save_session "$SESSION_ID"
+      fi
+    elif [ "${FORK:-0}" -eq 1 ]; then
+      # A fork must never fall back to the stored warm chat: clearing the id
+      # makes run_cursor_once run without --resume (cursor mints its own).
+      SESSION_ID=""
     fi
   fi
 
@@ -130,9 +148,10 @@ $PROMPT"
   fi
   if [ -z "$SESSION_ID" ]; then
     # Fallback: the id was not obtained from create-chat, so recover it from
-    # the JSON output (always a Cursor-minted id, never synthesized).
+    # the JSON output (always a Cursor-minted id, never synthesized). Fork
+    # ids stay out of the session store, like the opencode fork ids.
     SESSION_ID="$(extract_session_id)"
-    if [ -n "$SESSION_ID" ]; then
+    if [ -n "$SESSION_ID" ] && [ "${FORK:-0}" -ne 1 ]; then
       save_session "$SESSION_ID"
     fi
   fi

@@ -163,6 +163,7 @@ def render_run_pipeline(paths: Paths) -> None:
         ("live_monitor", "live_monitor.py"),
         ("config_invocation", "config_invocation.py"),
         ("run_statistics", "run_statistics.py"),
+        ("latency_table", "latency_table.py"),
         ("notify", "notify.py"),
         ("feedback_editor", "feedback_editor.py"),
         ("pty_spawn", "pty_spawn.py"),
@@ -212,13 +213,14 @@ def render_adr_scripts(paths: Paths) -> None:
 # Loop step id -> config key for the max-iteration ceiling. The engine only
 # accepts a literal integer for max_iterations (no expressions), so the
 # configured values are written into the workflow at install/--apply time.
+# The four per-kind review loops were replaced by the single parallel
+# review-fix-loop (ADR-0009); the legacy per-check config keys
+# (max_srp_iterations / max_bug_iterations / max_comment_iterations) stay in
+# the config for backward compatibility but no longer bind any loop.
 _LOOP_ITERATION_KEYS = {
     "adr-loop": "max_adr_iterations",
     "implement-loop": "max_implement_iterations",
-    "srp-loop": "max_srp_iterations",
-    "bug-loop": "max_bug_iterations",
-    "review-loop": "max_fix_iterations",
-    "comment-review-loop": "max_comment_iterations",
+    "review-fix-loop": "max_fix_iterations",
 }
 
 
@@ -245,6 +247,11 @@ def _patch_workflow_numbers(data: dict[str, Any], cfg: dict[str, Any]) -> None:
                 nested = step.get(branch)
                 if isinstance(nested, list):
                     walk(nested)
+            # A fan-out step's nested `step:` template is a step in its own
+            # right (one shell step per item) and must be patched too.
+            fan = step.get("step")
+            if isinstance(fan, dict):
+                walk([fan])
 
     walk(data["steps"])
 

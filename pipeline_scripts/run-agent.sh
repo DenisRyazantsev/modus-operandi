@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # run-agent.sh - session glue for the adr-pipeline workflow.
 #
-# Usage: run-agent.sh <role> "<prompt>" [--task <task-id>] [--reset]
-#        run-agent.sh <role> --prompt-file <path> [--task <task-id>] [--reset]
+# Usage: run-agent.sh <role> "<prompt>" [--task <task-id>] [--reset] [--fork]
+#        run-agent.sh <role> --prompt-file <path> [--task <task-id>] [--reset] [--fork]
 #
 # Keeps one warm agent session per role (stored in <state_dir>/sessions.json)
 # and resumes it between workflow steps, so the agent does not re-read the
@@ -15,6 +15,14 @@
 #
 #   --task <id>   scopes the session record (informational, kept for future use)
 #   --reset       drop the stored session for the role and start a fresh one
+#   --fork        run in an ISOLATED fork of the warm session (ADR-0009): the
+#                 prompt executes against a fork that inherits the warm context
+#                 but never touches the parent. The fork's id is NOT written to
+#                 the session store — the parent id is kept for the next fork.
+#                 Backend-specific isolation: opencode forks the warm session
+#                 (`opencode run --session <id> --fork`); cursor has no fork
+#                 primitive, so each fork invocation mints a fresh chat instead
+#                 (see run-agent-cursor.sh).
 #
 # When --task is omitted, the id is taken from the <state_dir>/tasks/current
 # symlink that the workflow's generate-task-id step maintains.
@@ -41,8 +49,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 usage() {
-  echo "usage: $0 <role> \"<prompt>\" [--task <task-id>] [--reset]" >&2
-  echo "       $0 <role> --prompt-file <path> [--task <task-id>] [--reset]" >&2
+  echo "usage: $0 <role> \"<prompt>\" [--task <task-id>] [--reset] [--fork]" >&2
+  echo "       $0 <role> --prompt-file <path> [--task <task-id>] [--reset] [--fork]" >&2
   echo "       role must be 'planner' or 'executor'" >&2
   exit 2
 }
@@ -68,10 +76,12 @@ fi
 
 TASK_ID=""
 RESET=0
+FORK=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --task) [ $# -ge 2 ] || usage; TASK_ID="$2"; shift 2 ;;
     --reset) RESET=1; shift ;;
+    --fork) FORK=1; shift ;;
     *) usage ;;
   esac
 done
@@ -116,6 +126,15 @@ fi
 # above and sets SESSIONS_FILE/PID_FILE/LOG_FILE).
 source "$SCRIPT_DIR/session_store.sh"
 session_paths
+if [ "$FORK" -eq 1 ]; then
+  # Parallel forks run concurrently (the fan-out's max_concurrency): every
+  # invocation needs its OWN log file and pid file, otherwise four processes
+  # would truncate the same role log over each other and manage_pid_file's
+  # stale-kill would murder a sibling fork mid-run. $$ keeps them unique; the
+  # tailer recognizes the -fork-<pid> log names (agent_log_tailer.py).
+  LOG_FILE="${LOG_FILE%.jsonl}-fork-$$.jsonl"
+  PID_FILE="${PID_FILE%.pid}-fork-$$.pid"
+fi
 manage_pid_file "$BACKEND"
 
 SESSION_ID=""
@@ -131,6 +150,10 @@ if [ "$BACKEND" = "cursor" ]; then
   run_cursor
 else
   # --- opencode backend ----------------------------------------------------
+  if [ "$FORK" -eq 1 ] && [ -z "$SESSION_ID" ]; then
+    echo "error: --fork requires a stored $ROLE session (no warm session to fork); run the warm-up step first" >&2
+    exit 2
+  fi
   if [ -z "$SESSION_ID" ]; then
     RC=0
     # Stream opencode into a log file instead of a command substitution: the
@@ -154,11 +177,17 @@ else
     save_session "$SESSION_ID"
   else
     RC=0
-    opencode run --session "$SESSION_ID" --agent "$ROLE" --auto $ATTACH_FLAG --format json "$PROMPT" > "$LOG_FILE" 2>&1 || RC=$?
+    FORK_FLAG=""
+    if [ "$FORK" -eq 1 ]; then
+      FORK_FLAG="--fork"
+    fi
+    opencode run --session "$SESSION_ID" $FORK_FLAG --agent "$ROLE" --auto $ATTACH_FLAG --format json "$PROMPT" > "$LOG_FILE" 2>&1 || RC=$?
     if [ "$RC" -ne 0 ]; then
       echo "run-agent: opencode exited $RC; full log: $LOG_FILE" >&2
       exit "$RC"
     fi
+    # A fork's new session id is deliberately NOT saved: the parent id in the
+    # store stays authoritative for the next fork (ADR-0009).
   fi
 fi
 

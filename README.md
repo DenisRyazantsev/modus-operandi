@@ -268,15 +268,13 @@ optional feedback revision) → `save-adr` → `executor-questions` →
 `planner-answers` → `implement` → `implement-loop` (`do-while`: verify the
 implementation actually changed the repository → if not, the executor is asked
 once to redo the work) → `implement-pass-check` (fails the run with an error
-when two attempts produced no changes) → `srp-loop` (`do-while`: SRP review → verdict →
-fix, only for single-responsibility violations) → `srp-pass-check` (reports
-`SRP REVIEW OK` or a `WARNING`) → `bug-loop` (`do-while`: bug review → verdict →
-fix, only for bugs) → `bug-pass-check` (reports `BUGS REVIEW OK` or a `WARNING`)
-→ `review-loop` (`do-while`: review → fix →
-verdict) → `sync-adr` → `pass-check` (reports `REVIEW OK` or
-`WARNING: review loop exhausted`) → `comment-review-loop` (`do-while`: comment
-review → verdict → fix, only for readability "traps" — comments about the *why*,
-not bugs) → `comment-pass-check` (reports `COMMENT REVIEW OK` or a `WARNING`).
+when two attempts produced no changes) → `review-fix-loop` (`do-while`: the
+four checks — SRP, bugs, general review, readability — run in PARALLEL, each in
+a fork of the warm planner session; their findings merge into one document and
+the executor fixes everything in one pass; the loop repeats until all four
+verdicts pass or `max_fix_iterations` is exhausted) → `sync-adr` → `pass-check`
+(reports `REVIEW OK: all verdicts PASS` or a `WARNING` listing the kinds that
+never passed).
 
 Before the review stages, `implement-loop` guards against an executor that
 finished without doing any work: `check_implementation.py` (installed next to
@@ -289,27 +287,33 @@ raises opencode's per-response output cap via
 `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=1000000`, so an agent cannot be cut off
 mid-reasoning before acting (ADR-0006).
 
-The review runs in four stages. First `srp-loop` checks the git changes strictly
-for single-responsibility violations (god classes/functions, mixed concerns);
-the executor fixes the findings and the SRP review repeats until it passes or
-`workflow.max_srp_iterations` is exhausted (a `WARNING` is printed and the run
-continues). Next `bug-loop` checks the changes strictly for bugs — logic errors,
-wrong conditions, edge cases, unhandled errors, races, and discrepancies between
-the implemented behavior and the acceptance criteria in `adr.md`; fixes repeat
-until `workflow.max_bug_iterations` is exhausted. Then the main `review-loop`
-checks the code against the ADR as before. Finally, after `sync-adr` and
-`pass-check`, `comment-review-loop` checks
-the changes for readability "traps" only — correct but misleading code that
-deserves a *why* comment (never a *what* description) or a rename/refactor — and
-the executor applies the findings until it passes or
-`workflow.max_comment_iterations` is exhausted. Each stage uses its own numbered
-review files (`srp-review-N.md`, `bug-review-N.md`, `review-N.md`,
-`comment-review-N.md`) so the loops and verdicts never interfere.
+The four review kinds — SRP (single-responsibility violations: god
+classes/functions, mixed concerns), bugs (logic errors, wrong conditions, edge
+cases, unhandled errors, races, discrepancies with the acceptance criteria),
+general review (against `adr.md`/`deviation.md`) and readability "traps"
+(correct but misleading code that deserves a *why* comment — never a *what*
+description — or a rename/refactor) — now run in parallel (ADR-0009). Before
+the loop, `check_review.py pending` lists the kinds whose latest report is not
+PASS; a `fan-out` (`max_concurrency: 4`) runs one review per kind, each in a
+`--fork` of the warm planner session, writing its own numbered report
+(`srp-review-N.md`, `bug-review-N.md`, `review-N.md`, `comment-review-N.md`)
+with the first-line verdict. The four latest reports are then merged
+deterministically into `review-report.md` (one section per kind, no synthesis)
+and the executor fixes ALL findings with one `fix-all` prompt. On the next
+iteration only the still-failing kinds are re-reviewed (re-review prompts diff
+the fixed code against the per-kind `*-snapshot.sha`), until every kind passes
+or `workflow.max_fix_iterations` is exhausted — the final `pass-check` then
+reports the verdicts (a `WARNING` never fails the run). The cursor backend has
+no fork primitive, so there each check mints a fresh chat instead (the warm-up
+step is skipped); this loss of warm context is documented in
+`run-agent-cursor.sh`.
 
 The loop verdict checks the **latest** review file only — the installed
 `check_review.py` script (`~/.config/opencode/scripts/check_review.py`) picks
 the highest `*-review-N.md` and exits 0 only when its first line is the PASS
-marker for that kind.
+marker for that kind. The same script provides `pending` (the fan-out item
+list) and `merge` (the deterministic `review-report.md` concatenation, exiting
+1 while any kind is not PASS).
 
 ## Security notes
 
