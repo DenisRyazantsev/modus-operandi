@@ -2,15 +2,25 @@
 # On first install this file is copied to ~/.config/spec-kit-llm-client/config.yml.
 # Edit the values below, then re-run install.py to regenerate the agents and workflow.
 
-models:
-  planner:
-    provider: opencode-go          # opencode provider id
-    model: deepseek-v4-pro         # strong model for planning and review
-    reasoning: max                 # reasoning effort passed to the provider (e.g. minimal, low, high, max)
-  executor:
-    provider: opencode-go
-    model: deepseek-v4-flash       # cheap/fast model for implementation
-    reasoning: max                 # reasoning effort passed to the provider
+backend: opencode          # active backend: opencode or cursor (per-run override: spec-run --backend cursor)
+
+opencode:                  # models for the opencode backend (legacy top-level `models:` is read as this section)
+  models:
+    planner:
+      provider: opencode-go          # opencode provider id
+      model: deepseek-v4-pro         # strong model for planning and review
+      reasoning: max                 # reasoning effort passed to the provider (e.g. minimal, low, high, max)
+    executor:
+      provider: opencode-go
+      model: deepseek-v4-flash       # cheap/fast model for implementation
+      reasoning: max                 # reasoning effort passed to the provider
+
+cursor:                    # models for the cursor backend (passed to cursor-agent as --model <slug>)
+  models:
+    planner:
+      model: composer-2              # strong model for planning and review (Cursor model slug)
+    executor:
+      model: composer-2              # cheap/fast model for implementation (Cursor model slug)
 
 workflow:
   state_dir: .workflow           # task artifact directory inside a project

@@ -23,4 +23,6 @@ def which_fake(name):
         "opencode": "/usr/bin/opencode",
         "python3": "/usr/bin/python3",
         "specify": "/usr/bin/specify",
+        "cursor-agent": "/usr/bin/cursor-agent",
+        "agent": "/usr/bin/agent",
     }.get(name)

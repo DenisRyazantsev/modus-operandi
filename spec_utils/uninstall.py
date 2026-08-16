@@ -15,6 +15,8 @@ def do_uninstall(paths: Paths, yes: bool) -> None:
         paths["agents"] / "executor.md",
         paths["run_agent"],
         paths["name_task"],
+        paths["planner_body"],
+        paths["executor_body"],
         paths["run_pipeline"],
         paths["run_pipeline_common"],
         paths["run_id_discoverer"],

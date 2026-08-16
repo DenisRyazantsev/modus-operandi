@@ -43,6 +43,7 @@ def apply(paths: Paths, update: bool = False) -> None:
         # apply_defaults() every key exists, so the diff would always be empty.
         config_diff.report_new_options(paths, raw)
     render.render_agents(cfg, paths)
+    render.render_role_bodies(paths)
     render.render_run_agent(paths)
     render.render_name_task(paths)
     render.render_run_pipeline(paths)
@@ -55,11 +56,11 @@ def apply(paths: Paths, update: bool = False) -> None:
     # Record the repo's install.py path: `spec-run edit` re-applies the config
     # through it, and the path cannot be derived from the installed launcher.
     paths["install_path"].write_text(str(REPO_ROOT / "install.py"), encoding="utf-8")
-    verify.verify_install(paths)
+    verify.verify_install(paths, cfg)
 
 
 def install(paths: Paths, update: bool) -> None:
-    verify.check_prerequisites()
+    verify.check_prerequisites(paths)
     deps.ensure_pyyaml()
     deps.ensure_specify()
     apply(paths, update)

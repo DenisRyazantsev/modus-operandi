@@ -4,28 +4,59 @@ from __future__ import annotations
 
 import os
 import re
+from typing import Any
 
-from . import InstallError, Paths, proc, tool_discovery, versions
+from . import InstallError, Paths, config, proc, tool_discovery, versions
 
 
-def check_prerequisites() -> None:
+def _config_backend(paths: Paths) -> str:
+    # check_prerequisites() runs before the config is validated (and before it
+    # exists on a fresh install): read only the backend key and degrade to the
+    # default on any failure - a malformed config surfaces later in apply().
+    try:
+        raw = config.load_config(paths["config"])
+    except Exception:
+        return config.DEFAULT_BACKEND
+    backend = raw.get("backend")
+    return backend if backend in config.BACKENDS else config.DEFAULT_BACKEND
+
+
+def check_prerequisites(paths: Paths) -> None:
     # Install-time presence checks: the flow cannot proceed without these
     # tools, so they raise directly (unlike the list-returning checks below,
-    # which let verify_install() collect every failure at once).
+    # which let verify_install() collect every failure at once). Only the
+    # active backend's CLI is required: opencode-only and cursor-only installs
+    # are both supported.
     if not tool_discovery.find_in_path("python3"):
         raise InstallError("python3 not found in PATH")
-    if not tool_discovery.find_in_path("opencode"):
+    if _config_backend(paths) == "cursor":
+        if not (
+            tool_discovery.find_in_path("cursor-agent")
+            or tool_discovery.find_in_path("agent")
+        ):
+            raise InstallError(
+                "cursor-agent (or agent) not found in PATH - install the Cursor CLI first "
+                "(https://cursor.com/docs/cli)"
+            )
+    elif not tool_discovery.find_in_path("opencode"):
         raise InstallError(
             "opencode not found in PATH - install it first (https://opencode.ai/docs)"
         )
 
 
-def check_files(paths: Paths) -> list[str]:
+def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
     errors: list[str] = []
-    for agent_name in ("planner.md", "executor.md"):
-        agent = paths["agents"] / agent_name
-        if not agent.exists():
-            errors.append(f"generated agent missing: {agent}")
+    cfg = cfg or {}
+    # Opencode agent files are required under the same predicate that renders
+    # them (config.opencode_models_complete): an opencode backend always has
+    # them, while a cursor-only config with an empty/incomplete opencode
+    # section neither renders nor demands them.
+    require_agents = config.opencode_models_complete(cfg)
+    if require_agents:
+        for agent_name in ("planner.md", "executor.md"):
+            agent = paths["agents"] / agent_name
+            if not agent.exists():
+                errors.append(f"generated agent missing: {agent}")
     for key in (
         "save_adr",
         "check_review",
@@ -61,6 +92,9 @@ def check_files(paths: Paths) -> list[str]:
             errors.append(f"generated script missing: {paths['exceptions_dir'] / name}")
     if not paths["victory_wav"].is_file():
         errors.append(f"victory sound missing: {paths['victory_wav']}")
+    for key in ("planner_body", "executor_body"):
+        if not paths[key].is_file():
+            errors.append(f"generated role body missing: {paths[key]}")
     for rel in (
         "review/srp-review.md",
         "review/srp-rereview.md",
@@ -127,7 +161,11 @@ def check_workflow_syntax(paths: Paths) -> list[str]:
     return errors
 
 
-def check_agents_visible(paths: Paths) -> list[str]:
+def check_agents_visible(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
+    if (cfg or {}).get("backend") != "opencode":
+        # `opencode agent list` only matters for the opencode backend; a
+        # cursor-only install may not even have opencode on PATH.
+        return []
     env = os.environ.copy()
     # Point opencode at the target config root (~/.config = agents/../..) so
     # `opencode agent list` reports the agents we just installed under --home
@@ -146,10 +184,10 @@ def check_agents_visible(paths: Paths) -> list[str]:
     return errors
 
 
-def verify_install(paths: Paths) -> None:
+def verify_install(paths: Paths, cfg: dict[str, Any] | None = None) -> None:
     errors: list[str] = []
-    errors += check_files(paths)
+    errors += check_files(paths, cfg)
     errors += check_workflow_syntax(paths)
-    errors += check_agents_visible(paths)
+    errors += check_agents_visible(paths, cfg)
     if errors:
         raise InstallError("installation check failed:\n  " + "\n  ".join(errors))

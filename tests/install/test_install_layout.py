@@ -18,6 +18,8 @@ class InstallLayoutTest(InstallerTestCase):
             ".config/opencode/agent/executor.md",
             ".config/opencode/scripts/run-agent.sh",
             ".config/opencode/scripts/name-task.sh",
+            ".config/opencode/scripts/planner-body.txt",
+            ".config/opencode/scripts/executor-body.txt",
             ".config/opencode/scripts/run-pipeline.py",
             # run-pipeline.py is split one class per file: the modules are
             # installed next to it so the wrapper stays importable.
@@ -176,14 +178,57 @@ class InstallLayoutTest(InstallerTestCase):
         )
         self.assertIn("--task) [ $# -ge 2 ] || usage", run_agent)
         self.assertIn("ps -p", run_agent)
-        self.assertIn("grep -q '^opencode'", run_agent)
+        # Stale-process cleanup matches the active backend's process name:
+        # opencode vs cursor-agent/agent.
+        self.assertIn("SKLC_BACKEND", run_agent)
+        self.assertIn("STALE_PROC_PATTERN", run_agent)
+        self.assertIn("^(cursor-agent|agent)$", run_agent)
         self.assertIn('> "$LOG_FILE" 2>&1', run_agent)
         self.assertNotIn('tail -c 4096 "$LOG_FILE"', run_agent)
         self.assertNotIn('cat "$LOG_FILE"', run_agent)
         self.assertIn("full log: $LOG_FILE", run_agent)
         self.assertNotIn('OUTPUT="$(opencode', run_agent)
-        self.assertEqual(run_agent.count("session[iI][dD]"), 1)
+        self.assertEqual(run_agent.count("session[_]?[iI][dD]"), 1)
         self.assertNotIn("'name'", run_agent)
+
+    def test_run_agent_cursor_dispatch_present(self):
+        self.assertEqual(self.install(), 0)
+        run_agent = (self.home / ".config/opencode/scripts/run-agent.sh").read_text(
+            encoding="utf-8"
+        )
+        # The cursor branch: create-chat to mint a chat, --resume to resume,
+        # --model from the role model env, --output-format json, and the role
+        # body prefixed only on the first message of a fresh session.
+        self.assertIn('command -v cursor-agent', run_agent)
+        self.assertIn('create-chat', run_agent)
+        self.assertIn('--resume "$SESSION_ID"', run_agent)
+        self.assertIn('--model "$ROLE_MODEL"', run_agent)
+        self.assertIn('--output-format json', run_agent)
+        self.assertIn('ROLE_BODY_FILE', run_agent)
+        self.assertIn('PROMPT_FULL="$BODY', run_agent)
+
+    def test_cursor_only_install_writes_no_agent_files(self):
+        # A cursor-only config (no opencode section) installs without opencode
+        # agent files but still renders the role bodies next to run-agent.sh.
+        self.write_config(
+            "backend: cursor\n"
+            "cursor:\n"
+            "  models:\n"
+            "    planner:\n"
+            "      model: composer-2\n"
+            "    executor:\n"
+            "      model: composer-2\n"
+            "workflow: {}\n"
+        )
+        self.assertEqual(self.install(), 0)
+        self.assertFalse((self.home / ".config/opencode/agent/planner.md").exists())
+        self.assertFalse((self.home / ".config/opencode/agent/executor.md").exists())
+        planner_body = self.home / ".config/opencode/scripts/planner-body.txt"
+        executor_body = self.home / ".config/opencode/scripts/executor-body.txt"
+        self.assertTrue(planner_body.is_file())
+        self.assertTrue(executor_body.is_file())
+        self.assertIn("You are the planner", planner_body.read_text(encoding="utf-8"))
+        self.assertIn("You are the executor", executor_body.read_text(encoding="utf-8"))
 
     def test_name_task_script_rendered(self):
         self.assertEqual(self.install(), 0)
@@ -193,6 +238,9 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertIn("kebab-case", name_task)
         self.assertIn("executor", name_task)
         self.assertIn("opencode run", name_task)
+        # The cursor branch uses text output (final answer only, no parsing).
+        self.assertIn("--output-format text", name_task)
+        self.assertIn("SKLC_EXECUTOR_MODEL", name_task)
         self.assertNotIn("SESSION", name_task)
 
     def test_slug_sanitization_error_messages(self):

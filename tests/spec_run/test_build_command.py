@@ -69,6 +69,51 @@ class BuildCommandTest(unittest.TestCase):
         with self.assertRaises(self.mod.InvalidInvocation):
             self.mod.build_command(["adr", "feat", "-i"])
 
+    def test_backend_flag_prepends_to_adr(self):
+        cmd = self.mod.build_command(["--backend", "cursor", "adr", "build a board"])
+        self.assertEqual(
+            cmd,
+            [
+                self.mod.RUN_PIPELINE,
+                "--backend",
+                "cursor",
+                self.mod.ADR_WORKFLOW,
+                "-i",
+                "feature=build a board",
+            ],
+        )
+
+    def test_backend_flag_prepends_to_review(self):
+        cmd = self.mod.build_command(["--backend", "cursor", "review", "--branch-diff"])
+        self.assertEqual(
+            cmd,
+            [
+                self.mod.RUN_PIPELINE,
+                "--backend",
+                "cursor",
+                self.mod.REVIEW_WORKFLOW,
+                "-i",
+                "branch-diff=true",
+            ],
+        )
+
+    def test_backend_flag_opencode_is_forwarded(self):
+        cmd = self.mod.build_command(["--backend", "opencode", "review"])
+        self.assertEqual(cmd[:3], [self.mod.RUN_PIPELINE, "--backend", "opencode"])
+
+    def test_backend_flag_without_subcommand_is_invalid(self):
+        for argv in (["--backend", "cursor"], ["--backend"]):
+            with self.assertRaises(self.mod.InvalidInvocation):
+                self.mod.build_command(argv)
+
+    def test_backend_flag_invalid_value_is_invalid(self):
+        with self.assertRaises(self.mod.InvalidInvocation):
+            self.mod.build_command(["--backend", "bogus", "adr", "feat"])
+
+    def test_backend_flag_help_still_prints_help(self):
+        with self.assertRaises(self.mod.HelpRequested):
+            self.mod.build_command(["--backend", "cursor", "--help"])
+
     def test_review_dangling_dash_i_is_invalid(self):
         with self.assertRaises(self.mod.InvalidInvocation):
             self.mod.build_command(["review", "-i"])

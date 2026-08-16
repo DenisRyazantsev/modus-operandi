@@ -148,3 +148,58 @@ class ConfigDeliveryTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("state_dir=.workflow", captured["cmd"])
         self.assertIn("adr_verdict=", captured["cmd"])  # human_gates default True
+
+    def test_backend_flag_exports_backend_and_models(self):
+        # The leading global flag (as spec-run forwards it) overrides the
+        # config backend for the run and is stripped from the specify argv.
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            point_config_at(mod, tmp)
+            captured = {}
+
+            def fake_popen(*a, **kw):
+                captured["cmd"] = a[0]
+                captured["env"] = kw.get("env", {})
+                return FakeProc(["Run ID: abc12345"], 0, **kw)
+
+            with (
+                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
+                mock.patch("subprocess.Popen", side_effect=fake_popen),
+                mock.patch.object(
+                    sys, "argv", ["run-pipeline.py", "--backend", "cursor", "adr-pipeline"]
+                ),
+                mock.patch("sys.stdout", io.StringIO()),
+                mock.patch("sys.stdin.isatty", return_value=False),
+                mock.patch.object(mod, "notify"),
+            ):
+                rc = mod.main()
+        self.assertEqual(rc, 0)
+        self.assertEqual(captured["env"]["SKLC_BACKEND"], "cursor")
+        self.assertNotIn("--backend", captured["cmd"])
+        self.assertEqual(captured["cmd"][0], "specify")
+
+    def test_backend_flag_invalid_value_fails(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            point_config_at(mod, tmp)
+            with (
+                mock.patch.object(
+                    sys, "argv", ["run-pipeline.py", "--backend", "bogus", "adr-pipeline"]
+                ),
+                mock.patch("sys.stderr", io.StringIO()) as stderr,
+            ):
+                rc = mod.main()
+        self.assertEqual(rc, 1)
+        self.assertIn("invalid --backend value 'bogus'", stderr.getvalue())
+
+    def test_backend_flag_without_value_fails(self):
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            point_config_at(mod, tmp)
+            with (
+                mock.patch.object(sys, "argv", ["run-pipeline.py", "--backend"]),
+                mock.patch("sys.stderr", io.StringIO()) as stderr,
+            ):
+                rc = mod.main()
+        self.assertEqual(rc, 1)
+        self.assertIn("--backend requires a value", stderr.getvalue())

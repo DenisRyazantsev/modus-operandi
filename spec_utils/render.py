@@ -18,6 +18,7 @@ from . import (
     REPO_ROOT,
     WORKFLOWS_DIR,
     Paths,
+    config,
     yaml_loader,
 )
 
@@ -76,8 +77,16 @@ def _agent_markdown(
 
 
 def render_agents(cfg: dict[str, Any], paths: Paths) -> None:
-    planner = cfg["models"]["planner"]
-    executor = cfg["models"]["executor"]
+    # Agent files are an opencode concept: when the opencode models are not
+    # complete (a cursor-only config, or an empty/incomplete section), nothing
+    # is written here. When they are present, the files render regardless of
+    # the active backend (switching backends must not require a reinstall).
+    # check_files() requires the files under the same predicate.
+    if not config.opencode_models_complete(cfg):
+        return
+    models = (cfg.get("opencode") or {}).get("models") or {}
+    planner = models["planner"]
+    executor = models["executor"]
     (paths["agents"] / "planner.md").write_text(
         _agent_markdown(
             "Planner and reviewer for the adr-pipeline workflow",
@@ -100,6 +109,15 @@ def render_agents(cfg: dict[str, Any], paths: Paths) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def render_role_bodies(paths: Paths) -> None:
+    # The role bodies as plain text next to run-agent.sh, written from the
+    # same constants as the opencode agent files (single source of truth).
+    # run-agent.sh prefixes the role body to the FIRST message of a fresh
+    # cursor chat; opencode carries the role in the agent files instead.
+    (paths["planner_body"]).write_text(PLANNER_BODY, encoding="utf-8")
+    (paths["executor_body"]).write_text(EXECUTOR_BODY, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

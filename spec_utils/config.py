@@ -18,8 +18,11 @@ DEFAULT_MAX_IMPLEMENT_ITERATIONS = 2
 DEFAULT_SHELL_TIMEOUT = 7200
 DEFAULT_REASONING = "max"
 DEFAULT_ADR_DIR = "architecture"
+DEFAULT_BACKEND = "opencode"
+BACKENDS = ("opencode", "cursor")
 
 DEFAULT_CONFIG: dict[str, Any] = {
+    "backend": DEFAULT_BACKEND,
     "workflow": {
         "state_dir": DEFAULT_STATE_DIR,
         "max_fix_iterations": DEFAULT_MAX_FIX_ITERATIONS,
@@ -55,42 +58,110 @@ def load_config(path: str | Path) -> dict[str, Any]:
     return dict(raw)
 
 
+def opencode_models_complete(cfg: dict[str, Any]) -> bool:
+    """Whether the opencode section carries usable models for both roles.
+
+    The single predicate under which render.render_agents() writes the
+    opencode agent files; verify.check_files() requires those files under
+    the same condition, so a config whose opencode section is empty or
+    incomplete (valid when another backend is active) neither renders nor
+    demands the agent files.
+    """
+    models = (cfg.get("opencode") or {}).get("models") or {}
+    planner = models.get("planner") or {}
+    executor = models.get("executor") or {}
+    return bool(
+        planner.get("provider")
+        and planner.get("model")
+        and executor.get("provider")
+        and executor.get("model")
+    )
+
+
 def apply_defaults(raw: Any) -> dict[str, Any]:
     # Same guard as load_config: raw may be None (treated as empty config) but
     # any other non-mapping top level is a user error, not a TypeError.
     if raw is not None and not isinstance(raw, dict):
         raise InstallError("invalid config.yml: top-level must be a mapping")
     cfg = dict(raw or {})
+    # Legacy top-level `models:` is folded into `opencode.models` so existing
+    # configs keep working; an explicit opencode section wins over the legacy
+    # key (the user is mid-migration and opencode is the section they wrote).
+    if "models" in cfg:
+        if "opencode" not in cfg:
+            cfg["opencode"] = {"models": cfg["models"]}
+        del cfg["models"]
+    cfg.setdefault("backend", DEFAULT_BACKEND)
     workflow = cfg.get("workflow") or {}
     if not isinstance(workflow, dict):
         raise InstallError("invalid config.yml: workflow must be a mapping")
     merged_workflow = dict(DEFAULT_CONFIG["workflow"])
     merged_workflow.update(workflow)
     cfg["workflow"] = merged_workflow
-    models = cfg.get("models") or {}
-    if not isinstance(models, dict):
-        raise InstallError("invalid config.yml: models must be a mapping")
-    cfg["models"] = models
-    for role in ("planner", "executor"):
-        model = models.get(role) or {}
-        if not isinstance(model, dict):
-            raise InstallError(f"invalid config.yml: models.{role} must be a mapping")
-        model = dict(model)
-        model.setdefault("reasoning", DEFAULT_REASONING)
-        cfg["models"][role] = model
+    if "opencode" in cfg:
+        opencode = cfg["opencode"]
+        if not isinstance(opencode, dict):
+            raise InstallError("invalid config.yml: opencode must be a mapping")
+        models = opencode.get("models") or {}
+        if not isinstance(models, dict):
+            raise InstallError("invalid config.yml: opencode.models must be a mapping")
+        for role in ("planner", "executor"):
+            model = models.get(role) or {}
+            if not isinstance(model, dict):
+                raise InstallError(f"invalid config.yml: opencode.models.{role} must be a mapping")
+            model = dict(model)
+            model.setdefault("reasoning", DEFAULT_REASONING)
+            models[role] = model
+        opencode["models"] = models
+        cfg["opencode"] = opencode
+    if "cursor" in cfg:
+        cursor = cfg["cursor"]
+        if not isinstance(cursor, dict):
+            raise InstallError("invalid config.yml: cursor must be a mapping")
+        models = cursor.get("models") or {}
+        if not isinstance(models, dict):
+            raise InstallError("invalid config.yml: cursor.models must be a mapping")
+        for role in ("planner", "executor"):
+            model = models.get(role) or {}
+            if not isinstance(model, dict):
+                raise InstallError(f"invalid config.yml: cursor.models.{role} must be a mapping")
+            models[role] = model
+        cursor["models"] = models
+        cfg["cursor"] = cursor
     return cfg
 
 
 def validate_config(cfg: dict[str, Any]) -> dict[str, Any]:
     errors: list[str] = []
-    for role in ("planner", "executor"):
-        model = cfg["models"].get(role) or {}
-        for key in ("provider", "model", "reasoning"):
-            value = model.get(key)
+    backend = cfg.get("backend")
+    if backend not in BACKENDS:
+        errors.append(f"backend must be one of: opencode, cursor (got {backend!r})")
+    # Only the active backend's models are strictly required (symmetric to
+    # the opencode provider/model/reasoning fields); the inactive section, if
+    # present, was already validated structurally by apply_defaults.
+    if backend == "opencode":
+        models = (cfg.get("opencode") or {}).get("models") or {}
+        for role in ("planner", "executor"):
+            model = models.get(role) or {}
+            for key in ("provider", "model", "reasoning"):
+                value = model.get(key)
+                if not value:
+                    errors.append(f"missing required key: opencode.models.{role}.{key}")
+                elif "<" in str(value) or ">" in str(value):
+                    errors.append(
+                        f"placeholder value in opencode.models.{role}.{key} - edit config.yml first"
+                    )
+    elif backend == "cursor":
+        models = (cfg.get("cursor") or {}).get("models") or {}
+        for role in ("planner", "executor"):
+            model = models.get(role) or {}
+            value = model.get("model")
             if not value:
-                errors.append(f"missing required key: models.{role}.{key}")
+                errors.append(f"missing required key: cursor.models.{role}.model")
             elif "<" in str(value) or ">" in str(value):
-                errors.append(f"placeholder value in models.{role}.{key} - edit config.yml first")
+                errors.append(
+                    f"placeholder value in cursor.models.{role}.model - edit config.yml first"
+                )
     workflow = cfg["workflow"]
     for key in (
         "max_fix_iterations",

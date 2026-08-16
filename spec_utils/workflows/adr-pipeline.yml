@@ -129,7 +129,7 @@ steps:
       PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
       export STATE_DIR="{{ inputs.state_dir }}";
       export FEATURE="{{ inputs.feature }}";
-      "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/adr/write-adr";
+      "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/adr/write-adr.md";
 
   - id: adr-loop
     type: do-while
@@ -164,7 +164,7 @@ steps:
               SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
               PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
               export STATE_DIR="{{ inputs.state_dir }}";
-              "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/adr/adr-revise";
+              "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/adr/adr-revise.md";
           - id: adr-feedback-clear
             type: shell
             run: "rm -f {{ inputs.state_dir }}/tasks/current/feedback.md"
@@ -197,7 +197,7 @@ steps:
       SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
       PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
       export STATE_DIR="{{ inputs.state_dir }}";
-      "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/adr/executor-questions";
+      "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/adr/executor-questions.md";
 
   - id: planner-answers
     type: shell
@@ -206,7 +206,7 @@ steps:
       SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
       PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
       export STATE_DIR="{{ inputs.state_dir }}";
-      "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/adr/planner-answers";
+      "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/adr/planner-answers.md";
 
   - id: implement
     type: shell
@@ -215,7 +215,7 @@ steps:
       SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
       PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
       export STATE_DIR="{{ inputs.state_dir }}";
-      "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/adr/implement";
+      "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/adr/implement.md";
 
   - id: implement-loop
     type: do-while

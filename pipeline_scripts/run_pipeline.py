@@ -43,6 +43,7 @@ Usage: run-pipeline.py <workflow-id-or-path> [extra specify args...]
   run-pipeline.py review-pipeline
   run-pipeline.py adr-pipeline -i feature="..."
   run-pipeline.py ~/.config/spec-kit-llm-client/review-pipeline.yml -i branch-diff=true
+  run-pipeline.py --backend cursor adr-pipeline -i feature="..."   # backend override
 
 Environment:
   SKLC_CONFIG          path of the installed config.yml (default: derived
@@ -51,6 +52,13 @@ Environment:
                        this wrapper's own directory for the specify child)
   SKLC_ATTACH_FLAG     opencode attach flag passed to run-agent.sh/name-task.sh
                        (set from workflow.use_serve in the installed config)
+
+The wrapper also computes the effective backend for the run (a leading
+`--backend <opencode|cursor>` CLI flag wins over the `backend:` config key,
+which defaults to opencode) and exports it to the workflow steps through
+SKLC_BACKEND plus the role models of the active backend through
+SKLC_PLANNER_MODEL / SKLC_EXECUTOR_MODEL (run-agent.sh/name-task.sh read
+them; the opencode branch ignores the models - the agent files carry them).
 
 This file is the entry point of a small module split (one class per file):
 the classes live in run_id_discoverer.py / step_result_poller.py /
@@ -107,15 +115,19 @@ __all__ = [
     "LiveMonitor",
     "RunIdDiscoverer",
     "StepResultPoller",
+    "BACKENDS",
+    "effective_backend",
     "existing_run_ids",
     "fmt_duration",
     "fmt_thousands",
     "is_feedback_gate",
     "is_gate_menu_opener",
+    "normalize_config",
     "print_log_event",
     "print_step_result",
     "render_log_event",
     "role_label",
+    "role_model",
     "run_id_from_text",
     "stamp",
     "truncate",
@@ -134,6 +146,49 @@ CONFIG_PATH = Path(
     os.environ.get("SKLC_CONFIG")
     or (Path(__file__).resolve().parent.parent.parent / "spec-kit-llm-client" / "config.yml")
 )
+
+# Supported backends; "opencode" is the default (config default and the
+# fallback for an invalid config value).
+BACKENDS = ("opencode", "cursor")
+
+
+def normalize_config(cfg: dict) -> dict:
+    """Fold the legacy top-level `models:` into `opencode.models`.
+
+    The installer does the same at install time (spec_utils/config.py,
+    including dropping the legacy key when an explicit opencode section
+    exists); the wrapper must mirror it so existing configs keep delivering
+    the models at runtime too.
+    """
+    cfg = dict(cfg)
+    if "models" in cfg:
+        if "opencode" not in cfg:
+            cfg["opencode"] = {"models": cfg["models"]}
+        cfg.pop("models", None)
+    return cfg
+
+
+def effective_backend(cfg: dict, cli_backend: str | None) -> str:
+    """Effective backend: the --backend CLI flag wins over the config key,
+    which defaults to opencode. An invalid value in either place degrades to
+    the config/default instead of failing the run.
+    """
+    if cli_backend in BACKENDS:
+        return cli_backend
+    backend = cfg.get("backend")
+    return backend if backend in BACKENDS else "opencode"
+
+
+def role_model(cfg: dict, backend: str, role: str) -> str:
+    """Model slug of a role under the active backend ("" when unset).
+
+    The opencode agent files carry the opencode model; the exported value is
+    only consumed by the cursor branch of run-agent.sh/name-task.sh.
+    """
+    section = cfg.get("cursor") if backend == "cursor" else cfg.get("opencode")
+    models = (section or {}).get("models") or {}
+    model = (models.get(role) or {}).get("model")
+    return model if isinstance(model, str) else ""
 
 
 def load_config() -> dict:
@@ -458,7 +513,7 @@ def set_pty_no_echo(fd: int) -> None:
 
 
 def build_specify_invocation(
-    cfg: dict, source: str, extra: list[str]
+    cfg: dict, source: str, extra: list[str], cli_backend: str | None = None
 ) -> tuple[list[str], dict[str, str], str, Path]:
     """Map the installed config + argv to the specify invocation.
 
@@ -470,11 +525,17 @@ def build_specify_invocation(
       {{ inputs.state_dir }} / {{ inputs.adr_dir }});
     - use_serve becomes the SKLC_ATTACH_FLAG env var for
       run-agent.sh/name-task.sh;
+    - the effective backend (cli_backend > config `backend:` > opencode) is
+      exported as SKLC_BACKEND together with the role models of the active
+      backend (SKLC_PLANNER_MODEL/SKLC_EXECUTOR_MODEL) for
+      run-agent.sh/name-task.sh;
     - human_gates decides whether the ADR gate's verdict input is passed as
       empty (interactive) or left to its "approve" default (auto-approve);
     - run-agent.sh keeps its sessions/logs/pids under the same state dir the
       workflow steps write artifacts to, so it must see SKLC_STATE_DIR.
     """
+    cfg = normalize_config(cfg)
+    backend = effective_backend(cfg, cli_backend)
     workflow = cfg.get("workflow") or {}
     state_dir = workflow.get("state_dir") or ".workflow"
     adr_dir = workflow.get("adr_dir") or "architecture"
@@ -486,6 +547,9 @@ def build_specify_invocation(
     env["SKLC_SCRIPTS_DIR"] = scripts_dir
     env["SKLC_ATTACH_FLAG"] = attach_flag
     env["SKLC_STATE_DIR"] = state_dir
+    env["SKLC_BACKEND"] = backend
+    env["SKLC_PLANNER_MODEL"] = role_model(cfg, backend, "planner")
+    env["SKLC_EXECUTOR_MODEL"] = role_model(cfg, backend, "executor")
 
     specify_cmd = [
         "specify",
@@ -692,6 +756,21 @@ def _finalize_run(
 
 def main() -> int:
     argv = sys.argv[1:]
+    cli_backend: str | None = None
+    if argv and argv[0] == "--backend":
+        # A leading global flag (spec-run puts it in front of the workflow
+        # source): overrides the configured backend for this run.
+        if len(argv) < 2:
+            print("error: --backend requires a value (opencode or cursor)", file=sys.stderr)
+            return 1
+        cli_backend = argv[1]
+        if cli_backend not in BACKENDS:
+            print(
+                f"error: invalid --backend value '{cli_backend}'; use 'opencode' or 'cursor'",
+                file=sys.stderr,
+            )
+            return 1
+        argv = argv[2:]
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
         return 0
@@ -701,7 +780,9 @@ def main() -> int:
     # Map the installed config + argv to the specify invocation; main() only
     # orchestrates the live run from the result.
     cfg = load_config()
-    specify_cmd, env, state_dir, logs_dir = build_specify_invocation(cfg, source, extra)
+    specify_cmd, env, state_dir, logs_dir = build_specify_invocation(
+        cfg, source, extra, cli_backend
+    )
 
     run_state_dir = Path.cwd() / ".specify"
     # Snapshot the existing run directories BEFORE the workflow starts: the

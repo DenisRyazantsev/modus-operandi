@@ -18,11 +18,13 @@ Usage:
   spec-run adr "feature description" [-i key=value ...]
   spec-run review [--branch-diff]
   spec-run edit
+  spec-run --backend cursor adr "feature description"   # override the backend for this run
   spec-run --help | -h
 
 Examples:
   spec-run adr "build a kanban board"
   spec-run adr "build a kanban board" -i task_id=kanban
+  spec-run --backend cursor adr "build a kanban board"
   spec-run review
   spec-run review --branch-diff
   spec-run edit
@@ -72,6 +74,10 @@ INSTALL_PATH_FILE = _config_dir() / "install-path.txt"
 
 USAGE = """Usage: spec-run <subcommand> [args]
 
+  spec-run --backend <opencode|cursor> <subcommand> [args]
+      Override the configured backend for this run (the flag must precede
+      the subcommand; the config `backend:` remains the default).
+
   spec-run adr "feature description" [-i key=value ...]
       Run the full ADR pipeline for the feature (ADR -> implementation ->
       review). All non-flag arguments after `adr` are joined into the feature
@@ -91,6 +97,7 @@ USAGE = """Usage: spec-run <subcommand> [args]
 Examples:
   spec-run adr "build a kanban board"
   spec-run adr "build a kanban board" -i task_id=kanban
+  spec-run --backend cursor adr "build a kanban board"
   spec-run review
   spec-run review --branch-diff
   spec-run edit
@@ -103,17 +110,29 @@ def build_command(argv: list[str]) -> list[str]:
     Raises HelpRequested for `--help`/`-h`, EditRequested for `edit` and
     InvalidInvocation for an unusable invocation; it never prints anything, so
     mapping stays separate from presentation. The caller owns the usage output
-    and the exit code.
+    and the exit code. A leading global `--backend <opencode|cursor>` flag
+    (before the subcommand) is consumed and forwarded to run-pipeline.py.
     """
     if not argv:
         raise InvalidInvocation
+    backend: str | None = None
     head, rest = argv[0], argv[1:]
+    if head == "--backend":
+        if not rest:
+            raise InvalidInvocation
+        backend = rest[0]
+        if backend not in ("opencode", "cursor"):
+            raise InvalidInvocation
+        rest = rest[1:]
+        if not rest:
+            raise InvalidInvocation
+        head, rest = rest[0], rest[1:]
     if head in ("-h", "--help"):
         raise HelpRequested
     if head == "adr":
-        return _build_adr_command(rest)
+        return _build_adr_command(rest, backend)
     if head == "review":
-        return _build_review_command(rest)
+        return _build_review_command(rest, backend)
     if head == "edit":
         # `edit` takes no arguments: anything after the subcommand is ignored.
         # Editor resolution is environment-dependent (os.environ, shutil.which)
@@ -149,8 +168,11 @@ def _resolve_editor() -> list[str] | None:
     return None
 
 
-def _build_adr_command(rest: list[str]) -> list[str]:
-    cmd = [RUN_PIPELINE, ADR_WORKFLOW]
+def _build_adr_command(rest: list[str], backend: str | None = None) -> list[str]:
+    cmd = [RUN_PIPELINE]
+    if backend:
+        cmd += ["--backend", backend]
+    cmd.append(ADR_WORKFLOW)
     feature_parts: list[str] = []
     passed: list[str] = []
     i = 0
@@ -183,8 +205,11 @@ def _build_adr_command(rest: list[str]) -> list[str]:
     return cmd
 
 
-def _build_review_command(rest: list[str]) -> list[str]:
-    cmd = [RUN_PIPELINE, REVIEW_WORKFLOW]
+def _build_review_command(rest: list[str], backend: str | None = None) -> list[str]:
+    cmd = [RUN_PIPELINE]
+    if backend:
+        cmd += ["--backend", backend]
+    cmd.append(REVIEW_WORKFLOW)
     i = 0
     while i < len(rest):
         arg = rest[i]

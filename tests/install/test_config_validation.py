@@ -97,3 +97,115 @@ class ConfigValidationTest(InstallerTestCase):
         rc, err = self.install_with_capture()
         self.assertEqual(rc, 1)
         self.assertIn("workflow.adr_dir must be a string", err)
+
+    def test_invalid_backend_rejected(self):
+        self.assertEqual(self.install(), 0)
+        self.write_config(self.read_config().replace("backend: opencode", "backend: bogus"))
+        rc, err = self.install_with_capture()
+        self.assertEqual(rc, 1)
+        self.assertIn("backend must be one of: opencode, cursor", err)
+
+    def test_backend_cursor_requires_both_models(self):
+        # cursor.models.planner.model and cursor.models.executor.model are
+        # required (symmetric to opencode's provider/model/reasoning); the
+        # opencode section is not required in cursor mode.
+        self.assertEqual(self.install(), 0)
+        self.write_config(
+            "backend: cursor\n"
+            "cursor:\n"
+            "  models:\n"
+            "    planner:\n"
+            "      model: composer-2\n"
+            "workflow: {}\n"
+        )
+        rc, err = self.install_with_capture()
+        self.assertEqual(rc, 1)
+        self.assertIn("missing required key: cursor.models.executor.model", err)
+        self.assertNotIn("opencode", err)
+
+    def test_backend_cursor_placeholder_model_rejected(self):
+        self.assertEqual(self.install(), 0)
+        self.write_config(
+            "backend: cursor\n"
+            "cursor:\n"
+            "  models:\n"
+            "    planner:\n"
+            "      model: <planner-slug>\n"
+            "    executor:\n"
+            "      model: composer-2\n"
+            "workflow: {}\n"
+        )
+        rc, err = self.install_with_capture()
+        self.assertEqual(rc, 1)
+        self.assertIn("placeholder value in cursor.models.planner.model", err)
+
+    def test_backend_cursor_without_cursor_section_rejected(self):
+        self.assertEqual(self.install(), 0)
+        self.write_config(
+            "backend: cursor\n"
+            "cursor: {}\n"
+            "workflow: {}\n"
+        )
+        rc, err = self.install_with_capture()
+        self.assertEqual(rc, 1)
+        self.assertIn("missing required key: cursor.models.planner.model", err)
+        self.assertIn("missing required key: cursor.models.executor.model", err)
+
+    def test_backend_opencode_requires_opencode_models(self):
+        self.assertEqual(self.install(), 0)
+        self.write_config(
+            "backend: opencode\n"
+            "opencode: {}\n"
+            "workflow: {}\n"
+        )
+        rc, err = self.install_with_capture()
+        self.assertEqual(rc, 1)
+        self.assertIn("missing required key: opencode.models.planner.provider", err)
+
+    def test_backend_cursor_without_opencode_section_is_valid(self):
+        self.assertEqual(self.install(), 0)
+        self.write_config(
+            "backend: cursor\n"
+            "cursor:\n"
+            "  models:\n"
+            "    planner:\n"
+            "      model: composer-2\n"
+            "    executor:\n"
+            "      model: composer-2\n"
+            "workflow: {}\n"
+        )
+        self.assertEqual(self.install(), 0)
+
+    def test_backend_cursor_with_empty_opencode_section_is_valid(self):
+        # The inactive opencode section is structural only: an empty section
+        # renders no agent files, and check_files must not demand them (the
+        # render and verify conditions share one completeness predicate).
+        self.write_config(
+            "backend: cursor\n"
+            "opencode: {}\n"
+            "cursor:\n"
+            "  models:\n"
+            "    planner:\n"
+            "      model: composer-2\n"
+            "    executor:\n"
+            "      model: composer-2\n"
+            "workflow: {}\n"
+        )
+        self.assertEqual(self.install(), 0)
+        self.assertFalse((self.home / ".config/opencode/agent/planner.md").exists())
+
+    def test_backend_opencode_without_cursor_section_is_valid(self):
+        # Legacy configs (models: folded into opencode.models, no cursor
+        # section) stay valid under the default backend.
+        self.assertEqual(self.install(), 0)
+        self.write_config(
+            "models:\n"
+            "  planner:\n"
+            "    provider: p\n"
+            "    model: m\n"
+            "  executor:\n"
+            "    provider: p\n"
+            "    model: m\n"
+            "workflow: {}\n"
+        )
+        self.assertEqual(self.install(), 0)

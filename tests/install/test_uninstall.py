@@ -18,6 +18,8 @@ class UninstallTest(InstallerTestCase):
             ".config/opencode/agent/executor.md",
             ".config/opencode/scripts/run-agent.sh",
             ".config/opencode/scripts/name-task.sh",
+            ".config/opencode/scripts/planner-body.txt",
+            ".config/opencode/scripts/executor-body.txt",
             ".config/opencode/scripts/run-pipeline.py",
             # run-pipeline.py is split one class per file: the modules are
             # removed together with the wrapper.

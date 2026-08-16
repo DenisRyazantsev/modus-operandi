@@ -23,6 +23,10 @@ def build_paths(home: str | Path) -> Paths:
         "prompts": base / ".config" / "spec-kit-llm-client" / "prompts",
         "run_agent": base / ".config" / "opencode" / "scripts" / "run-agent.sh",
         "name_task": base / ".config" / "opencode" / "scripts" / "name-task.sh",
+        # Role bodies as plain text, read by run-agent.sh for the cursor
+        # backend (cursor has no agent files to carry the role).
+        "planner_body": base / ".config" / "opencode" / "scripts" / "planner-body.txt",
+        "executor_body": base / ".config" / "opencode" / "scripts" / "executor-body.txt",
         "run_pipeline": base / ".config" / "opencode" / "scripts" / "run-pipeline.py",
         # run-pipeline.py is split one class per file; the modules below are
         # copied next to it so the installed wrapper stays importable.
