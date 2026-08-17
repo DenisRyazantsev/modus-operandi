@@ -58,6 +58,21 @@ def _write_executable(path: Path, content: str) -> None:
     path.chmod(0o755)
 
 
+def _safe_system_path() -> str:
+    # The fakes must shadow any REAL cursor-agent/agent binaries on the host
+    # PATH (this machine has both installed): drop the directories that carry
+    # them, keep the rest for python3/ps/readlink. The opencode binary is
+    # left alone: the opencode branch invokes `opencode` by name and the
+    # self.bin fake comes first on PATH, so it already shadows the real one.
+    entries = []
+    for entry in os.environ["PATH"].split(os.pathsep):
+        directory = Path(entry)
+        if any((directory / name).exists() for name in ("cursor-agent", "agent")):
+            continue
+        entries.append(entry)
+    return os.pathsep.join(entries)
+
+
 def read_invocations(log_path: Path) -> list[list[str]]:
     """Read a fake-binary log (NUL-separated argv per invocation) and group
     it into argv lists. A new invocation starts at the first arg of each
@@ -109,7 +124,7 @@ class RunAgentTest(unittest.TestCase):
 
     def _env(self, **extra) -> dict:
         env = {
-            "PATH": str(self.bin) + os.pathsep + os.environ["PATH"],
+            "PATH": str(self.bin) + os.pathsep + _safe_system_path(),
             "SKLC_STATE_DIR": str(self.state),
             "SKLC_PLANNER_MODEL": "planner-slug",
             "SKLC_EXECUTOR_MODEL": "executor-slug",

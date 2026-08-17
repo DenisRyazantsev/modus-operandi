@@ -27,6 +27,21 @@ printf '%s\\n' '{"type":"text","part":{"type":"text","text":"kanban-board"}}'
 """
 
 
+def _safe_system_path() -> str:
+    # The fakes must shadow any REAL cursor-agent/agent binaries on the host
+    # PATH (this machine has both installed): drop the directories that carry
+    # them, keep the rest for python3/sh. The opencode binary is left alone:
+    # the opencode branch invokes `opencode` by name and the self.bin fake
+    # comes first on PATH, so it already shadows the real one.
+    entries = []
+    for entry in os.environ["PATH"].split(os.pathsep):
+        directory = Path(entry)
+        if any((directory / name).exists() for name in ("cursor-agent", "agent")):
+            continue
+        entries.append(entry)
+    return os.pathsep.join(entries)
+
+
 class NameTaskTest(unittest.TestCase):
     """End-to-end backend dispatch of the installed name-task.sh."""
 
@@ -43,7 +58,7 @@ class NameTaskTest(unittest.TestCase):
 
     def _env(self, **extra) -> dict:
         env = {
-            "PATH": str(self.bin) + os.pathsep + os.environ["PATH"],
+            "PATH": str(self.bin) + os.pathsep + _safe_system_path(),
             "SKLC_EXECUTOR_MODEL": "executor-slug",
             "FAKE_CURSOR_LOG": str(self.cursor_log),
             "FAKE_OPENCODE_LOG": str(self.opencode_log),
