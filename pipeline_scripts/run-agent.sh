@@ -170,17 +170,25 @@ else
     echo "error: --fork requires a stored $ROLE session (no warm session to fork); run the warm-up step first" >&2
     exit 2
   fi
+  # Stream opencode into a log file instead of a command substitution: the
+  # JSON event stream is large, and capturing it through a pipe made opencode
+  # die with SIGPIPE (exit 141) mid-run. A file also keeps a durable per-role
+  # log the user can inspect after a failed step.
+  #
+  # The agent runs in the BACKGROUND so its pid can be recorded: the pid file
+  # must carry the AGENT's pid (not the shell's), otherwise the stale-process
+  # cleanup in manage_pid_file could never match the backend process name.
+  # Nothing is echoed from the event stream to the step's stdout: the
+  # workflow runner captures step output through a pipe, and a large stream
+  # (dozens of tool calls -> hundreds of KB) made the reader close early,
+  # SIGPIPE-ing this script (exit 141). The full log stays in $LOG_FILE.
+  RC=0
+  AGENT_PID=""
   if [ -z "$SESSION_ID" ]; then
-    RC=0
-    # Stream opencode into a log file instead of a command substitution: the
-    # JSON event stream is large, and capturing it through a pipe made opencode
-    # die with SIGPIPE (exit 141) mid-run. A file also keeps a durable per-role
-    # log the user can inspect after a failed step.
-    opencode run --agent "$ROLE" --auto $ATTACH_FLAG --format json "$PROMPT" > "$LOG_FILE" 2>&1 || RC=$?
-    # Nothing is echoed from the event stream to the step's stdout: the
-    # workflow runner captures step output through a pipe, and a large stream
-    # (dozens of tool calls -> hundreds of KB) made the reader close early,
-    # SIGPIPE-ing this script (exit 141). The full log stays in $LOG_FILE.
+    opencode run --agent "$ROLE" --auto $ATTACH_FLAG --format json "$PROMPT" > "$LOG_FILE" 2>&1 &
+    AGENT_PID=$!
+    record_agent_pid "$AGENT_PID"
+    wait "$AGENT_PID" || RC=$?
     if [ "$RC" -ne 0 ]; then
       echo "run-agent: opencode exited $RC; full log: $LOG_FILE" >&2
       exit "$RC"
@@ -192,12 +200,14 @@ else
     fi
     save_session "$SESSION_ID"
   else
-    RC=0
     FORK_FLAG=""
     if [ "$FORK" -eq 1 ]; then
       FORK_FLAG="--fork"
     fi
-    opencode run --session "$SESSION_ID" $FORK_FLAG --agent "$ROLE" --auto $ATTACH_FLAG --format json "$PROMPT" > "$LOG_FILE" 2>&1 || RC=$?
+    opencode run --session "$SESSION_ID" $FORK_FLAG --agent "$ROLE" --auto $ATTACH_FLAG --format json "$PROMPT" > "$LOG_FILE" 2>&1 &
+    AGENT_PID=$!
+    record_agent_pid "$AGENT_PID"
+    wait "$AGENT_PID" || RC=$?
     if [ "$RC" -ne 0 ]; then
       echo "run-agent: opencode exited $RC; full log: $LOG_FILE" >&2
       exit "$RC"

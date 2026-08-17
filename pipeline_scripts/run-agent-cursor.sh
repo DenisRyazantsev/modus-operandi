@@ -79,13 +79,44 @@ run_cursor_once() {
   # added only when a saved chat id exists. Nothing is echoed from the JSON
   # stream to the step's stdout: the workflow runner captures step output
   # through a pipe, and a large stream made the reader close early,
-  # SIGPIPE-ing this script (exit 141). The full log stays in $LOG_FILE.
+  # SIGPIPE-ing this script (exit 141).
+  #
+  # The cursor CLI prints non-JSON status lines (e.g. "Connection lost,
+  # reconnecting...") on the same stream even with --output-format json, so
+  # the invocation writes into a raw sidecar first and only the valid JSON
+  # lines are copied into $LOG_FILE below — the .jsonl stays pure for
+  # extract_session_id and the log tailer, while the full raw output stays
+  # inspectable in the sidecar.
+  #
+  # The agent runs in the BACKGROUND so its pid can be recorded (the stale-
+  # process cleanup in manage_pid_file matches the recorded pid's name).
   local rc=0
+  local raw="${LOG_FILE%.jsonl}.raw"
   if [ -n "$SESSION_ID" ]; then
-    "$CURSOR_BIN" -p --output-format json --force --trust --workspace "$(pwd)" --model "$ROLE_MODEL" --resume "$SESSION_ID" "$PROMPT_FULL" > "$LOG_FILE" 2>&1 || rc=$?
+    "$CURSOR_BIN" -p --output-format json --force --trust --workspace "$(pwd)" --model "$ROLE_MODEL" --resume "$SESSION_ID" "$PROMPT_FULL" > "$raw" 2>&1 &
   else
-    "$CURSOR_BIN" -p --output-format json --force --trust --workspace "$(pwd)" --model "$ROLE_MODEL" "$PROMPT_FULL" > "$LOG_FILE" 2>&1 || rc=$?
+    "$CURSOR_BIN" -p --output-format json --force --trust --workspace "$(pwd)" --model "$ROLE_MODEL" "$PROMPT_FULL" > "$raw" 2>&1 &
   fi
+  AGENT_PID=$!
+  record_agent_pid "$AGENT_PID"
+  wait "$AGENT_PID" || rc=$?
+  python3 - "$raw" "$LOG_FILE" <<'PYEOF'
+import json
+import sys
+
+src, dst = sys.argv[1], sys.argv[2]
+with open(src, encoding="utf-8", errors="replace") as fh, open(
+    dst, "w", encoding="utf-8"
+) as out:
+    for line in fh:
+        if not line.strip():
+            continue
+        try:
+            json.loads(line)
+        except Exception:
+            continue
+        out.write(line)
+PYEOF
   return "$rc"
 }
 
@@ -143,7 +174,7 @@ $PROMPT"
   RC=0
   run_cursor_once || RC=$?
   if [ "$RC" -ne 0 ]; then
-    echo "run-agent: $CURSOR_BIN exited $RC; full log: $LOG_FILE" >&2
+    echo "run-agent: $CURSOR_BIN exited $RC; full log: $LOG_FILE (raw output: ${LOG_FILE%.jsonl}.raw)" >&2
     exit "$RC"
   fi
   if [ -z "$SESSION_ID" ]; then

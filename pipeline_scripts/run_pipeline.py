@@ -27,8 +27,9 @@ keeps the inherited stdin, so gates keep going PAUSED exactly as before.
 
 When the run finishes (success, failure or abort alike) the wrapper prints a
 `=== run statistics ===` block: the wall-clock run time and the token/cost
-usage of the planner and executor sessions, queried from opencode by session
-id, followed by a per-stage latency table (ADR-0009) built from the run's
+usage of the planner and executor (opencode: exported by session id; cursor:
+summed from the per-turn usage fields of the agent logs, cost n/a),
+followed by a per-stage latency table (ADR-0009) built from the run's
 log.jsonl (stage durations, agent-call vs shell-overhead breakdown, and the
 parallel-checks detail for the review fan-out). It also plays a single
 victory.wav signal on gate-open (except the ADR
@@ -240,6 +241,7 @@ def _finalize_run(
     master_fd: int | None,
     forward_thread: threading.Thread | None,
     forward_stop: threading.Event,
+    backend: str,
 ) -> int:
     """Stop forwarding and the monitor, reap specify, and report the outcome.
 
@@ -288,14 +290,15 @@ def _finalize_run(
                 f"[{stamp()}] resume with: specify workflow resume {run_id or monitor.run_id}"
             )
     # The statistics block prints on every completion path and never fails:
-    # missing session data or a failed `opencode export` degrade to zeros.
-    # The run directory feeds the per-stage latency table (ADR-0009); a
-    # missing run dir degrades to an empty table.
+    # missing session data or a failed `opencode export` degrade to zeros
+    # (cursor runs aggregate their usage from the agent logs instead). The
+    # run directory feeds the per-stage latency table (ADR-0009); a missing
+    # run dir degrades to an empty table.
     run_dir = None
     rid = run_id or monitor.run_id
     if rid:
         run_dir = Path.cwd() / ".specify" / "workflows" / "runs" / rid
-    print_run_statistics(Path.cwd() / state_dir, t1 - t0, run_dir)
+    print_run_statistics(Path.cwd() / state_dir, t1 - t0, run_dir, backend)
     # One victory.wav signal for every event: gate open, success, failure.
     notify()
     return rc
@@ -329,6 +332,7 @@ def main() -> int:
     # explicitly so a runtime override of this module's CONFIG_PATH (e.g. by
     # tests) is honored by the config read.
     cfg = load_config(CONFIG_PATH)
+    backend = effective_backend(cfg, cli_backend)
     specify_cmd, env, state_dir, logs_dir = build_specify_invocation(
         cfg, source, extra, cli_backend
     )
@@ -352,7 +356,15 @@ def main() -> int:
         run_id = _consume_output(proc, monitor, state_dir, master_fd, forward_pause)
     finally:
         rc = _finalize_run(
-            proc, monitor, run_id, t0, state_dir, master_fd, forward_thread, forward_stop
+            proc,
+            monitor,
+            run_id,
+            t0,
+            state_dir,
+            master_fd,
+            forward_thread,
+            forward_stop,
+            backend,
         )
     return rc
 

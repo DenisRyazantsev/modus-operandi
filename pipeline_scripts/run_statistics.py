@@ -1,7 +1,9 @@
-"""Query opencode for the session usage and print the run statistics block.
+"""Aggregate the run's token usage and print the run statistics block.
 
-One responsibility: read the per-role session ids, export their token/cost
-usage from opencode and print the `=== run statistics ===` block. The
+One responsibility: read the per-role session ids and the backend's usage
+data (opencode: exported from the saved sessions via `opencode export`;
+cursor: summed from the per-role .jsonl agent logs, whose result events
+carry a `usage` field) and print the `=== run statistics ===` block. The
 per-stage latency table (ADR-0009) lives in its own module
 (latency_table.py) and is printed from here; this module does not parse the
 engine's log.jsonl/state.json or know the fan-out step-id grammar. Missing
@@ -29,7 +31,7 @@ def read_session_ids(state_dir: Path) -> dict[str, str]:
     with a non-empty id are returned.
     """
     try:
-        task_id = (state_dir / "tasks" / "current").resolve().name
+        task_id = current_task_id(state_dir)
         data = json.loads(
             (state_dir / f"sessions-{task_id}.json").read_text(
                 encoding="utf-8"
@@ -44,6 +46,14 @@ def read_session_ids(state_dir: Path) -> dict[str, str]:
         for role in ("planner", "executor")
         if isinstance(data.get(role), str) and data[role]
     }
+
+
+def current_task_id(state_dir: Path) -> str:
+    """The task id from the <state_dir>/tasks/current symlink ("" on failure)."""
+    try:
+        return (state_dir / "tasks" / "current").resolve().name
+    except Exception:
+        return ""
 
 
 def export_session_info(session_id: str) -> dict | None:
@@ -81,14 +91,23 @@ def export_session_info(session_id: str) -> dict | None:
     return None
 
 
-def collect_usage(state_dir: Path) -> dict[str, int | float]:
-    """Aggregate token usage and cost across the planner and executor sessions.
+def collect_usage(state_dir: Path, backend: str = "opencode") -> dict[str, int | float]:
+    """Aggregate token usage and cost across the planner and executor roles.
 
-    Sums info.tokens.{input,output,reasoning}, info.tokens.cache.{read,write}
-    and info.cost of both roles into one dict; a role with no session id or a
-    failed export contributes nothing. No live token accumulator is involved:
-    opencode reports the full usage of each saved session itself.
+    opencode: sums info.tokens.{input,output,reasoning},
+    info.tokens.cache.{read,write} and info.cost of both roles into one dict;
+    a role with no session id or a failed export contributes nothing. No live
+    token accumulator is involved: opencode reports the full usage of each
+    saved session itself.
+
+    cursor: cursor-agent reports per-turn usage inside its JSON result events
+    (the .jsonl agent logs), and `opencode export` knows nothing about cursor
+    chat ids. The usage is therefore summed over every log line of the
+    current task (role logs and the per-check fork logs alike); cursor
+    reports no cost, which the statistics block prints as "n/a".
     """
+    if backend == "cursor":
+        return collect_cursor_usage(state_dir)
     totals: dict[str, int | float] = {
         "input": 0,
         "output": 0,
@@ -116,17 +135,76 @@ def collect_usage(state_dir: Path) -> dict[str, int | float]:
     return totals
 
 
-def print_run_statistics(state_dir: Path, elapsed: float, run_dir: Path | None = None) -> None:
+def _empty_totals() -> dict[str, int | float]:
+    return {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "cost": 0.0,
+    }
+
+
+def collect_cursor_usage(state_dir: Path) -> dict[str, int | float]:
+    """Sum the usage fields of the current task's cursor .jsonl agent logs.
+
+    Only files named after the current task (sessions-<task-id>-*.jsonl) are
+    read, so previous tasks never bleed into the block. Each `-p` call emits
+    one result event with that call's usage; summing every event yields the
+    run's totals. The cursor CLI is in beta: the cache counters appeared both
+    as a nested `cache` object and as top-level cacheReadTokens/cacheWriteTokens
+    fields, so both shapes are read.
+    """
+    totals = _empty_totals()
+    task_id = current_task_id(state_dir)
+    logs_dir = state_dir / "logs"
+    if not task_id or not logs_dir.is_dir():
+        return totals
+    for path in sorted(logs_dir.glob(f"sessions-{task_id}-*.jsonl")):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                event = json.loads(line)
+            except Exception:
+                continue
+            usage = event.get("usage")
+            if not isinstance(usage, dict):
+                continue
+            totals["input"] += int(usage.get("inputTokens") or 0)
+            totals["output"] += int(usage.get("outputTokens") or 0)
+            totals["reasoning"] += int(usage.get("reasoningTokens") or 0)
+            cache = usage.get("cache")
+            if isinstance(cache, dict):
+                totals["cache_read"] += int(cache.get("read") or 0)
+                totals["cache_write"] += int(cache.get("write") or 0)
+            else:
+                totals["cache_read"] += int(usage.get("cacheReadTokens") or 0)
+                totals["cache_write"] += int(usage.get("cacheWriteTokens") or 0)
+    return totals
+
+
+def print_run_statistics(
+    state_dir: Path,
+    elapsed: float,
+    run_dir: Path | None = None,
+    backend: str = "opencode",
+) -> None:
     """Print the final `=== run statistics ===` block.
 
     Printed after the run on every completion path (success, failure, abort).
     Token counts use space thousand separators; wall time is HH:MM:SS.
     Missing session data degrades to zeros — the wrapper never fails here.
+    cursor runs report no cost (the cursor API does not expose one in the
+    JSON output), so the cost line prints "n/a" for them.
     When the run's log.jsonl is available, the per-stage latency table
     follows (printed by latency_table.print_latency_table, ADR-0009); missing
     data degrades to an empty table.
     """
-    usage = collect_usage(state_dir)
+    usage = collect_usage(state_dir, backend)
     print()
     print("=== run statistics ===")
     print(f"wall time: {fmt_duration(elapsed)}")
@@ -143,5 +221,8 @@ def print_run_statistics(state_dir: Path, elapsed: float, run_dir: Path | None =
             fmt_thousands(usage["cache_write"]),
         )
     )
-    print("cost: ${:.2f}".format(usage["cost"]))
+    if backend == "cursor":
+        print("cost: n/a")
+    else:
+        print("cost: ${:.2f}".format(usage["cost"]))
     print_latency_table(state_dir, run_dir)

@@ -56,8 +56,12 @@ if m:
 manage_pid_file() {
   # Kill any agent process left over from a previously killed step (e.g. a
   # shell-step timeout that killed the shell but not the agent), so a zombie
-  # cannot keep writing to this session or burn tokens. The process name to
-  # match depends on the backend: opencode vs cursor-agent/agent.
+  # cannot keep writing to this session or burn tokens. The pid file records
+  # the AGENT process (record_agent_pid, called right after the agent is
+  # spawned in the background), never the shell: the stale-check compares the
+  # recorded pid's process name against the backend pattern below, and the
+  # shell's own name would never match it. The process name to match depends
+  # on the backend: opencode vs cursor-agent/agent.
   local backend="$1"
   local STALE_PROC_PATTERN
   if [ "$backend" = "cursor" ]; then
@@ -80,6 +84,18 @@ manage_pid_file() {
     fi
     rm -f "$PID_FILE"
   fi
-  echo "$$" > "$PID_FILE"
-  trap 'rm -f "$PID_FILE"' EXIT
+}
+
+record_agent_pid() {
+  # Write the spawned agent's pid into the pid file. The file must survive a
+  # killed shell: no EXIT trap here, so when the workflow timeout kills the
+  # step shell but not the agent, the next step's manage_pid_file finds the
+  # orphan pid and kills it. A dead pid is harmless (kill -0 fails, the file
+  # is replaced). Fork pid files carry a per-invocation -fork-<pid> name that
+  # no later step can target, so they ARE removed on exit to keep the pids
+  # dir clean.
+  echo "$1" > "$PID_FILE"
+  if [ "${FORK:-0}" -eq 1 ]; then
+    trap 'rm -f "$PID_FILE"' EXIT
+  fi
 }
