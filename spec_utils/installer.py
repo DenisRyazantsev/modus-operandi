@@ -49,6 +49,7 @@ def apply(paths: Paths, update: bool = False) -> None:
     render.render_run_pipeline(paths)
     render.render_victory_wav(paths)
     render.render_adr_scripts(paths)
+    render.render_step_scripts(paths)
     render.render_workflow(cfg, paths)
     render.render_review_workflow(cfg, paths)
     render.render_prompts(paths)

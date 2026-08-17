@@ -64,10 +64,31 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
         "task_utils",
         "adr_utils",
         "agent_call",
+        "validate_inputs",
     ):
         script = paths[key]
         if not script.exists():
             errors.append(f"generated script missing: {script}")
+    # The workflow step scripts (CONTRIBUTING.md: one script call per shell
+    # step): the .sh ones are invoked directly and must be executable.
+    for key, executable in (
+        ("agent_step", True),
+        ("review_check", True),
+        ("warm_planner", True),
+        ("determine_scope", True),
+        ("review_task_id", True),
+        ("adr_task_id", True),
+        ("implement_retry", True),
+        ("sync_adr_step", True),
+        ("clear_feedback", True),
+        ("implement_pass_check", True),
+        ("pass_check", True),
+    ):
+        script = paths[key]
+        if not script.is_file():
+            errors.append(f"generated step script missing: {script}")
+        elif executable and not os.access(script, os.X_OK):
+            errors.append(f"step script is not executable: {script}")
     if not os.access(paths["run_agent"], os.X_OK):
         errors.append("run-agent.sh is not executable: {}".format(paths["run_agent"]))
     if not os.access(paths["name_task"], os.X_OK):

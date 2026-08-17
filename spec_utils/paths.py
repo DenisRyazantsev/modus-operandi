@@ -76,6 +76,23 @@ def build_paths(home: str | Path) -> Paths:
         "task_utils": base / ".config" / "opencode" / "scripts" / "task_utils.py",
         "adr_utils": base / ".config" / "opencode" / "scripts" / "adr_utils.py",
         "agent_call": base / ".config" / "opencode" / "scripts" / "agent_call.py",
+        # Workflow step scripts (CONTRIBUTING.md: the workflows call exactly
+        # one installed script per shell step - no bash in YAML). Copied
+        # verbatim like every other pipeline script.
+        "agent_step": base / ".config" / "opencode" / "scripts" / "agent-step.sh",
+        "review_check": base / ".config" / "opencode" / "scripts" / "review-check.sh",
+        "warm_planner": base / ".config" / "opencode" / "scripts" / "warm-planner.sh",
+        "determine_scope": base / ".config" / "opencode" / "scripts" / "determine-scope.sh",
+        "review_task_id": base / ".config" / "opencode" / "scripts" / "review-task-id.sh",
+        "adr_task_id": base / ".config" / "opencode" / "scripts" / "adr-task-id.sh",
+        "implement_retry": base / ".config" / "opencode" / "scripts" / "implement-retry.sh",
+        "sync_adr_step": base / ".config" / "opencode" / "scripts" / "sync-adr.sh",
+        "clear_feedback": base / ".config" / "opencode" / "scripts" / "clear-feedback.sh",
+        "implement_pass_check": (
+            base / ".config" / "opencode" / "scripts" / "implement-pass-check.sh"
+        ),
+        "pass_check": base / ".config" / "opencode" / "scripts" / "pass-check.sh",
+        "validate_inputs": base / ".config" / "opencode" / "scripts" / "validate_inputs.py",
         # spec-run is split one class per file: the exceptions package, the
         # edit command and the shared editor module are copied next to the
         # launcher so it stays importable.

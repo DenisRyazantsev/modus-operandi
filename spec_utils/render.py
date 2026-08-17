@@ -206,6 +206,31 @@ def render_adr_scripts(paths: Paths) -> None:
         shutil.copy2(PIPELINE_SCRIPTS_DIR / f"{key}.py", paths[key])
 
 
+# The workflow step scripts, one per shell step (CONTRIBUTING.md: the
+# workflows carry no bash - every step calls exactly one of these). The
+# .sh ones are invoked directly and must be executable; validate_inputs.py
+# is called through python3.
+_STEP_SCRIPTS = {
+    "agent_step": ("agent-step.sh", True),
+    "review_check": ("review-check.sh", True),
+    "warm_planner": ("warm-planner.sh", True),
+    "determine_scope": ("determine-scope.sh", True),
+    "review_task_id": ("review-task-id.sh", True),
+    "adr_task_id": ("adr-task-id.sh", True),
+    "implement_retry": ("implement-retry.sh", True),
+    "sync_adr_step": ("sync-adr.sh", True),
+    "clear_feedback": ("clear-feedback.sh", True),
+    "implement_pass_check": ("implement-pass-check.sh", True),
+    "pass_check": ("pass-check.sh", True),
+    "validate_inputs": ("validate_inputs.py", False),
+}
+
+
+def render_step_scripts(paths: Paths) -> None:
+    for key, (source_name, executable) in _STEP_SCRIPTS.items():
+        _install_script(source_name, paths[key], executable=executable)
+
+
 # ---------------------------------------------------------------------------
 # Workflows (static sources; only the six config numbers are written as data)
 # ---------------------------------------------------------------------------

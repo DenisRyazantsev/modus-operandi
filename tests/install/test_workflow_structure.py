@@ -56,10 +56,13 @@ class WorkflowStructureTest(InstallerTestCase):
     def test_workflow_scripts_dir_has_fallback_for_direct_runs(self):
         # `specify workflow run <path> -i feature=...` is a documented entry
         # point that does not go through run-pipeline.py: SKLC_SCRIPTS_DIR is
-        # then unset, so every step referencing the scripts must fall back to
-        # the default install location instead of expanding to "/run-agent.sh".
+        # then unset, so every step referencing the scripts must expand to
+        # the default install location instead of an empty prefix. The
+        # expansion is the ONLY shell syntax a run: value may carry
+        # (CONTRIBUTING.md), so a bare $SKLC_SCRIPTS_DIR without the fallback
+        # is a violation.
         self.assertEqual(self.install(), 0)
-        fallback = 'SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}"'
+        fallback = "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}"
 
         def missing_fallback(steps, missing):
             for step in steps:
@@ -70,6 +73,9 @@ class WorkflowStructureTest(InstallerTestCase):
                     nested = step.get(branch)
                     if isinstance(nested, list):
                         missing_fallback(nested, missing)
+                fan = step.get("step")
+                if isinstance(fan, dict):
+                    missing_fallback([fan], missing)
 
         for rel in (
             ".config/spec-kit-llm-client/adr-pipeline.yml",
@@ -89,15 +95,24 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertIn("{{ steps.merge-reports.output.exit_code != 0 }}", workflow)
         self.assertIn("continue_on_error: true", workflow)
         self.assertIn("check_review.py", workflow)
-        self.assertIn('check_review.py" merge', workflow)
         merge_run = self.find_step(self.parsed_workflow()["steps"], "merge-reports")["run"]
         self.assertIn(
             'check_review.py" merge "{{ inputs.state_dir }}" "{{ inputs.task_id }}"',
             merge_run,
         )
+        # CONTRIBUTING.md: pass-check calls pass-check.sh; the verdict loop
+        # and the messages live in the installed script.
         pass_check_run = self.find_step(self.parsed_workflow()["steps"], "pass-check")["run"]
-        self.assertIn("REVIEW OK: all verdicts PASS", pass_check_run)
-        self.assertIn("WARNING: review loop exhausted all iterations without pass", pass_check_run)
+        self.assertIn("pass-check.sh", pass_check_run)
+        self.assertIn('"{{ inputs.state_dir }}"', pass_check_run)
+        self.assertIn('"{{ inputs.task_id }}"', pass_check_run)
+        pass_check_script = (self.home / ".config/opencode/scripts/pass-check.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("REVIEW OK: all verdicts PASS", pass_check_script)
+        self.assertIn(
+            "WARNING: review loop exhausted all iterations without pass", pass_check_script
+        )
         self.assertIn("- id: fix-branch", workflow)
         self.assertNotIn("sort -V", workflow)
 
@@ -114,12 +129,20 @@ class WorkflowStructureTest(InstallerTestCase):
             encoding="utf-8"
         )
         self.assertIn("- id: generate-task-id", workflow)
-        block = workflow.split("- id: generate-task-id", 1)[1].split("- id: write-adr", 1)[0]
-        self.assertIn("name-task.sh", block)
-        self.assertNotIn('run-agent.sh" name', block)
-        self.assertIn("date +%Y%m%d-%H%M", block)
-        self.assertIn("ln -sfn", block)
-        self.assertIn("tasks/current", block)
+        # CONTRIBUTING.md: the step calls adr-task-id.sh with quoted args; the
+        # id derivation (name-task.sh, slug sanitization, timestamp, symlink)
+        # lives in the installed script.
+        run = self.find_step(self.parsed_workflow()["steps"], "generate-task-id")["run"]
+        self.assertIn("adr-task-id.sh", run)
+        self.assertIn('"{{ inputs.state_dir }}"', run)
+        self.assertIn('"{{ inputs.task_id }}"', run)
+        self.assertIn('"{{ inputs.feature }}"', run)
+        task_id_script = (self.home / ".config/opencode/scripts/adr-task-id.sh").read_text(
+            encoding="utf-8"
+        )
+        for needle in ("name-task.sh", "date +%Y%m%d-%H%M", "ln -sfn", "tasks/current"):
+            self.assertIn(needle, task_id_script, needle)
+        self.assertNotIn('run-agent.sh" name', task_id_script)
         validate_index = workflow.index("- id: validate-task-id")
         generate_index = workflow.index("- id: generate-task-id")
         write_index = workflow.index("- id: write-adr")
@@ -177,44 +200,75 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertNotIn("- id: bug-loop", review)
         self.assertNotIn("- id: review-loop", review)
         self.assertNotIn("- id: comment-review-loop", review)
-        # The fan-out item runs each check in a fork of the warm session and
-        # dispatches the per-kind prompt + rereview-vs-review on the snapshot.
+        # CONTRIBUTING.md: the fan-out item calls review-check.sh with the
+        # state_dir, the empty task id, the item and the "review" prompt
+        # namespace; the per-kind prompt dispatch and the fork invocation
+        # live in the installed script.
         fan = self.find_step(parsed["steps"], "review-fan")
         self.assertIsNotNone(fan)
         check = fan["step"]
         check_run = check["run"]
-        self.assertIn('run-agent.sh" planner --fork --prompt-file', check_run)
-        for kind, prompt in (
-            ("srp", "review/srp-review.md"),
-            ("bugs", "review/bug-review.md"),
-            ("review", "review/review.md"),
-            ("comment", "review/comment-review.md"),
+        self.assertIn("review-check.sh", check_run)
+        self.assertIn('"{{ inputs.state_dir }}"', check_run)
+        self.assertIn('"{{ item }}"', check_run)
+        self.assertIn("review", check_run)
+        review_check = (self.home / ".config/opencode/scripts/review-check.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('run-agent.sh" planner --fork --prompt-file', review_check)
+        # The prompt namespace is parametrized: the yaml call passes "review",
+        # the script picks review vs rereview from the per-kind snapshot.
+        for prompt in (
+            '"$PROMPT_NS/srp-review.md"',
+            '"$PROMPT_NS/bug-review.md"',
+            '"$PROMPT_NS/review.md"',
+            '"$PROMPT_NS/comment-review.md"',
+            '"$PROMPT_NS/srp-rereview.md"',
+            '"$PROMPT_NS/bug-rereview.md"',
+            '"$PROMPT_NS/review-rereview.md"',
+            '"$PROMPT_NS/comment-rereview.md"',
         ):
-            self.assertIn(prompt, check_run, kind)
-        self.assertIn("review/srp-rereview.md", check_run)
-        self.assertIn("-snapshot.sha", check_run)
-        self.assertIn("git stash create", check_run)
+            self.assertIn(prompt, review_check, prompt)
+        self.assertIn("-snapshot.sha", review_check)
+        self.assertIn("git stash create", review_check)
         self.assertIn('merge "{{ inputs.state_dir }}" ""', all_runs)
         self.assertIn('pending "{{ inputs.state_dir }}" ""', all_runs)
         self.assertIn("fix-all.md", all_runs)
-        # The warm-up is skipped on the cursor backend (no fork primitive).
+        # The warm-up is skipped on the cursor backend (no fork primitive):
+        # the skip decision and the cursor pre-flight live in warm-planner.sh.
         warm_run = self.find_step(parsed["steps"], "warm-planner")["run"]
-        self.assertIn("SKLC_BACKEND", warm_run)
-        self.assertIn('"cursor"', warm_run)
-        self.assertIn("review/warmup.md", warm_run)
-        self.assertIn("scope.txt", all_runs)
-        self.assertIn("refs/remotes/origin/HEAD", all_runs)
-        self.assertIn("origin/main", all_runs)
-        self.assertIn("origin/master", all_runs)
-        self.assertIn("no changes against", all_runs)
-        # `git diff --quiet` ignores untracked files, so a branch containing
-        # only NEW files must not be rejected as "nothing to review".
-        self.assertIn("git ls-files --others --exclude-standard", all_runs)
-        self.assertIn("branch-diff: ", all_runs)
-        self.assertIn("mode: full codebase review", all_runs)
-        self.assertIn("git branch --show-current", all_runs)
-        self.assertIn("date +%Y%m%d-%H%M", all_runs)
-        self.assertIn("ln -sfn", all_runs)
+        self.assertIn("warm-planner.sh", warm_run)
+        self.assertIn('"{{ inputs.state_dir }}"', warm_run)
+        warm_planner = (self.home / ".config/opencode/scripts/warm-planner.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("SKLC_BACKEND", warm_planner)
+        self.assertIn('"cursor"', warm_planner)
+        self.assertIn("review/warmup.md", warm_planner)
+        self.assertIn("cursor backend: skipping warm-up", warm_planner)
+        # determine-scope logic lives in determine-scope.sh.
+        determine = (self.home / ".config/opencode/scripts/determine-scope.sh").read_text(
+            encoding="utf-8"
+        )
+        for needle in (
+            "scope.txt",
+            "refs/remotes/origin/HEAD",
+            "origin/main",
+            "origin/master",
+            "no changes against",
+            # `git diff --quiet` ignores untracked files, so a branch containing
+            # only NEW files must not be rejected as "nothing to review".
+            "git ls-files --others --exclude-standard",
+            "branch-diff: ",
+            "mode: full codebase review",
+        ):
+            self.assertIn(needle, determine, needle)
+        # generate-task-id logic lives in review-task-id.sh.
+        task_id_script = (self.home / ".config/opencode/scripts/review-task-id.sh").read_text(
+            encoding="utf-8"
+        )
+        for needle in ("git branch --show-current", "date +%Y%m%d-%H%M", "ln -sfn"):
+            self.assertIn(needle, task_id_script, needle)
         # The merged review-report.md is the only writer of the name now.
         self.assertFalse(
             (self.home / ".config/spec-kit-llm-client/prompts/review/report.md").exists()
@@ -307,16 +361,25 @@ class WorkflowStructureTest(InstallerTestCase):
             encoding="utf-8"
         )
         self.assertIn("- id: sync-adr", workflow)
-        self.assertIn("deviation.md", workflow)
         sync_prompt = (
             self.home / ".config/spec-kit-llm-client/prompts/adr/sync-adr.md"
         ).read_text()
         self.assertIn("## Amendments", sync_prompt)
-        block = workflow.split("- id: sync-adr", 1)[1].split("\n  - id:", 1)[0]
-        self.assertIn("set -euo pipefail", block)
-        self.assertIn('save_adr.py" sync', block)
-        self.assertLess(block.index('save_adr.py" sync'), block.index("rm -f"))
-        self.assertIn("timeout: 7200", block)
+        # CONTRIBUTING.md: the deviation check and the sync live in sync-adr.sh.
+        sync_step = self.find_step(self.parsed_workflow()["steps"], "sync-adr")
+        self.assertIn("sync-adr.sh", sync_step["run"])
+        self.assertIn('"{{ inputs.state_dir }}"', sync_step["run"])
+        self.assertIn('"{{ inputs.task_id }}"', sync_step["run"])
+        self.assertEqual(sync_step.get("timeout"), 7200)
+        sync_script = (self.home / ".config/opencode/scripts/sync-adr.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("set -euo pipefail", sync_script)
+        self.assertIn("deviation.md", sync_script)
+        self.assertIn("no deviation recorded", sync_script)
+        self.assertIn('save_adr.py" sync', sync_script)
+        self.assertIn("rm -f", sync_script)
+        self.assertLess(sync_script.index('save_adr.py" sync'), sync_script.index("rm -f"))
         save_adr = (self.home / ".config/opencode/scripts/save_adr.py").read_text(encoding="utf-8")
         self.assertIn("adr-saved.txt", save_adr)
         sync_index = workflow.index("- id: sync-adr")
@@ -356,16 +419,23 @@ class WorkflowStructureTest(InstallerTestCase):
         )
         # The task_id input is inlined into double-quoted shell strings in
         # generate-task-id and save-adr, so anything outside [A-Za-z0-9_-]
-        # must be rejected before any step embeds it. As with the feature,
-        # the value is read as JSON data from the run's persisted inputs and
-        # validated in python: interpolating the raw value into a shell
-        # validation script is itself the injection vector (a task id like
-        # `"; touch x; echo "` runs the touch while the step text renders).
+        # must be rejected before any step embeds it. CONTRIBUTING.md: the
+        # step calls validate_inputs.py; the value is read as JSON data from
+        # the run's persisted inputs and validated in python inside the
+        # script — interpolating the raw value into the step text is itself
+        # the injection vector (a task id like `"; touch x; echo "` would run
+        # the touch while the step renders).
         run = self.find_step(self.parsed_workflow()["steps"], "validate-task-id")["run"]
-        self.assertIn("inputs.json", run)
-        self.assertIn("re.fullmatch", run)
+        self.assertIn("validate_inputs.py", run)
+        self.assertIn("task-id", run)
+        self.assertIn("{{ context.run_id }}", run)
         self.assertNotIn("{{ inputs.task_id }}", run)
-        self.assertNotIn("grep -qE", run)
+        validator = (self.home / ".config/opencode/scripts/validate_inputs.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("inputs.json", validator)
+        self.assertIn("re.fullmatch", validator)
+        self.assertNotIn("grep -qE", validator)
         run_agent = (self.home / ".config/opencode/scripts/run-agent.sh").read_text(
             encoding="utf-8"
         )
@@ -379,19 +449,15 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertIn("- id: validate-feature", workflow)
         # The feature input is inlined into double-quoted shell strings in
         # generate-task-id and write-adr, so quotes/backticks/$/backslash
-        # must be rejected before any step embeds it. The check must not
-        # interpolate the feature into a heredoc (a feature line equal to the
-        # delimiter would terminate it early and execute the remaining lines
-        # as shell); instead the value is read as JSON data from the run's
-        # persisted inputs and validated in python.
-        self.assertIn("inputs.json", workflow)
-        self.assertIn("python3 -c", workflow)
-        self.assertIn(".specify/workflows/runs", workflow)
-        self.assertIn("re.search", workflow)
-        self.assertNotIn("<<'FEATURE_EOF'", workflow)
-        # The validate step itself must not interpolate the feature into the
-        # shell text (that is the injection vector the check exists to close).
+        # must be rejected before any step embeds it. CONTRIBUTING.md: the
+        # step calls validate_inputs.py; the check must not interpolate the
+        # feature into a heredoc (a feature line equal to the delimiter would
+        # terminate it early and execute the remaining lines as shell);
+        # instead the value is read as JSON data from the run's persisted
+        # inputs and validated in python inside the script.
         run = self.find_step(self.parsed_workflow()["steps"], "validate-feature")["run"]
+        self.assertIn("validate_inputs.py", run)
+        self.assertIn("feature", run)
         self.assertNotIn("{{ inputs.feature }}", run)
         # The run id must come from the workflow context, not from "newest
         # directory by mtime": a concurrent run, or a resumed run whose
@@ -399,8 +465,15 @@ class WorkflowStructureTest(InstallerTestCase):
         # lookup pick the wrong run and skip (or wrongly reject) this
         # validation.
         self.assertIn("{{ context.run_id }}", run)
-        self.assertNotIn("ls -1t", run)
-        self.assertNotIn("head -1", run)
+        validator = (self.home / ".config/opencode/scripts/validate_inputs.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("inputs.json", validator)
+        self.assertIn(".specify/workflows/runs", validator)
+        self.assertIn("re.search", validator)
+        self.assertNotIn("<<'FEATURE_EOF'", validator)
+        self.assertNotIn("ls -1t", validator)
+        self.assertNotIn("head -1", validator)
         self.assertLess(
             workflow.index("- id: validate-feature"),
             workflow.index("- id: generate-task-id"),
@@ -518,28 +591,39 @@ class WorkflowStructureTest(InstallerTestCase):
         check = fan["step"]
         self.assertEqual(check["id"], "check")
         self.assertEqual(check.get("timeout"), 7200)
+        # CONTRIBUTING.md: the item step calls review-check.sh with the state
+        # dir, task id, item and the "adr" prompt namespace; the per-kind
+        # dispatch (report prefix, prompt file, fork invocation) lives in the
+        # installed script.
         check_run = check["run"]
-        self.assertIn('run-agent.sh" planner --fork --prompt-file', check_run)
-        # The item dispatches on {{ item }}: per-kind report prefix, prompt
-        # file and PASS marker via check_review.py.
-        kind_prompts = {
-            "srp": "PROMPT=adr/srp-review.md",
-            "bugs": "PROMPT=adr/bug-review.md",
-            "review": "PROMPT=adr/review.md",
-            "comment": "PROMPT=adr/comment-review.md",
-        }
-        for kind, prefix in (
-            ("srp", "srp-review"),
-            ("bugs", "bug-review"),
-            ("review", "review"),
-            ("comment", "comment-review"),
+        self.assertIn("review-check.sh", check_run)
+        self.assertIn('"{{ inputs.state_dir }}"', check_run)
+        self.assertIn('"{{ inputs.task_id }}"', check_run)
+        self.assertIn('"{{ item }}"', check_run)
+        self.assertIn("adr", check_run)
+        review_check = (self.home / ".config/opencode/scripts/review-check.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('run-agent.sh" planner --fork --prompt-file', review_check)
+        # The prompt namespace is parametrized: the yaml call passes "adr".
+        for prompt in (
+            '"$PROMPT_NS/srp-review.md"',
+            '"$PROMPT_NS/bug-review.md"',
+            '"$PROMPT_NS/review.md"',
+            '"$PROMPT_NS/comment-review.md"',
         ):
-            self.assertIn(prefix, check_run)
-            self.assertIn(kind_prompts[kind], check_run)
+            self.assertIn(prompt, review_check, prompt)
+        for prefix in ("srp-review", "bug-review", "review", "comment-review"):
+            self.assertIn(prefix, review_check)
         fix_all = self.find_step(parsed["steps"], "fix-all")
         self.assertIsNotNone(fix_all)
-        self.assertIn("--prompt-file", fix_all["run"])
         self.assertIn("fix-all.md", fix_all["run"])
+        # The executor prompt step goes through agent-step.sh (one script
+        # call per step), which owns the --prompt-file delegation.
+        agent_step = (self.home / ".config/opencode/scripts/agent-step.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("--prompt-file", agent_step)
         # The four sequential loops and their per-kind pass-checks are gone.
         for old in (
             "srp-loop",
@@ -578,19 +662,31 @@ class WorkflowStructureTest(InstallerTestCase):
             self.parsed_workflow()["steps"], "implement-verify"
         )["run"]
         self.assertIn('check_implementation.py" check "{{ inputs.adr_dir }}"', implement_verify_run)
+        # CONTRIBUTING.md: implement-retry calls implement-retry.sh; the
+        # marker logic and the executor prompt live in the installed script.
         retry_run = self.find_step(self.parsed_workflow()["steps"], "implement-retry")["run"]
-        self.assertIn("--prompt-file", retry_run)
+        self.assertIn("implement-retry.sh", retry_run)
+        self.assertIn('"{{ inputs.state_dir }}"', retry_run)
+        retry_script = (self.home / ".config/opencode/scripts/implement-retry.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("--prompt-file", retry_script)
+        self.assertIn(".implement-retried", retry_script)
+        self.assertIn("already retried once", retry_script)
+        self.assertIn("adr/implement-retry.md", retry_script)
         self.assertIn(
             "You didn't do changes.",
             (self.home / ".config/spec-kit-llm-client/prompts/adr/implement-retry.md").read_text(),
         )
-        self.assertIn("IMPLEMENT OK: changes present", workflow)
-        implement_pass_run = self.find_step(
-            self.parsed_workflow()["steps"], "implement-pass-check"
-        )["run"]
-        self.assertIn("made no changes to the repository in two attempts", implement_pass_run)
+        # The IMPLEMENT OK / failure messages live in implement-pass-check.sh.
+        pass_check_script = (
+            self.home / ".config/opencode/scripts/implement-pass-check.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("IMPLEMENT OK: changes present", pass_check_script)
+        self.assertIn("made no changes to the repository in two attempts", pass_check_script)
+        self.assertIn("check_implementation.py", pass_check_script)
         self.assertIn("{{ steps.implement-verify.output.exit_code != 0 }}", workflow)
-        self.assertIn(".implement-retried", workflow)
+        self.assertIn("implement-pass-check.sh", workflow)
         parsed = self.parsed_workflow()
         self.assertEqual(
             self.find_step(parsed["steps"], "implement-loop")["max_iterations"], 2

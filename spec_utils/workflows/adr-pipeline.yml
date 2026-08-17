@@ -8,6 +8,11 @@
 # else is delivered at runtime: state_dir and adr_dir arrive as -i inputs,
 # and the script paths come from the SKLC_SCRIPTS_DIR env var (defaulting to
 # $HOME/.config/opencode/scripts for direct `specify workflow run`).
+#
+# CONTRIBUTING.md: this file contains NO bash scripts. Every shell step calls
+# exactly one installed script (pipeline_scripts/) with quoted arguments; all
+# logic lives in the scripts. The only shell syntax allowed in a run: value
+# is the single path expansion locating the scripts directory.
 schema_version: "1.0"
 workflow:
   id: "adr-pipeline"
@@ -44,92 +49,33 @@ inputs:
 steps:
   - id: validate-task-id
     type: shell
-    run: |
-      # The task_id is later embedded inside double-quoted shell arguments
-      # (generate-task-id, save-adr), so it must be rejected if it contains
-      # anything outside [A-Za-z0-9_-]: a quote, backtick, dollar sign or
-      # backslash would break out of the quoted context and execute shell
-      # BEFORE this check could reject it (a task id like `"; touch x; echo "`
-      # runs the touch while the step text is rendered). It must NOT be read
-      # through a heredoc (see validate-feature for why); the value is read as
-      # JSON data from the run's persisted inputs and validated in python,
-      # where the text never enters a shell context.
-      run_id="{{ context.run_id }}";
-      [ -n "$run_id" ] || { echo "error: cannot locate the current run state; cannot validate the task_id input" >&2; exit 1; };
-      python3 -c '
-      import json, re, sys
-      try:
-          data = json.load(open(".specify/workflows/runs/" + sys.argv[1] + "/inputs.json", encoding="utf-8"))
-      except OSError as exc:
-          print("error: cannot read run inputs: " + str(exc), file=sys.stderr)
-          sys.exit(1)
-      task_id = (data.get("inputs") or {}).get("task_id") or ""
-      if task_id and not re.fullmatch(r"[A-Za-z0-9_-]+", task_id):
-          print("error: task_id contains unsupported characters; use only letters, digits, underscore or dash", file=sys.stderr)
-          sys.exit(1)
-      ' "$run_id" || exit 1;
+    run: >-
+      python3 "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/validate_inputs.py"
+      task-id "{{ context.run_id }}"
 
   - id: validate-feature
     type: shell
-    run: |
-      # The feature is later embedded inside double-quoted shell arguments
-      # (generate-task-id, write-adr), so it must be rejected if it contains
-      # characters that could break out of those quotes (double quote,
-      # backtick, dollar sign, backslash). It must NOT be read through a
-      # heredoc: a feature line equal to the delimiter would terminate the
-      # heredoc at parse time and the remaining feature lines would execute
-      # as shell, and an unquoted (expanded) delimiter would expand the
-      # body, executing command substitutions before any check runs. So
-      # the value is read as JSON data from the run's persisted inputs and
-      # validated in python, where the feature text never enters a shell
-      # context.
-      # The run id comes from the workflow context ({{ context.run_id }}), not
-      # from "newest directory by mtime": a concurrently started run, or a
-      # resumed run whose directory keeps its original mtime, would make the
-      # newest-directory lookup pick a different run and silently skip or
-      # wrongly reject this feature's validation.
-      run_id="{{ context.run_id }}";
-      [ -n "$run_id" ] || { echo "error: cannot locate the current run state (.specify/workflows/runs); cannot validate the feature input" >&2; exit 1; };
-      python3 -c '
-      import json, re, sys
-      try:
-          data = json.load(open(".specify/workflows/runs/" + sys.argv[1] + "/inputs.json", encoding="utf-8"))
-      except OSError as exc:
-          print("error: cannot read run inputs: " + str(exc), file=sys.stderr)
-          sys.exit(1)
-      feature = (data.get("inputs") or {}).get("feature") or ""
-      if re.search(r"[\"`$\\]", feature):
-          print("error: feature contains characters unsafe for shell (quote, backtick, dollar, backslash); rephrase it", file=sys.stderr)
-          sys.exit(1)
-      ' "$run_id" || exit 1;
+    run: >-
+      python3 "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/validate_inputs.py"
+      feature "{{ context.run_id }}"
 
   - id: generate-task-id
     type: shell
     run: >-
-      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-      set -euo pipefail;
-      mkdir -p "{{ inputs.state_dir }}/tasks";
-      if [ -n "{{ inputs.task_id }}" ]; then
-      tid="{{ inputs.task_id }}";
-      else
-      slug=$("$SKLC_SCRIPTS_DIR/name-task.sh" "{{ inputs.feature }}");
-      slug=$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -c1-40);
-      [ -n "$slug" ] || slug=task;
-      tid="$slug-$(date +%Y%m%d-%H%M)";
-      fi;
-      mkdir -p "{{ inputs.state_dir }}/tasks/$tid";
-      ln -sfn "$tid" "{{ inputs.state_dir }}/tasks/current";
-      echo "task id: $tid";
+      "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/adr-task-id.sh"
+      "{{ inputs.state_dir }}"
+      "{{ inputs.task_id }}"
+      "{{ inputs.feature }}"
 
   - id: write-adr
     type: shell
     timeout: 7200
     run: >-
-      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-      PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
-      export STATE_DIR="{{ inputs.state_dir }}";
-      export FEATURE="{{ inputs.feature }}";
-      "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/adr/write-adr.md";
+      "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/agent-step.sh"
+      "{{ inputs.state_dir }}"
+      planner
+      adr/write-adr.md
+      --export "FEATURE={{ inputs.feature }}"
 
   - id: adr-loop
     type: do-while
@@ -161,13 +107,15 @@ steps:
             type: shell
             timeout: 7200
             run: >-
-              SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-              PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
-              export STATE_DIR="{{ inputs.state_dir }}";
-              "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/adr/adr-revise.md";
+              "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/agent-step.sh"
+              "{{ inputs.state_dir }}"
+              planner
+              adr/adr-revise.md
           - id: adr-feedback-clear
             type: shell
-            run: "rm -f {{ inputs.state_dir }}/tasks/current/feedback.md"
+            run: >-
+              "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/clear-feedback.sh"
+              "{{ inputs.state_dir }}"
 
   - id: adr-unapproved
     type: if
@@ -187,35 +135,36 @@ steps:
     type: shell
     timeout: 7200
     run: >-
-      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-      python3 "$SKLC_SCRIPTS_DIR/save_adr.py" save "{{ inputs.state_dir }}" "{{ inputs.task_id }}" "{{ inputs.adr_dir }}" "$SKLC_SCRIPTS_DIR/run-agent.sh"
+      python3 "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/save_adr.py"
+      save "{{ inputs.state_dir }}" "{{ inputs.task_id }}" "{{ inputs.adr_dir }}"
+      "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/run-agent.sh"
 
   - id: executor-questions
     type: shell
     timeout: 7200
     run: >-
-      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-      PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
-      export STATE_DIR="{{ inputs.state_dir }}";
-      "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/adr/executor-questions.md";
+      "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/agent-step.sh"
+      "{{ inputs.state_dir }}"
+      executor
+      adr/executor-questions.md
 
   - id: planner-answers
     type: shell
     timeout: 7200
     run: >-
-      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-      PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
-      export STATE_DIR="{{ inputs.state_dir }}";
-      "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/adr/planner-answers.md";
+      "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/agent-step.sh"
+      "{{ inputs.state_dir }}"
+      planner
+      adr/planner-answers.md
 
   - id: implement
     type: shell
     timeout: 7200
     run: >-
-      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-      PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
-      export STATE_DIR="{{ inputs.state_dir }}";
-      "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/adr/implement.md";
+      "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/agent-step.sh"
+      "{{ inputs.state_dir }}"
+      executor
+      adr/implement.md
 
   - id: implement-loop
     type: do-while
@@ -226,8 +175,8 @@ steps:
         type: shell
         continue_on_error: true
         run: >-
-          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-          python3 "$SKLC_SCRIPTS_DIR/check_implementation.py" check "{{ inputs.adr_dir }}"
+          python3 "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/check_implementation.py"
+          check "{{ inputs.adr_dir }}"
       - id: implement-retry-branch
         type: if
         condition: "{{ steps.implement-verify.output.exit_code != 0 }}"
@@ -235,29 +184,17 @@ steps:
           - id: implement-retry
             type: shell
             timeout: 7200
-            run: |
-              SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-              # The first loop iteration asks the executor to redo the work;
-              # the marker keeps the loop from asking a second time (a second
-              # empty verify must fail the run, not repeat the prompt).
-              if [ -f "{{ inputs.state_dir }}/tasks/current/.implement-retried" ]; then
-              echo "already retried once; the run will fail";
-              exit 0;
-              fi;
-              touch "{{ inputs.state_dir }}/tasks/current/.implement-retried";
-              PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
-              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/adr/implement-retry.md";
+            run: >-
+              "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/implement-retry.sh"
+              "{{ inputs.state_dir }}"
 
   - id: implement-pass-check
     type: shell
     run: >-
-      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-      if python3 "$SKLC_SCRIPTS_DIR/check_implementation.py" check "{{ inputs.adr_dir }}"; then
-      echo "IMPLEMENT OK: changes present";
-      else
-      echo "error: the executor made no changes to the repository in two attempts (task state: {{ inputs.state_dir }}/tasks/current; agent log: {{ inputs.state_dir }}/logs); resume with: specify workflow resume {{ context.run_id }}" >&2;
-      exit 1;
-      fi
+      "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/implement-pass-check.sh"
+      "{{ inputs.state_dir }}"
+      "{{ inputs.adr_dir }}"
+      "{{ context.run_id }}"
 
   - id: review-fix-loop
     type: do-while
@@ -267,8 +204,8 @@ steps:
       - id: pending-kinds
         type: shell
         run: >-
-          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-          python3 "$SKLC_SCRIPTS_DIR/check_review.py" pending "{{ inputs.state_dir }}" "{{ inputs.task_id }}"
+          python3 "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/check_review.py"
+          pending "{{ inputs.state_dir }}" "{{ inputs.task_id }}"
 
       - id: review-fan
         type: fan-out
@@ -278,40 +215,19 @@ steps:
           id: check
           type: shell
           timeout: 7200
-          run: |-
-            SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-            PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
-            # One review per kind, each in its own FORK of the warm planner
-            # session (ADR-0009): the checks run in parallel and never mutate
-            # the parent session, whose id stays in the session store.
-            ITEM="{{ item }}";
-            case "$ITEM" in
-              srp) PREFIX=srp-review; PROMPT=adr/srp-review.md;;
-              bugs) PREFIX=bug-review; PROMPT=adr/bug-review.md;;
-              review) PREFIX=review; PROMPT=adr/review.md;;
-              comment) PREFIX=comment-review; PROMPT=adr/comment-review.md;;
-              *) echo "error: unknown review kind '$ITEM'" >&2; exit 2;;
-            esac;
-            latest=$(python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" "$ITEM" 2>/dev/null || true);
-            n=1;
-            if [ -n "$latest" ]; then
-            b=$(basename "$latest");
-            num=${b#$PREFIX-};
-            num=${num%.md};
-            case "$num" in ''|*[!0-9]*) num=0;; esac;
-            n=$((num+1));
-            fi;
-            export STATE_DIR="{{ inputs.state_dir }}";
-            export LATEST="$latest";
-            export N="$n";
-            "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --fork --prompt-file "$PROMPTS_DIR/$PROMPT";
+          run: >-
+            "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/review-check.sh"
+            "{{ inputs.state_dir }}"
+            "{{ inputs.task_id }}"
+            "{{ item }}"
+            adr
 
       - id: merge-reports
         type: shell
         continue_on_error: true
         run: >-
-          SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-          python3 "$SKLC_SCRIPTS_DIR/check_review.py" merge "{{ inputs.state_dir }}" "{{ inputs.task_id }}"
+          python3 "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/check_review.py"
+          merge "{{ inputs.state_dir }}" "{{ inputs.task_id }}"
 
       - id: fix-branch
         type: if
@@ -321,39 +237,22 @@ steps:
             type: shell
             timeout: 7200
             run: >-
-              SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-              PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
-              export STATE_DIR="{{ inputs.state_dir }}";
-              "$SKLC_SCRIPTS_DIR/run-agent.sh" executor --prompt-file "$PROMPTS_DIR/fix-all.md"
+              "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/agent-step.sh"
+              "{{ inputs.state_dir }}"
+              executor
+              fix-all.md
 
   - id: sync-adr
     type: shell
     timeout: 7200
-    run: |
-      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-      set -euo pipefail
-      if [ -f "{{ inputs.state_dir }}/tasks/current/deviation.md" ]; then
-      PROMPTS_DIR="${SKLC_PROMPTS_DIR:-$HOME/.config/spec-kit-llm-client/prompts}";
-      export STATE_DIR="{{ inputs.state_dir }}";
-      "$SKLC_SCRIPTS_DIR/run-agent.sh" planner --prompt-file "$PROMPTS_DIR/adr/sync-adr.md"
-      python3 "$SKLC_SCRIPTS_DIR/save_adr.py" sync "{{ inputs.state_dir }}" "{{ inputs.task_id }}"
-      rm -f "{{ inputs.state_dir }}/tasks/current/deviation.md"
-      else
-      echo "no deviation recorded"
-      fi
+    run: >-
+      "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/sync-adr.sh"
+      "{{ inputs.state_dir }}"
+      "{{ inputs.task_id }}"
 
   - id: pass-check
     type: shell
     run: >-
-      SKLC_SCRIPTS_DIR="${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}";
-      fails="";
-      for kind in srp bugs review comment; do
-      if ! python3 "$SKLC_SCRIPTS_DIR/check_review.py" check-review "{{ inputs.state_dir }}" "{{ inputs.task_id }}" "$kind" >/dev/null 2>&1; then
-      fails="$fails $kind";
-      fi;
-      done;
-      if [ -z "$fails" ]; then
-      echo "REVIEW OK: all verdicts PASS";
-      else
-      echo "WARNING: review loop exhausted all iterations without pass (kinds:$fails); inspect the latest review files and the code";
-      fi
+      "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/pass-check.sh"
+      "{{ inputs.state_dir }}"
+      "{{ inputs.task_id }}"
