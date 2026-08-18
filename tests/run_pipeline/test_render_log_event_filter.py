@@ -6,29 +6,31 @@ from .helpers import load_run_pipeline
 
 
 class RenderLogEventFilterTest(unittest.TestCase):
-    """From the agent logs only text parts with a non-empty payload are
-    printed; marker events (step-start/step-finish) and empty text parts are
-    dropped entirely — they carry no information and only noise up the
-    output."""
+    """Since ADR-0011 nothing is printed from the agent logs: `text` and
+    `reasoning` events and raw non-JSON lines are all suppressed (the live
+    status lines replace the old log echo). The function keeps its (role,
+    text) contract, always returning an empty text."""
 
-    def test_text_part_with_payload_is_shown(self):
+    def test_text_events_are_suppressed(self):
         mod = load_run_pipeline()
         role, text = mod.render_log_event(
             "executor", '{"part": {"type": "text", "text": "writing ADR"}}'
         )
-        self.assertEqual((role, text), ("executor", "writing ADR"))
+        self.assertEqual((role, text), ("executor", ""))
 
-    def test_marker_events_and_empty_text_are_dropped(self):
+    def test_all_event_types_are_suppressed(self):
         mod = load_run_pipeline()
         for line in (
             '{"type": "step-start", "part": {"type": "step-start"}}',
             '{"type": "step-finish", "part": {"type": "step-finish"}}',
-            '{"type": "text", "part": {"type": "text", "text": ""}}',
-            '{"type": "text", "part": {"type": "text"}}',
+            '{"type": "text", "part": {"type": "text", "text": "x"}}',
+            '{"type": "reasoning", "part": {"type": "reasoning", "text": "y"}}',
+            '{"part": {"type": "text", "text": ""}}',
+            '{"part": {"type": "text"}}',
         ):
             self.assertEqual(mod.render_log_event("executor", line)[1], "")
 
-    def test_non_json_line_passes_through_raw(self):
+    def test_non_json_line_is_suppressed(self):
         mod = load_run_pipeline()
         role, text = mod.render_log_event("executor", "plain line")
-        self.assertEqual(text, "plain line")
+        self.assertEqual((role, text), ("executor", ""))

@@ -1,9 +1,12 @@
-"""The ADR revise feedback gate's editor interaction.
+"""The feedback gates' editor interaction.
 
-One responsibility: own the feedback.md file and the terminal editor for
-the revise gate — create the file (never overwriting), resolve the editor,
-open it, and on editor close answer the gate with `continue`. The editor
-resolution itself lives in editor.py, shared with the spec-run launcher.
+One responsibility: own the feedback.md file and the editor for the
+feedback gates — create the file (never overwriting), resolve the editor,
+open it, and on editor close answer the gate with `continue`. The platform
+resolution itself lives in editor.py. The module is shared with the
+spec-run launcher (same file, both install targets), but `spec-run edit`
+deliberately uses the terminal chain (`resolve_editor`) — the platform
+resolution (`resolve_feedback_editor`) is feedback-gate-only.
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ import sys
 import threading
 from pathlib import Path
 
-from editor import resolve_editor
+from editor import resolve_feedback_editor
 
 
 def create_feedback_file(path: Path) -> None:
@@ -32,23 +35,51 @@ def create_feedback_file(path: Path) -> None:
 def open_feedback_editor(
     feedback_path: Path, pause: threading.Event, master_fd: int
 ) -> bool:
-    """Own the ADR revise feedback gate.
+    """Own the feedback gates' editor interaction.
 
-    Pauses stdin forwarding, creates feedback.md (never overwriting), opens
-    it in the terminal editor (which inherits the real terminal, not the
-    pty, so there is no race with the gate's input()) and, on editor close,
-    answers the gate with `continue` so the workflow continues (adr-revise
-    reads feedback.md). Returns True when the wrapper answered the gate;
-    False on fallback — no TTY or no editor on PATH — where the file is
-    still created, forwarding is left running and the gate stays interactive
-    for manual input.
+    Any step whose id contains "feedback-gate" routes here (the ADR revise
+    gate, the motivation clarify gate — the wrapper recognizes them by the
+    shared marker, so the handling is identical for all of them). Pauses
+    stdin forwarding, creates feedback.md (never overwriting), opens
+    it in the platform editor and, on editor close, answers the gate with
+    `continue` so the workflow continues (the revise step reads feedback.md).
+    The editor resolution (editor.py) returns a mode: "waited" (macOS
+    TextEdit or the terminal chain) runs the editor blocking and the wrapper
+    answers the gate; "detached" (Linux GUI in a separate window) launches
+    the editor and leaves the gate interactive — the user closes the window
+    and presses `continue`. Returns True when the wrapper answered the gate;
+    False on fallback — no TTY, no editor, or a detached launch — where the
+    file is still created, forwarding is left running and the gate stays
+    interactive for manual input.
     """
     create_feedback_file(feedback_path)
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         return False
-    editor = resolve_editor()
-    if editor is None:
+    resolved = resolve_feedback_editor()
+    if resolved is None:
         return False
+    mode, editor = resolved
+    if mode == "detached":
+        # Linux GUI: launch in a separate window and leave the gate
+        # interactive — the user closes the window and presses continue.
+        # Forwarding is never paused: the continue answer comes from the
+        # terminal, not from this wrapper.
+        try:
+            subprocess.Popen(
+                [*editor, str(feedback_path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError as exc:
+            print(
+                f"error: cannot start editor {editor[0]}: {exc}",
+                file=sys.stderr,
+            )
+            return False
+        return False
+    # waited: run the editor blocking (it inherits the real terminal, not the
+    # pty, so there is no race with the gate's input()), then answer the
+    # gate.
     pause.set()
     try:
         try:
@@ -59,8 +90,8 @@ def open_feedback_editor(
                 file=sys.stderr,
             )
             return False
-        # "continue" is the option declared on the adr-feedback-gate step
-        # (options: [continue, abort] in the installed adr-pipeline.yml); the
+        # "continue" is the option declared on the feedback-gate steps
+        # (options: [continue, abort] in the installed workflows); the
         # wrapper hardcodes it because it has no parsed handle on the
         # workflow's options, so this string is a cross-file contract, not a
         # free-form answer — a mismatch makes specify reject it and the gate

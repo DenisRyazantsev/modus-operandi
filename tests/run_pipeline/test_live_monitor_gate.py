@@ -12,7 +12,7 @@ from .helpers import load_run_pipeline
 
 class LiveMonitorGateTest(unittest.TestCase):
     """While a human-gate menu is on screen the monitor must buffer step
-    results and agent-log lines instead of printing them, and flush the
+    results and live status lines instead of printing them, and flush the
     buffer once the engine moves past the gate (or the wrapper stops)."""
 
     def _prepare(self, tmp: str) -> Path:
@@ -23,13 +23,30 @@ class LiveMonitorGateTest(unittest.TestCase):
         logs_dir.mkdir(parents=True)
         return state
 
-    def _append_log(self, state: Path, text: str = "agent work") -> None:
+    def _append_log(self, state: Path) -> None:
         # The log line is appended AFTER the monitor is built: the tailer
         # baselines pre-existing files at construction, so this simulates a
-        # line written during the run.
+        # line written during the run. A step_finish event feeds the live
+        # status lines (ADR-0011).
         log = state / ".workflow" / "logs" / "sessions-executor.jsonl"
         with log.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"part": {"type": "text", "text": text}}) + "\n")
+            fh.write(
+                json.dumps(
+                    {
+                        "type": "step_finish",
+                        "part": {
+                            "tokens": {
+                                "input": 1,
+                                "output": 2,
+                                "reasoning": 3,
+                                "cache": {"read": 4, "write": 0},
+                            },
+                            "cost": 0.01,
+                        },
+                    }
+                )
+                + "\n"
+            )
 
     def _open_state(self, state: Path) -> None:
         (state / "workflows" / "runs" / "abc12345" / "state.json").write_text(
@@ -61,11 +78,12 @@ class LiveMonitorGateTest(unittest.TestCase):
                 with mock.patch("sys.stdout", captured):
                     monitor._poll_once()
             # Nothing printed while the gate is open; the step result, the
-            # gate step id and the log line are all captured instead.
+            # gate step id and the live line are all captured instead.
             self.assertEqual(captured.getvalue(), "")
             self.assertEqual(monitor.gate._gate_step_id, "adr-gate")
             self.assertEqual(len(monitor._emitter.buffered_steps), 1)
-            self.assertEqual(monitor._emitter.buffered_logs, [("executor", "agent work")])
+            self.assertEqual(len(monitor._emitter.buffered_fixed), 1)
+            self.assertIn("cache 4", monitor._emitter.buffered_fixed[0])
 
     def test_flushes_buffer_when_engine_moves_past_gate(self):
         mod = load_run_pipeline()
@@ -88,9 +106,9 @@ class LiveMonitorGateTest(unittest.TestCase):
                     monitor._poll_once()
             self.assertFalse(monitor.gate.is_open)
             self.assertEqual(monitor._emitter.buffered_steps, [])
-            self.assertEqual(monitor._emitter.buffered_logs, [])
+            self.assertEqual(monitor._emitter.buffered_fixed, [])
             self.assertIn("done", captured.getvalue())
-            self.assertIn("agent work", captured.getvalue())
+            self.assertIn("cache 4", captured.getvalue())
 
     def test_gate_stays_open_while_step_id_unchanged(self):
         # The user answered invalidly ("Invalid choice. …"): the gate remains
@@ -133,9 +151,9 @@ class LiveMonitorGateTest(unittest.TestCase):
                     monitor.join()
             self.assertFalse(monitor.gate.is_open)
             self.assertEqual(monitor._emitter.buffered_steps, [])
-            self.assertEqual(monitor._emitter.buffered_logs, [])
+            self.assertEqual(monitor._emitter.buffered_fixed, [])
             self.assertIn("done", captured.getvalue())
-            self.assertIn("agent work", captured.getvalue())
+            self.assertIn("cache 4", captured.getvalue())
 
     def test_gate_id_captured_synchronously_at_open(self):
         # Regression: the id must be captured at menu-open time (from the

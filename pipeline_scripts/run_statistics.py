@@ -16,6 +16,7 @@ import json
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from _run_pipeline_common import fmt_duration, fmt_thousands
 from latency_table import print_latency_table
@@ -56,7 +57,7 @@ def current_task_id(state_dir: Path) -> str:
         return ""
 
 
-def export_session_info(session_id: str) -> dict | None:
+def export_session_info(session_id: str) -> dict[str, Any] | None:
     """Return the `info` dict of `opencode export <sessionID>`, or None.
 
     opencode prints the session export as JSON on stdout ("Exporting

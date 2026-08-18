@@ -84,6 +84,7 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
         ("clear_feedback", True),
         ("implement_pass_check", True),
         ("pass_check", True),
+        ("show_file", True),
     ):
         script = paths[key]
         if not script.is_file():
@@ -109,6 +110,7 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
         "gate_state",
         "buffered_emitter",
         "live_monitor",
+        "live_lines",
         "config_invocation",
         "run_statistics",
         "latency_table",

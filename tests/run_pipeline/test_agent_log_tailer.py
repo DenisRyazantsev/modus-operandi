@@ -98,20 +98,24 @@ class AgentLogTailerTest(unittest.TestCase):
         # Files that existed before the wrapper started were written by
         # previous runs (the logs dir is never cleaned): the tailer baselines
         # their sizes at construction, so only lines appended during the
-        # current run are printed.
+        # current run are yielded.
         log = self.dir / "sessions-executor.jsonl"
-        log.write_text(
-            '{"part": {"type": "text", "text": "old"}}\n', encoding="utf-8"
-        )
+        old = '{"part": {"type": "text", "text": "old"}}\n'
+        log.write_text(old, encoding="utf-8")
         tailer = self.mod.AgentLogTailer(self.dir)
         self.assertEqual(tailer.tail(), [])
-        # The current run appends a line: only that line is shown.
+        # The current run appends a line: only that line is yielded, with
+        # the parsed event and an empty rendered text (ADR-0011).
         log.write_text(
-            '{"part": {"type": "text", "text": "old"}}\n'
-            '{"part": {"type": "text", "text": "new"}}\n',
-            encoding="utf-8",
+            old + '{"part": {"type": "text", "text": "new"}}\n', encoding="utf-8"
         )
-        self.assertEqual(tailer.tail(), [("executor", "new")])
+        events = tailer.tail()
+        self.assertEqual(len(events), 1)
+        role, fork_id, text, event = events[0]
+        self.assertEqual(role, "executor")
+        self.assertEqual(fork_id, "")
+        self.assertEqual(text, "")
+        self.assertEqual(event["part"]["text"], "new")
 
     def test_new_file_after_baseline_starts_from_zero(self):
         # A log file created after the baseline (by the current run) is not
@@ -121,15 +125,39 @@ class AgentLogTailerTest(unittest.TestCase):
         log.write_text(
             '{"part": {"type": "text", "text": "fresh"}}\n', encoding="utf-8"
         )
-        self.assertEqual(tailer.tail(), [("planner", "fresh")])
+        events = tailer.tail()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0][0], "planner")
+        self.assertEqual(events[0][1], "")
 
-    def test_fork_log_files_still_derive_the_role(self):
+    def test_fork_log_files_carry_role_and_fork_id(self):
         # Parallel review forks write per-invocation logs
         # (sessions-<task>-<role>-fork-<pid>.jsonl, ADR-0009): the -fork-<pid>
-        # suffix must not leak into the role label.
+        # suffix must not leak into the role label, and the fork id must be
+        # carried for the live status lines' separate accumulators (ADR-0011).
         tailer = self.mod.AgentLogTailer(self.dir)
         log = self.dir / "sessions-parallel-review-20260816-planner-fork-4242.jsonl"
         log.write_text(
-            '{"part": {"type": "text", "text": "fork line"}}\n', encoding="utf-8"
+            '{"type": "step_finish", "part": {"tokens": {"input": 1}}}\n',
+            encoding="utf-8",
         )
-        self.assertEqual(tailer.tail(), [("planner", "fork line")])
+        events = tailer.tail()
+        self.assertEqual(len(events), 1)
+        role, fork_id, text, event = events[0]
+        self.assertEqual(role, "planner")
+        self.assertEqual(fork_id, "4242")
+        self.assertEqual(text, "")
+        self.assertEqual(event["type"], "step_finish")
+
+    def test_non_json_line_yields_none_event(self):
+        # A non-JSON line still yields a quadruple (the raw text is
+        # suppressed since ADR-0011) with event=None.
+        tailer = self.mod.AgentLogTailer(self.dir)
+        log = self.dir / "sessions-executor.jsonl"
+        log.write_text("plain line\n", encoding="utf-8")
+        events = tailer.tail()
+        self.assertEqual(len(events), 1)
+        role, fork_id, text, event = events[0]
+        self.assertEqual(role, "executor")
+        self.assertEqual(text, "")
+        self.assertIsNone(event)

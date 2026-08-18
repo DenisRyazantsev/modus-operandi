@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from typing import Any
 
 
 class GateState:
@@ -24,7 +25,7 @@ class GateState:
         self._open = False
         self._gate_step_id: str | None = None
 
-    def open(self, state: dict | None) -> None:
+    def open(self, state: dict[str, Any] | None) -> None:
         """Mark a gate menu as open, capturing the gate's step id.
 
         The main thread passes the state.json read made the moment the menu
@@ -51,7 +52,7 @@ class GateState:
         with self._lock:
             return self._open
 
-    def update(self, state: dict | None) -> bool:
+    def update(self, state: dict[str, Any] | None) -> bool:
         """Advance the lifecycle from one state.json read.
 
         While the menu is open: when the captured id is missing (the open

@@ -81,8 +81,13 @@ them after a failure:
 ```
 
 It prefixes every line with an hh:mm:ss timestamp, streams each step's output
-as it finishes (from the run state), tails the per-role agent logs
-(`.workflow/logs/`) live, and on failure prints the resume command.
+as it finishes (from the run state) with the progress marker
+`--- step <id> (completed) [N/M]`, and shows one live status line per active
+process with the cumulative token/cost usage (redrawn in place on a TTY; one
+plain line per agent `step_finish` event when stdout is not a TTY). On
+failure it prints the resume command. The per-stage latency table at the end
+shows durations in whole minutes plus each stage's share of the total wall
+time.
 
 ## Requirements
 
@@ -181,9 +186,15 @@ Rerunning the same task id keeps the ADR number — the file is not duplicated
 (an auto-generated id produces a fresh task and a fresh ADR on every run). The ADR
 heading in the saved file is rewritten to `# ADR-<XXXX>: <title>`.
 
-### Gates and resume
+### Gates, editors and resume
 
-The only human touch point is the ADR gate (and the revise feedback gate):
+The human touch points are the ADR gate (adr-pipeline) and the feedback
+gates: at a feedback gate the wrapper opens your editor with
+`.workflow/tasks/current/feedback.md` and the run continues automatically
+when the editor closes (macOS: TextEdit in a separate window; Linux: GNOME
+Text Editor via Flatpak/RPM, or the desktop opener — the gate then stays
+interactive and you press `continue` after closing the window; without a GUI
+the terminal editor `$VISUAL → $EDITOR → nano → vi` is used).
 
 At the ADR gate you can choose `approve`, `revise`, or `reject`:
 

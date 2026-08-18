@@ -161,6 +161,7 @@ def render_run_pipeline(paths: Paths) -> None:
         ("gate_state", "gate_state.py"),
         ("buffered_emitter", "buffered_emitter.py"),
         ("live_monitor", "live_monitor.py"),
+        ("live_lines", "live_lines.py"),
         ("config_invocation", "config_invocation.py"),
         ("run_statistics", "run_statistics.py"),
         ("latency_table", "latency_table.py"),
@@ -223,6 +224,7 @@ _STEP_SCRIPTS = {
     "clear_feedback": ("clear-feedback.sh", True),
     "implement_pass_check": ("implement-pass-check.sh", True),
     "pass_check": ("pass-check.sh", True),
+    "show_file": ("show-file.sh", True),
     "validate_inputs": ("validate_inputs.py", False),
 }
 

@@ -15,10 +15,11 @@ import sys
 import termios
 import threading
 import time
+from typing import TextIO
 
 
 def forward_terminal_input(
-    source, master_fd: int, pause: threading.Event, stop: threading.Event
+    source: TextIO, master_fd: int, pause: threading.Event, stop: threading.Event
 ) -> None:
     """Forward terminal input to specify's pty stdin.
 
@@ -70,7 +71,7 @@ def set_pty_no_echo(fd: int) -> None:
 def _spawn_specify(
     specify_cmd: list[str], env: dict[str, str]
 ) -> tuple[
-    subprocess.Popen, int | None, threading.Event, threading.Event, threading.Thread | None
+    subprocess.Popen[str], int | None, threading.Event, threading.Event, threading.Thread | None
 ]:
     """Spawn specify and own its stdin plumbing; returns the live run parts.
 

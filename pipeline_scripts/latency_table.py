@@ -17,8 +17,9 @@ import datetime
 import json
 import re
 from pathlib import Path
+from typing import Any
 
-from _run_pipeline_common import fmt_duration
+from _run_pipeline_common import fmt_minutes
 from check_review import KIND_ORDER
 
 # The engine's nested fan-out item step ids are review-fan:check:<index> on
@@ -39,7 +40,7 @@ def _epoch(iso: str) -> float:
         return 0.0
 
 
-def collect_latency(state_dir: Path, run_dir: Path | None) -> list[dict]:
+def collect_latency(state_dir: Path, run_dir: Path | None) -> list[dict[str, Any]]:
     """Parse the run's log.jsonl into per-step (id, start, end, status) records.
 
     The engine persists step start/stop with timestamps in
@@ -56,7 +57,7 @@ def collect_latency(state_dir: Path, run_dir: Path | None) -> list[dict]:
     except OSError:
         return []
     starts: dict[str, float] = {}
-    records: dict[str, dict] = {}
+    records: dict[str, dict[str, Any]] = {}
     for line in lines:
         try:
             event = json.loads(line)
@@ -144,24 +145,40 @@ def print_latency_table(state_dir: Path, run_dir: Path | None) -> None:
     """Print the `=== latency by stage ===` block, or nothing when no data.
 
     One row per stage (step id -> duration) with the agent-call vs
-    shell-overhead breakdown; parallel-check items additionally get a detail
-    block with each check's duration and the fan-out wall time. Missing data
-    (no log.jsonl, no agent logs) degrades to an empty block — never a crash.
+    shell-overhead breakdown (durations in whole minutes, fmt_minutes) and
+    each stage's share of the run's wall time (the first start .. last end
+    across all records, one decimal); parallel-check items additionally get
+    a detail block with each check's duration/percent and the fan-out wall
+    time/percent against the same base. The base is the run's real wall
+    time, NOT the sum of the row durations: parent loop steps and their
+    nested iteration steps overlap (a do-while's duration includes its
+    children), so summing the rows would inflate the denominator and shrink
+    every percent. Missing data (no log.jsonl, no agent logs) degrades to
+    an empty block — never a crash.
     """
     records = collect_latency(state_dir, run_dir)
     if not records:
         return
     agent_ts = _agent_timestamps(state_dir)
+    total_wall = max(r["end"] for r in records) - min(r["start"] for r in records)
+
+    def pct(seconds: float) -> str:
+        return f"{seconds / total_wall * 100:.1f}%" if total_wall > 0 else "0.0%"
+
     print()
     print("=== latency by stage ===")
-    print(f"{'stage':<44}{'duration':>11}{'agent':>11}{'shell':>11}")
+    print(f"{'stage':<44}{'duration':>11}{'agent':>11}{'shell':>11}{'% wall':>8}")
     for rec in records:
         duration = max(0.0, rec["end"] - rec["start"])
         agent = _span_within(agent_ts, rec["start"], rec["end"])
         shell = max(0.0, duration - agent)
         print(
-            "{:<44}{:>11}{:>11}{:>11}".format(
-                rec["id"][:44], fmt_duration(duration), fmt_duration(agent), fmt_duration(shell)
+            "{:<44}{:>11}{:>11}{:>11}{:>8}".format(
+                rec["id"][:44],
+                fmt_minutes(duration),
+                fmt_minutes(agent),
+                fmt_minutes(shell),
+                pct(duration),
             )
         )
     # Parallel checks: the fan-out item rows already carry each check's
@@ -175,7 +192,7 @@ def print_latency_table(state_dir: Path, run_dir: Path | None) -> None:
     items = [(r, m) for r in records if (m := _FAN_OUT_ITEM_RE.match(r["id"]))]
     if items:
         print("parallel checks (fan-out):")
-        iterations: dict[str, list[tuple[dict, re.Match]]] = {}
+        iterations: dict[str, list[tuple[dict[str, Any], re.Match[str]]]] = {}
         for rec, m in items:
             # Group 1 is the engine's re-iteration namespacing suffix: the
             # engine writes every re-execution as <loop>:<step>:<iter+1> (its
@@ -191,15 +208,20 @@ def print_latency_table(state_dir: Path, run_dir: Path | None) -> None:
             for rec, m in batch:
                 kind = _fan_out_kind(run_dir, rec["id"], int(m.group(2))) if run_dir else None
                 label = kind if kind else f"check:{m.group(2)}"
+                dur = max(0.0, rec["end"] - rec["start"])
                 print(
-                    "    {:<40}{:>11}".format(
-                        label, fmt_duration(max(0.0, rec["end"] - rec["start"]))
-                    )
+                    f"    {label:<40}{fmt_minutes(dur):>11}{pct(dur):>8}"
                 )
             wall_start = min(r["start"] for r, _ in batch)
             wall_end = max(r["end"] for r, _ in batch)
+            wall = max(0.0, wall_end - wall_start)
             print(
-                "    {:<40}{:>11}".format(
-                    "fan-out wall", fmt_duration(max(0.0, wall_end - wall_start))
-                )
+                "    {:<40}{:>11}{:>8}".format("fan-out wall", fmt_minutes(wall), pct(wall))
             )
+    # The percent base is the run's wall time, so overlapping rows (a loop
+    # step and its nested children, parallel checks) can sum to more than
+    # 100%: the column is a share of the run, not a partition of it.
+    print(
+        "(percentages are shares of the run's wall time; nested and parallel "
+        "steps overlap their parents, so the rows do not partition the run)"
+    )

@@ -36,12 +36,15 @@ victory.wav signal on gate-open (except the ADR
 revise feedback gate), on success and on failure; the sound and the
 statistics never change the exit code.
 
-Agent logs are displayed aligned (role labels padded to the longest role
-name), agent reasoning longer than 100 chars is truncated for the console
-(the full text stays in the .jsonl files), and only lines appended during
-the current run are shown (pre-existing log files are baselined at startup).
-A step's agent lines print before the step's "--- step X (completed)"
-marker.
+Agent logs are no longer echoed (ADR-0011): instead each active process —
+a role, or a role+fork for the parallel review forks — shows one live
+status line with the cumulative token/cost sums from the agent-log
+`step_finish` events, redrawn in place on a TTY and printed once per event
+on a non-TTY. The lines are fixed (kept as history) when a step completes;
+only lines appended during the current run are counted (pre-existing log
+files are baselined at startup). Step markers carry the progress N/M when
+the workflow file is readable. A step's final agent events accumulate
+before the step's "--- step X (completed)" marker.
 
 Usage: run-pipeline.py <workflow-id-or-path> [extra specify args...]
   run-pipeline.py review-pipeline
@@ -89,6 +92,7 @@ from pathlib import Path
 from _run_pipeline_common import (
     existing_run_ids,
     fmt_duration,
+    fmt_minutes,
     fmt_thousands,
     is_feedback_gate,
     is_gate_menu_opener,
@@ -98,7 +102,8 @@ from _run_pipeline_common import (
     role_label,
     run_id_from_text,
     stamp,
-    truncate,
+    step_marker_index,
+    workflow_step_ids,
 )
 from agent_log_tailer import AgentLogTailer
 from buffered_emitter import BufferedEmitter
@@ -111,8 +116,10 @@ from config_invocation import (
     normalize_config,
     role_model,
 )
-from feedback_editor import create_feedback_file, open_feedback_editor, resolve_editor
+from editor import resolve_editor, resolve_feedback_editor
+from feedback_editor import create_feedback_file, open_feedback_editor
 from gate_state import GateState
+from live_lines import LiveLines
 from live_monitor import LiveMonitor
 from notify import SOUND_FILE, notify
 from pty_spawn import _spawn_specify, forward_terminal_input, set_pty_no_echo
@@ -131,6 +138,7 @@ __all__ = [
     "AgentLogTailer",
     "BufferedEmitter",
     "GateState",
+    "LiveLines",
     "LiveMonitor",
     "RunIdDiscoverer",
     "StepResultPoller",
@@ -144,6 +152,7 @@ __all__ = [
     "existing_run_ids",
     "export_session_info",
     "fmt_duration",
+    "fmt_minutes",
     "fmt_thousands",
     "forward_terminal_input",
     "is_feedback_gate",
@@ -158,12 +167,14 @@ __all__ = [
     "read_session_ids",
     "render_log_event",
     "resolve_editor",
+    "resolve_feedback_editor",
     "role_label",
     "role_model",
     "run_id_from_text",
     "set_pty_no_echo",
     "stamp",
-    "truncate",
+    "step_marker_index",
+    "workflow_step_ids",
 ]
 
 
@@ -203,7 +214,7 @@ def _handle_gate_menu(
 
 
 def _consume_output(
-    proc: subprocess.Popen,
+    proc: subprocess.Popen[str],
     monitor: LiveMonitor,
     state_dir: str,
     master_fd: int | None,
@@ -224,7 +235,9 @@ def _consume_output(
             continue
         if is_gate_menu_opener(line):
             _handle_gate_menu(monitor, state_dir, master_fd, forward_pause)
-        print(f"[{stamp()}] {line}", flush=True)
+        # The echo goes through the emitter: the live block is cleared
+        # before the line (and redrawn after, unless a gate menu is open).
+        monitor.emit_stdout(f"[{stamp()}] {line}")
         if not run_id:
             run_id = run_id_from_text(line)
             if run_id:
@@ -233,7 +246,7 @@ def _consume_output(
 
 
 def _finalize_run(
-    proc: subprocess.Popen,
+    proc: subprocess.Popen[str],
     monitor: LiveMonitor,
     run_id: str,
     t0: float,
@@ -342,7 +355,12 @@ def main() -> int:
     # run id is only printed by specify after the run finishes, so the
     # monitor recognizes the current run as the run dir that appears now.
     prior_runs = existing_run_ids(run_state_dir)
-    monitor = LiveMonitor(run_state_dir, prior_runs, logs_dir)
+    # The ordered top-level step ids of the workflow file drive the N/M
+    # progress markers (M and the completed step's own position); a
+    # missing/unreadable file degrades to None and the progress is omitted
+    # (ADR-0011).
+    step_ids = workflow_step_ids(source)
+    monitor = LiveMonitor(run_state_dir, prior_runs, logs_dir, step_ids=step_ids)
     # Wall-clock run time is measured directly around the child process; it
     # covers every completion path (success, failure, abort).
     t0 = time.monotonic()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import re
 from pathlib import Path
 
@@ -16,7 +17,7 @@ class AgentLogTailer:
     baseline snapshot of the current sizes of every existing *.jsonl file:
     those files were written by previous runs (the logs dir is never
     cleaned), so each starts at its baseline offset and only lines appended
-    during the current run are printed. Files created after the baseline
+    during the current run are yielded. Files created after the baseline
     start at offset 0.
     """
 
@@ -28,32 +29,41 @@ class AgentLogTailer:
                 with contextlib.suppress(OSError):
                     self._log_pos[path] = path.stat().st_size
 
-    def tail(self) -> list[tuple[str, str]]:
-        """Return (role, text) pairs for log lines appended since the last tail.
+    def tail(self) -> list[tuple[str, str, str, dict[str, object] | None]]:
+        """Return (role, fork_id, text, event) quadruples for log lines
+        appended since the last tail.
 
-        Raw file reading (byte offsets) lives in _read_appended(); the
-        interpretation of each line into a (role, text) pair is the pure
-        render_log_event().
+        Raw file reading (byte offsets) lives in _read_appended(). The role
+        and the fork id come from the log file name (ADR-0011: the parallel
+        review forks write per-invocation files, so the live status lines
+        can keep separate accumulators), the text from render_log_event
+        (always empty since ADR-0011) and the event is the parsed JSON
+        object of the line (None for a non-JSON line) — the live status
+        lines consume the `step_finish` events from it.
         """
         if not self._logs_dir.is_dir():
             return []
-        events: list[tuple[str, str]] = []
+        events: list[tuple[str, str, str, dict[str, object] | None]] = []
         for path in sorted(self._logs_dir.glob("*.jsonl")):
             lines, _ = self._read_appended(path)
             if not lines:
                 continue
             # Parallel review forks write per-invocation log files
-            # (sessions-<task>-<role>-fork-<pid>.jsonl, see run-agent.sh): strip
-            # the -fork-<pid> suffix so the role is still derived from the log
-            # file's last dash segment.
+            # (sessions-<task>-<role>-fork-<pid>.jsonl, see run-agent.sh):
+            # the -fork-<pid> suffix is stripped for the role and kept as
+            # the fork id.
+            fork_m = re.search(r"-fork-(\d+)$", path.stem)
+            fork_id = fork_m.group(1) if fork_m else ""
             stem = re.sub(r"-fork-\d+$", "", path.stem)
             role = stem.rsplit("-", 1)[-1]
             for line in lines:
+                event = None
+                with contextlib.suppress(Exception):
+                    event = json.loads(line)
                 # The role is fixed per log file; render_log_event maps the
                 # line to a (role, text) pair and never varies the role.
                 _, text = render_log_event(role, line)
-                if text:
-                    events.append((role, text))
+                events.append((role, fork_id, text, event))
         return events
 
     def _read_appended(self, path: Path) -> tuple[list[str], int]:

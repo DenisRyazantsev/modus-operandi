@@ -98,8 +98,9 @@ steps:
             message: >-
               Feedback on the ADR is collected in
               {{ inputs.state_dir }}/tasks/current/feedback.md — the wrapper opens it
-              in your editor and the run continues automatically when the
-              editor closes. If no editor opened, create the file manually
+              in your editor: on macOS the run continues automatically when the
+              editor closes; on Linux close the editor window and choose
+              continue. If no editor opened, create the file manually
               and write your feedback, then choose continue. The planner
               will update adr.md accordingly.
             options: [continue, abort]

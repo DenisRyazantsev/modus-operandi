@@ -10,15 +10,31 @@ from unittest import mock
 from .helpers import load_run_pipeline
 
 
-class LiveMonitorFinishTest(unittest.TestCase):
-    """finish() must drain BOTH late step results and late agent-log lines.
+def step_finish(input=1, output=2, reasoning=3, cache_read=4, cost=0.01):
+    return {
+        "type": "step_finish",
+        "part": {
+            "type": "step-finish",
+            "tokens": {
+                "input": input,
+                "output": output,
+                "reasoning": reasoning,
+                "cache": {"read": cache_read, "write": 0},
+            },
+            "cost": cost,
+        },
+    }
 
-    The tail thread has already stopped when finish() runs, so log lines
+
+class LiveMonitorFinishTest(unittest.TestCase):
+    """finish() must drain BOTH late step results and late agent-log events.
+
+    The tail thread has already stopped when finish() runs, so events
     written between the last 0.5s poll tick and process exit would otherwise
-    never be printed to the console.
+    never reach the live status lines (ADR-0011).
     """
 
-    def test_finish_prints_late_log_lines(self):
+    def test_finish_prints_late_step_finish_line(self):
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             # The tailer is built as cwd/'${state_dir}/logs'; state_dir
@@ -29,15 +45,19 @@ class LiveMonitorFinishTest(unittest.TestCase):
             with mock.patch.object(Path, "cwd", return_value=Path(tmp)):
                 monitor = mod.LiveMonitor(Path(tmp), set())
                 # The "late reply" is appended AFTER the tailer's baseline:
-                # only lines written during the run are printed.
+                # only lines written during the run are counted.
                 log.write_text(
-                    '{"part": {"type": "text", "text": "late reply"}}\n',
+                    json.dumps(step_finish()) + "\n",
                     encoding="utf-8",
                 )
                 captured = io.StringIO()
                 with mock.patch("sys.stdout", captured):
                     monitor.finish()
-            self.assertIn("late reply", captured.getvalue())
+            # Non-TTY (StringIO): one plain line per step_finish event.
+            out = captured.getvalue()
+            self.assertIn("[executor]", out)
+            self.assertIn("cache 4", out)
+            self.assertIn("price $0.01", out)
 
     def test_finish_polls_late_step_results(self):
         mod = load_run_pipeline()

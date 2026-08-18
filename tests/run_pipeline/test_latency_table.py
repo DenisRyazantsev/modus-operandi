@@ -1,4 +1,4 @@
-"""Unit tests for the per-stage latency table (latency_table.py, ADR-0009)."""
+"""Unit tests for the per-stage latency table (latency_table.py, ADR-0009/0011)."""
 
 import datetime
 import io
@@ -16,8 +16,10 @@ def _ms(iso: str) -> int:
 
 
 class LatencyTableTest(unittest.TestCase):
-    """Parsing the engine's log.jsonl into per-stage durations and the
-    agent-vs-shell breakdown, with graceful degradation on missing data."""
+    """Parsing the engine's log.jsonl into per-stage durations (whole
+    minutes, fmt_minutes) with the percent share of the total wall time,
+    and the agent-vs-shell breakdown, with graceful degradation on missing
+    data."""
 
     def _state(self, tmp: str, sessions: dict, task_id: str = "task-1") -> Path:
         state = Path(tmp) / ".workflow"
@@ -116,11 +118,13 @@ class LatencyTableTest(unittest.TestCase):
         out = captured.getvalue()
         self.assertIn("=== latency by stage ===", out)
         self.assertIn("pending-kinds", out)
-        # Duration column: fix-all spans 23s (07 -> 30).
         self.assertIn("fix-all", out)
-        # Agent vs shell breakdown: 10s agent activity inside the 23s stage.
-        self.assertIn("00:00:10", out)
-        self.assertIn("00:00:13", out)
+        # Durations are whole minutes: fix-all spans 23s -> 1m.
+        self.assertIn("1m", out)
+        # Percent column: fix-all = 23s of the run's wall time (records
+        # span 0..30s) -> 76.7%. The denominator is the span, not the sum
+        # of the row durations (nested/parallel rows overlap).
+        self.assertIn("76.7%", out)
 
     def test_latency_table_parallel_checks_block(self):
         mod = load_run_pipeline()
@@ -141,7 +145,10 @@ class LatencyTableTest(unittest.TestCase):
         self.assertIn("bugs", out)
         # srp ran 3s (02 -> 05), bugs 4s (02 -> 06); fan-out wall is 4s.
         self.assertIn("fan-out wall", out)
-        self.assertIn("00:00:04", out)
+        # Percentages against the run's wall time (records span 0..30s):
+        # srp = 10.0%, wall = 13.3%.
+        self.assertIn("10.0%", out)
+        self.assertIn("13.3%", out)
 
     def test_latency_table_fan_out_wall_is_per_iteration(self):
         # Bug fix: the fan-out wall must be computed per retry-loop iteration,
@@ -214,13 +221,122 @@ class LatencyTableTest(unittest.TestCase):
         self.assertIn("iteration 2:", out)
         self.assertEqual(out.count("fan-out wall"), 2)
         # iter 1 wall = 02..07 = 5s; iter 2 wall = 21..27 = 6s. The buggy
-        # all-items span would be 2..27 = 25s.
-        self.assertIn("00:00:05", out)
-        self.assertIn("00:00:06", out)
-        self.assertNotIn("00:00:25", out)
+        # all-items span would be 2..27 = 25s (2.6% of the 945s total would
+        # never match — the percents pin the spans instead).
+        # The run's wall time is the records' span 2..27 = 25s (NOT the
+        # sum of the row durations — nested/parallel rows overlap): iter 1
+        # wall 5s = 20.0%, iter 2 wall 6s = 24.0%.
+        self.assertIn("20.0%", out)
+        self.assertIn("24.0%", out)
+        self.assertNotIn("100.0%", out)  # the buggy all-items span = 25s
         # The iteration-2 kinds come from the pending step's output.
         self.assertIn("review", out)
         self.assertIn("comment", out)
+
+    def test_latency_table_distinct_minute_durations(self):
+        # Minutes-scale stages produce distinct fmt_minutes values and
+        # percents (90s -> 2m, 150s -> 3m, 60s -> 1m of a 300s total).
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            state = self._state(tmp, {"planner": "p1"})
+            run_dir = Path(tmp) / ".specify" / "workflows" / "runs" / "abc123"
+            run_dir.mkdir(parents=True)
+
+            def iso(offset_s: int) -> str:
+                base = datetime.datetime(2026, 8, 16, 10, 0, 0, tzinfo=datetime.UTC)
+                return (base + datetime.timedelta(seconds=offset_s)).isoformat()
+
+            events = [
+                ("short", 0, 60, "completed"),
+                ("medium", 60, 150, "completed"),
+                ("long", 150, 300, "completed"),
+            ]
+            lines = []
+            for step_id, start, end, status in events:
+                lines.append(
+                    json.dumps(
+                        {"event": "step_started", "step_id": step_id, "timestamp": iso(start)}
+                    )
+                )
+                lines.append(
+                    json.dumps(
+                        {
+                            "event": "step_completed",
+                            "step_id": step_id,
+                            "status": status,
+                            "timestamp": iso(end),
+                        }
+                    )
+                )
+            (run_dir / "log.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+            captured = io.StringIO()
+            with (
+                mock.patch("subprocess.run", return_value=mock.Mock(returncode=1)),
+                mock.patch("sys.stdout", captured),
+            ):
+                mod.print_run_statistics(state, 300.0, run_dir)
+        out = captured.getvalue()
+        self.assertIn("1m", out)
+        self.assertIn("2m", out)
+        self.assertIn("3m", out)
+        # 60s/300s = 20.0%, 90s/300s = 30.0%, 150s/300s = 50.0%.
+        self.assertIn("20.0%", out)
+        self.assertIn("30.0%", out)
+        self.assertIn("50.0%", out)
+
+    def test_percent_denominator_is_run_wall_time_not_row_sum(self):
+        # Bug fix: the percent base is the run's wall time (first start ..
+        # last end across ALL records), NOT the sum of the row durations —
+        # a parent loop step and its nested iteration steps overlap, so
+        # summing the rows inflates the denominator and shrinks every
+        # percent. Here the rows sum to 140s but the run spans 100s: the
+        # child's 20s must read 20.0%, not 14.3%.
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            state = self._state(tmp, {"planner": "p1"})
+            run_dir = Path(tmp) / ".specify" / "workflows" / "runs" / "abc123"
+            run_dir.mkdir(parents=True)
+
+            def iso(offset_s: int) -> str:
+                base = datetime.datetime(2026, 8, 16, 10, 0, 0, tzinfo=datetime.UTC)
+                return (base + datetime.timedelta(seconds=offset_s)).isoformat()
+
+            events = [
+                ("motivation-loop", 0, 100, "completed"),
+                ("motivation-loop:motivation-gate:1", 10, 30, "completed"),
+                ("motivation-loop:motivation-gate:2", 40, 60, "completed"),
+            ]
+            lines = []
+            for step_id, start, end, status in events:
+                lines.append(
+                    json.dumps(
+                        {"event": "step_started", "step_id": step_id, "timestamp": iso(start)}
+                    )
+                )
+                lines.append(
+                    json.dumps(
+                        {
+                            "event": "step_completed",
+                            "step_id": step_id,
+                            "status": status,
+                            "timestamp": iso(end),
+                        }
+                    )
+                )
+            (run_dir / "log.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+            captured = io.StringIO()
+            with (
+                mock.patch("subprocess.run", return_value=mock.Mock(returncode=1)),
+                mock.patch("sys.stdout", captured),
+            ):
+                mod.print_run_statistics(state, 100.0, run_dir)
+        out = captured.getvalue()
+        self.assertIn("20.0%", out)  # child 20s of the 100s span
+        self.assertIn("100.0%", out)  # the parent loop covers the whole span
+        self.assertNotIn("14.3%", out)  # 20s of the inflated 140s row sum
+        # The trailing note names the base so the column is not mistaken
+        # for a partition of the run.
+        self.assertIn("percentages are shares of the run's wall time", out)
 
     def test_latency_table_degrades_to_empty_without_run_dir(self):
         mod = load_run_pipeline()

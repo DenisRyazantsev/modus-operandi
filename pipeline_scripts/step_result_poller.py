@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from _run_pipeline_common import TERMINAL_STATUSES
 
@@ -19,7 +20,7 @@ class StepResultPoller:
     def _run_dir(self) -> Path:
         return self.run_state_dir / "workflows" / "runs" / self.run_id
 
-    def read_state(self) -> dict | None:
+    def read_state(self) -> dict[str, Any] | None:
         """Read the current run's state.json, or None when unavailable.
 
         The raw state.json I/O for the current run: the monitor calls this
@@ -28,13 +29,14 @@ class StepResultPoller:
         needs current_step_id).
         """
         try:
-            return json.loads(
+            data = json.loads(
                 (self._run_dir() / "state.json").read_text(encoding="utf-8")
             )
         except Exception:
             return None
+        return data if isinstance(data, dict) else None
 
-    def poll(self, data: dict | None = None) -> list[tuple[str, dict]]:
+    def poll(self, data: dict[str, Any] | None = None) -> list[tuple[str, dict[str, Any]]]:
         """Return (step_id, result) pairs for steps finished since the last poll.
 
         state.json is read only if the caller has not already read it: the
@@ -45,7 +47,7 @@ class StepResultPoller:
             data = self.read_state()
             if data is None:
                 return []
-        events: list[tuple[str, dict]] = []
+        events: list[tuple[str, dict[str, Any]]] = []
         for step_id, result in data.get("step_results", {}).items():
             if step_id in self._seen_steps or result.get("status") not in TERMINAL_STATUSES:
                 continue

@@ -2,26 +2,22 @@
 
 Everything the class modules and the run_pipeline.py entry need in common
 lives here: the terminal-status set, the display constants, the pure string
-predicates (gate menu opener, feedback gate, truncation, rendering) and the
-output primitives (timestamps, role labels, step markers). Each class module
+predicates (gate menu opener, feedback gate, rendering) and the output
+primitives (timestamps, role labels, step markers). Each class module
 imports only what it needs; run_pipeline.py re-exports the names for tests.
 """
 
 from __future__ import annotations
 
-import json
 import re
 import time
 from pathlib import Path
+from typing import Any
 
 # Step statuses the poller treats as finished. Anything else (running,
 # pending, queued, unset) means the step is still in progress and must not be
 # reported as a finished event.
 TERMINAL_STATUSES = frozenset({"completed", "failed", "skipped"})
-
-# Agent reasoning longer than this is truncated for the console display (the
-# full text always stays in the .jsonl files).
-MAX_LOG_TEXT_LEN = 100
 
 # Role names are fixed (planner/executor); the longest one sets the label
 # width so text after "[role] " starts at the same column.
@@ -83,19 +79,7 @@ def is_feedback_gate(step_id: str | None) -> bool:
     ("adr-loop:adr-feedback-gate:N") by substring. Pure predicate, so the
     gate recognition is unit-testable without a running workflow.
     """
-    return bool(step_id) and FEEDBACK_GATE_MARKER in step_id
-
-
-def truncate(text: str) -> str:
-    """Shorten a displayed agent-log text to MAX_LOG_TEXT_LEN chars + "...".
-
-    Agent reasoning events can be very long and flood the console; the full
-    text always stays in the .jsonl files — this only shortens the console
-    rendering. Pure function.
-    """
-    if len(text) > MAX_LOG_TEXT_LEN:
-        return text[:MAX_LOG_TEXT_LEN] + "..."
-    return text
+    return step_id is not None and FEEDBACK_GATE_MARKER in step_id
 
 
 def existing_run_ids(run_state_dir: Path) -> set[str]:
@@ -117,34 +101,33 @@ def existing_run_ids(run_state_dir: Path) -> set[str]:
 def render_log_event(role: str, line: str) -> tuple[str, str]:
     """Map one raw log line to the (role, text) pair to display.
 
-    Only meaningful content is shown: `text` parts with a non-empty payload
-    (the agents' actual work progression). Marker events (`step-start`,
-    `step-finish`) and `text` parts with an empty payload carry no
-    information and are dropped entirely. Lines that are not valid JSON at
-    all (plain-text or malformed log lines) are the exception: they are
-    shown truncated as-is rather than dropped, so raw agent output is never
-    silently hidden. What stays visible from the logs is the agents'
-    progression, while failures are reported by the failed step's own result
-    and the final status block. Pure function: no file state, so the
-    rendering rules are unit-testable without touching the log files.
+    Since ADR-0011 nothing is printed from the agent logs anymore: `text`
+    and `reasoning` events are suppressed (the live status lines replace
+    them) and raw non-JSON lines are no longer shown either. The function
+    keeps its (role, text) contract for the tailer, which always receives an
+    empty text; the parsed events are carried separately for the live lines.
     """
-    line = line.strip()
-    if not line:
-        return role, ""
-    try:
-        event = json.loads(line)
-    except Exception:
-        return role, truncate(line)
-    part = event.get("part") or {}
-    if part.get("type") == "text" and part.get("text"):
-        # text parts: print the payload (truncated for the console; the
-        # .jsonl file keeps the full text).
-        return role, truncate(part["text"])
     return role, ""
 
 
-def print_step_result(step_id: str, result: dict) -> None:
-    print_ts("--- step {} ({})".format(step_id, result.get("status")))
+def print_step_result(
+    step_id: str,
+    result: dict[str, Any],
+    step_index: int | None = None,
+    total_steps: int | None = None,
+) -> None:
+    """Print the finished-step marker and its captured output.
+
+    `step_index` is the completed step's 0-based position among the
+    workflow's top-level steps (resolved from the workflow file, ADR-0011);
+    the marker is 1-based for humans, hence the `+1` at this only display
+    site. Without a known index or a workflow file the marker omits the N/M
+    part.
+    """
+    marker = "--- step {} ({})".format(step_id, result.get("status"))
+    if step_index is not None and total_steps is not None:
+        marker += f" [{step_index + 1}/{total_steps}]"
+    print_ts(marker)
     out = result.get("output") or {}
     print_ts(out.get("stdout") or "", "    ")
     stderr = out.get("stderr") or ""
@@ -175,3 +158,82 @@ def fmt_duration(seconds: float) -> str:
     hours, rem = divmod(total, 3600)
     minutes, secs = divmod(rem, 60)
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def fmt_minutes(seconds: float) -> str:
+    """Format elapsed seconds as whole minutes with an 'm' suffix.
+
+    Standard rounding (e.g. 90 -> '2m'); a non-zero value under 30 seconds
+    rounds up to '1m' so a stage never reads as zero minutes. `wall time` in
+    the run statistics block keeps fmt_duration (HH:MM:SS) — this is only
+    the latency table's compact form.
+    """
+    total = max(0, seconds)
+    minutes = int(total / 60 + 0.5)
+    if minutes == 0 and total > 0:
+        minutes = 1
+    return f"{minutes}m"
+
+
+# The installed config dir, derived from this module's location (scripts/ ->
+# opencode/ -> .config/, like CONFIG_PATH in config_invocation.py): used to
+# resolve a bare workflow id to the installed workflow file.
+CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "spec-kit-llm-client"
+
+
+def workflow_step_ids(source: str) -> list[str] | None:
+    """The ordered top-level step ids of the workflow file, or None.
+
+    The wrapper's argv[0] is either a path to the workflow file (also a
+    relative path from cwd) or a bare id; a bare id is resolved against the
+    installed config dir and the cwd. Any missing file or unparseable YAML
+    degrades to None — the N/M progress is then omitted without failing the
+    run (ADR-0011). The id list (not just the count) lets the step markers
+    show the completed step's own position instead of the engine's
+    `current_step_index`, which has usually already advanced to the next
+    step when the result is polled.
+    """
+    candidates: list[Path] = []
+    if Path(source).is_file():
+        candidates.append(Path(source))
+    else:
+        candidates.append(CONFIG_DIR / f"{source}.yml")
+        candidates.append(Path.cwd() / f"{source}.yml")
+    for path in candidates:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        try:
+            import yaml  # installed by the installer (deps.ensure_pyyaml)
+
+            data = yaml.safe_load(text)
+        except Exception:
+            continue
+        if isinstance(data, dict) and isinstance(data.get("steps"), list):
+            ids = [
+                step["id"]
+                for step in data["steps"]
+                if isinstance(step, dict) and isinstance(step.get("id"), str)
+            ]
+            if ids:
+                return ids
+    return None
+
+
+def step_marker_index(step_id: str, step_ids: list[str] | None) -> int | None:
+    """The 0-based index of a completed step among the top-level steps.
+
+    The engine writes loop-iteration results with a suffixed id
+    (e.g. `adr-loop:adr-gate:1`): the marker shows the position of the
+    parent top-level step, so the suffix is stripped before the lookup.
+    None when the step is unknown or no workflow file was read — the marker
+    then omits the N/M part.
+    """
+    if not step_ids:
+        return None
+    base = step_id.split(":", 1)[0]
+    try:
+        return step_ids.index(base)
+    except ValueError:
+        return None

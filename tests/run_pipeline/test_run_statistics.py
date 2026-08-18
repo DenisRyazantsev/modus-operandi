@@ -182,3 +182,8 @@ class RunStatisticsTest(unittest.TestCase):
         self.assertEqual(mod.fmt_duration(0), "00:00:00")
         self.assertEqual(mod.fmt_duration(6301), "01:45:01")
         self.assertEqual(mod.fmt_duration(3661.9), "01:01:01")
+        # fmt_minutes is the latency table's compact form (ADR-0011); the
+        # statistics block itself keeps HH:MM:SS via fmt_duration.
+        self.assertEqual(mod.fmt_minutes(0), "0m")
+        self.assertEqual(mod.fmt_minutes(29), "1m")
+        self.assertEqual(mod.fmt_minutes(90), "2m")

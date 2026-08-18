@@ -47,6 +47,7 @@ def build_paths(home: str | Path) -> Paths:
         "gate_state": base / ".config" / "opencode" / "scripts" / "gate_state.py",
         "buffered_emitter": base / ".config" / "opencode" / "scripts" / "buffered_emitter.py",
         "live_monitor": base / ".config" / "opencode" / "scripts" / "live_monitor.py",
+        "live_lines": base / ".config" / "opencode" / "scripts" / "live_lines.py",
         # run-pipeline.py is further split one concern per file: the
         # config-to-invocation mapping, the statistics, the victory sound,
         # the feedback gate's editor interaction and the pty plumbing.
@@ -94,6 +95,7 @@ def build_paths(home: str | Path) -> Paths:
             base / ".config" / "opencode" / "scripts" / "implement-pass-check.sh"
         ),
         "pass_check": base / ".config" / "opencode" / "scripts" / "pass-check.sh",
+        "show_file": base / ".config" / "opencode" / "scripts" / "show-file.sh",
         "validate_inputs": base / ".config" / "opencode" / "scripts" / "validate_inputs.py",
         # spec-run is split one class per file: the exceptions package, the
         # edit command and the shared editor module are copied next to the

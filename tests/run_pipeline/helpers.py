@@ -29,6 +29,7 @@ _MODULES = (
     "gate_state",
     "buffered_emitter",
     "live_monitor",
+    "live_lines",
     "config_invocation",
     "run_statistics",
     "latency_table",

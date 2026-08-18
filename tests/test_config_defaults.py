@@ -26,6 +26,10 @@ class ApplyDefaultsTest(unittest.TestCase):
         self.assertEqual(cfg["workflow"]["adr_dir"], "architecture")
         self.assertTrue(cfg["workflow"]["human_gates"])
         self.assertFalse(cfg["workflow"]["use_serve"])
+        # The motivation loop is effectively unlimited since ADR-0011: its
+        # ceiling is a workflow literal, so no config key exists for it.
+        self.assertNotIn("max_motivation_iterations", cfg["workflow"])
+        self.assertNotIn("max_proposal_iterations", cfg["workflow"])
         # Empty config: no backend sections are fabricated (the active
         # backend's models are required by validation instead).
         self.assertNotIn("opencode", cfg)

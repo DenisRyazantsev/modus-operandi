@@ -86,3 +86,106 @@ class FeedbackEditorResolutionTest(unittest.TestCase):
             mock.patch("shutil.which", return_value=None),
         ):
             self.assertIsNone(mod.resolve_editor())
+
+
+class FeedbackEditorPlatformTest(unittest.TestCase):
+    """resolve_feedback_editor: the platform chain for the feedback gates
+    (ADR-0011) — macOS TextEdit (waited), Linux GUI in a separate window
+    (detached), the terminal chain as the no-GUI fallback (waited)."""
+
+    def test_macos_uses_textedit_waited(self):
+        mod = load_run_pipeline()
+        with mock.patch("sys.platform", "darwin"):
+            self.assertEqual(
+                mod.resolve_feedback_editor(),
+                ("waited", ["open", "-a", "TextEdit", "-W"]),
+            )
+
+    def test_linux_flatpak_detached(self):
+        # flatpak on PATH and `flatpak info org.gnome.TextEditor` exits 0:
+        # the Flatpak GNOME Text Editor is used, detached.
+        mod = load_run_pipeline()
+        with (
+            mock.patch("sys.platform", "linux"),
+            mock.patch(
+                "shutil.which",
+                side_effect=lambda name: "/usr/bin/" + name
+                if name == "flatpak"
+                else None,
+            ),
+            mock.patch("subprocess.run", return_value=mock.Mock(returncode=0)) as run,
+        ):
+            self.assertEqual(
+                mod.resolve_feedback_editor(),
+                ("detached", ["flatpak", "run", "org.gnome.TextEditor"]),
+            )
+        self.assertEqual(run.call_args.args[0], ["flatpak", "info", "org.gnome.TextEditor"])
+
+    def test_linux_flatpak_not_installed_falls_to_gnome_text_editor(self):
+        # flatpak on PATH but the app not installed (exit 1): the RPM binary
+        # is tried next.
+        mod = load_run_pipeline()
+
+        def which(name):
+            return "/usr/bin/" + name if name in ("flatpak", "gnome-text-editor") else None
+
+        with (
+            mock.patch("sys.platform", "linux"),
+            mock.patch("shutil.which", side_effect=which),
+            mock.patch("subprocess.run", return_value=mock.Mock(returncode=1)),
+        ):
+            self.assertEqual(
+                mod.resolve_feedback_editor(), ("detached", ["gnome-text-editor"])
+            )
+
+    def test_linux_gio_open_detached(self):
+        mod = load_run_pipeline()
+
+        def which(name):
+            return "/usr/bin/" + name if name == "gio" else None
+
+        with (
+            mock.patch("sys.platform", "linux"),
+            mock.patch("shutil.which", side_effect=which),
+            mock.patch("subprocess.run", return_value=mock.Mock(returncode=1)),
+        ):
+            self.assertEqual(mod.resolve_feedback_editor(), ("detached", ["gio", "open"]))
+
+    def test_linux_xdg_open_detached(self):
+        mod = load_run_pipeline()
+
+        def which(name):
+            return "/usr/bin/" + name if name == "xdg-open" else None
+
+        with (
+            mock.patch("sys.platform", "linux"),
+            mock.patch("shutil.which", side_effect=which),
+            mock.patch("subprocess.run", return_value=mock.Mock(returncode=1)),
+        ):
+            self.assertEqual(
+                mod.resolve_feedback_editor(), ("detached", ["xdg-open"])
+            )
+
+    def test_linux_no_gui_falls_back_to_terminal_chain(self):
+        mod = load_run_pipeline()
+
+        def which(name):
+            return "/usr/bin/" + name if name in ("nano", "vi") else None
+
+        with (
+            mock.patch("sys.platform", "linux"),
+            mock.patch.dict("os.environ", {}, clear=True),
+            mock.patch("shutil.which", side_effect=which),
+            mock.patch("subprocess.run", return_value=mock.Mock(returncode=1)),
+        ):
+            self.assertEqual(mod.resolve_feedback_editor(), ("waited", ["nano"]))
+
+    def test_no_editor_returns_none(self):
+        mod = load_run_pipeline()
+        with (
+            mock.patch("sys.platform", "linux"),
+            mock.patch.dict("os.environ", {}, clear=True),
+            mock.patch("shutil.which", return_value=None),
+            mock.patch("subprocess.run", return_value=mock.Mock(returncode=1)),
+        ):
+            self.assertIsNone(mod.resolve_feedback_editor())
