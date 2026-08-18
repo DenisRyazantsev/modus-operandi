@@ -10,9 +10,11 @@ event yet, the block shows the synthesized harness line
 `[hh:mm:ss] [harness] <spin> [<step> N/M]` without a token section; the
 first agent event of the step (any type — the current cursor emits no
 `step_start`) creates the process line and replaces the harness line. The
-spinner frame shifts at most once per HEARTBEAT_SECONDS (1.0 s, ADR-0012),
-so the block redrawn every 0.5 s monitor tick visibly "breathes" between
-model turns without the text after the frame shifting.
+spinner frame is chosen from the elapsed time (rich-style time-based
+spinner): it advances every HEARTBEAT_SECONDS (0.25 s, ADR-0013), so the
+block redrawn every 0.25 s monitor tick visibly "breathes" between model
+turns, and a skipped tick advances several frames at once instead of
+drifting the cadence.
 
 The block is redrawn in place with ANSI on a TTY (the emitter owns the
 drawing); on a non-TTY no ANSI is drawn — the harness line prints once per
@@ -67,11 +69,10 @@ class LiveLines:
         # fallback is then disabled so a transitional build emitting both
         # shapes cannot double-count (bug fix).
         self._prefer_result = False
-        # The spinner's last-shift timestamp: the frame shifts at most once
-        # per HEARTBEAT_SECONDS (ADR-0012), so the line "breathes" between
-        # model turns without the text after the frame moving.
-        self._last_spin_ts = time.monotonic()
-        self._spin_index = 0
+        # The spinner's time origin: the frame is a function of the elapsed
+        # time, so the 4 fps cadence (ADR-0013) never drifts even when a
+        # monitor tick is skipped.
+        self._t0 = time.monotonic()
 
     @property
     def step_index(self) -> int | None:
@@ -185,16 +186,14 @@ class LiveLines:
     def _spin(self) -> str:
         """The current spinner frame, one column wide.
 
-        The frame shifts at most once per HEARTBEAT_SECONDS (1.0 s,
-        ADR-0012): a redraw within the heartbeat keeps the current frame,
-        the first redraw after it advances — the line "breathes" without
-        the text after the frame shifting.
+        The frame is chosen from the elapsed time since LiveLines was
+        created (the rich principle, ADR-0013): every HEARTBEAT_SECONDS
+        (0.25 s) the frame advances, a skipped monitor tick advances several
+        frames at once, and the block redrawn every 0.25 s tick visibly
+        "breathes" without the text after the frame shifting.
         """
-        now = time.monotonic()
-        if now - self._last_spin_ts >= HEARTBEAT_SECONDS:
-            self._last_spin_ts = now
-            self._spin_index = (self._spin_index + 1) % len(SPINNER_FRAMES)
-        return SPINNER_FRAMES[self._spin_index]
+        frame = int((time.monotonic() - self._t0) / HEARTBEAT_SECONDS)
+        return SPINNER_FRAMES[frame % len(SPINNER_FRAMES)]
 
     def _harness_line(self, step_id: str, step_index: int | None) -> str:
         """The TTY harness line: `[hh:mm:ss] [harness] <spin> [<step> N/M]`

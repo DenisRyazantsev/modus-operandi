@@ -83,18 +83,24 @@ them after a failure:
 It prefixes every line with an hh:mm:ss timestamp and streams each step's
 output as it finishes (from the run state) with the progress marker
 `--- step <id> (completed) [N/M]`. While a step runs, a live status block
-is shown (ADR-0012): the moment a step starts, a `[harness]` line with a
-spinner (`[hh:mm:ss] [harness] <spin> [<step> N/M]`) appears, and the
-first agent event of the step replaces it with one line per active process
-carrying the cumulative token/cost sums — on the cursor backend too, whose
-per-turn `usage` fields are read the same way as the run statistics (no
-price: cursor reports no cost). The block is redrawn in place on a TTY;
-when stdout is not a TTY no ANSI block is drawn, each step start prints
-one plain `[hh:mm:ss] [harness] [<step> N/M]` line and each agent usage
-event one plain line — no per-second heartbeat lines ever go into a log.
-On failure it prints the resume command. The per-stage latency table at
-the end shows durations in whole minutes plus each stage's share of the
-total wall time.
+is shown (ADR-0012/0013): the moment a step starts, a `[harness]` line with
+a spinner — 4 frames per second (0.25 s cadence),
+`[hh:mm:ss] [harness] <spin> [<step> N/M]` — appears, and the first agent
+event of the step replaces it with one line per active process
+(`[planner]`/`[planner#<kind>]` for the per-kind review forks) carrying the
+cumulative token/cost sums — on the cursor backend too, whose per-turn
+`usage` fields are read the same way as the run statistics (no price:
+cursor reports no cost). The block is redrawn in place on a TTY; when
+stdout is not a TTY no ANSI block is drawn, each step start prints one
+plain `[hh:mm:ss] [harness] [<step> N/M]` line and each agent usage event
+one plain line — no per-second heartbeat lines ever go into a log. The
+engine's own progress lines (`▸ [<step-id>] …`, `Running workflow:`,
+`Version:`, `Status:`, `Run ID:`) are not echoed — strictly our format —
+while its errors and warnings are re-printed as
+`[hh:mm:ss] [harness] <line>` and the interactive gate menu echoes as-is.
+On failure it prints the resume command. The per-stage latency table at the
+end shows durations in whole minutes plus each stage's share of the total
+wall time.
 
 ## Requirements
 
@@ -255,7 +261,7 @@ resolved deliberately, not silently:
 With `human_gates: false` the ADR gate auto-approves through `verdict_input` defaults;
 the workflow runs unattended.
 
-### Warm sessions and `--reset`
+### Warm sessions and review forks
 
 `run-agent.sh` keeps one opencode session per role per task in
 `<state_dir>/sessions-<task_id>.json` (default `.workflow/`). The task id is
@@ -273,12 +279,30 @@ for that session (`<state_dir>/pids/`). This cleans up orphans left behind when 
 shell-step timeout kills the workflow shell but not the agent process — a stale
 agent can no longer keep writing to the session or burn tokens.
 
+The review-fix-loop checks run in **per-kind forks** of the warm planner session
+(ADR-0013): the first check of a kind (`srp`|`bugs`|`review`|`comment`) forks the
+warm session once and saves the fork's id in
+`<state_dir>/sessions-<task_id>-review-<kind>.json`; every later check of the same
+kind continues that same fork (`--review-fork <kind>`), so the reviewer keeps its
+past findings across the loop iterations and the scope is read once per run. The
+fork's log/pid files are stable per kind
+(`sessions-<task_id>-planner-fork-<kind>.jsonl`/`.pid`), so the live status line
+is labeled `[planner#<kind>]` and the token sums continue between iterations. The
+parent warm session is never mutated. On the cursor backend each kind gets its own
+warm chat instead: `create-chat` on the first check, `--resume` on the rest
+(cursor has no fork primitive, so the per-kind chat IS the fork). If a per-kind
+fork session disappears (opencode auto-compacts or cleans up sessions), the
+"Session not found" fallback drops the stale id and forks the parent again.
+
 Long sessions are eventually auto-compacted by opencode. When a session grows too
-large, drop it and hand the context over manually:
+large, drop it and hand the context over manually. To hand it over explicitly:
+summarize the task state into a file, delete the session record, and only then
+have the FRESH session read the file back — two calls in the same session would
+just re-read what the first wrote (a circular no-op, not a handoff):
 
 ```
 run-agent.sh executor "summarize the task state into .workflow/tasks/<id>/handoff.md"
-run-agent.sh executor --reset
+rm .workflow/sessions-<task_id>.json   # drop the session between the calls
 run-agent.sh executor "read handoff.md and continue"
 ```
 
@@ -312,7 +336,8 @@ implementation actually changed the repository → if not, the executor is asked
 once to redo the work) → `implement-pass-check` (fails the run with an error
 when two attempts produced no changes) → `review-fix-loop` (`do-while`: the
 four checks — SRP, bugs, general review, readability — run in PARALLEL, each in
-a fork of the warm planner session; their findings merge into one document and
+its own per-kind fork of the warm planner session (ADR-0013, see "Warm sessions
+and review forks"); their findings merge into one document and
 the executor fixes everything in one pass; the loop repeats until all four
 verdicts pass or `max_fix_iterations` is exhausted) → `sync-adr` → `pass-check`
 (reports `REVIEW OK: all verdicts PASS` or a `WARNING` listing the kinds that
@@ -354,8 +379,10 @@ general review (against `adr.md`/`deviation.md`) and readability "traps"
 (correct but misleading code that deserves a *why* comment — never a *what*
 description — or a rename/refactor) — now run in parallel (ADR-0009). Before
 the loop, `check_review.py pending` lists the kinds whose latest report is not
-PASS; a `fan-out` (`max_concurrency: 4`) runs one review per kind, each in a
-`--fork` of the warm planner session, writing its own numbered report
+PASS; a `fan-out` (`max_concurrency: 4`) runs one review per kind, each in its
+OWN per-kind fork of the warm planner session (ADR-0013: the first check forks
+the parent once and saves the fork id, the later checks continue the same
+fork), writing its own numbered report
 (`srp-review-N.md`, `bug-review-N.md`, `review-N.md`, `comment-review-N.md`)
 with the first-line verdict. The four latest reports are then merged
 deterministically into `review-report.md` (one section per kind, no synthesis)
@@ -364,9 +391,9 @@ iteration only the still-failing kinds are re-reviewed (re-review prompts diff
 the fixed code against the per-kind `*-snapshot.sha`), until every kind passes
 or `workflow.max_fix_iterations` is exhausted — the final `pass-check` then
 reports the verdicts (a `WARNING` never fails the run). The cursor backend has
-no fork primitive, so there each check mints a fresh chat instead (the warm-up
-step is skipped); this loss of warm context is documented in
-`run-agent-cursor.sh`.
+no fork primitive, so there each kind gets its own warm chat instead (minted
+with `create-chat` on the first check, resumed with `--resume` on the rest;
+the warm-up step is skipped); this is documented in `run-agent-cursor.sh`.
 
 The loop verdict checks the **latest** review file only — the installed
 `check_review.py` script (`~/.config/opencode/scripts/check_review.py`) picks

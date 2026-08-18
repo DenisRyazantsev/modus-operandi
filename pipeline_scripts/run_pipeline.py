@@ -39,17 +39,17 @@ statistics never change the exit code.
 Agent logs are no longer echoed (ADR-0011): instead each active process —
 a role, or a role+fork for the parallel review forks — shows one live
 status line with the cumulative token/cost sums from the agent-log events
-(ADR-0012: opencode `step_finish`, cursor result events with usage), and
+(ADR-0012/0013: opencode `step_finish`, cursor result events with usage), and
 while a step has no agent events yet a synthesized `[harness]` line with a
-spinner is shown, so the status is visible on every step from the moment
-it starts. The block is redrawn in place on a TTY; on a non-TTY one plain
-line per step change announces the step, agent usage events print one
-plain line each, and no heartbeat lines ever go into a log. The lines are
-fixed (kept as history) when a step completes; only lines appended during
-the current run are counted (pre-existing log files are baselined at
-startup). Step markers carry the progress N/M when the workflow file is
-readable. A step's final agent events accumulate before the step's "---
-step X (completed)" marker.
+0.25 s-cadence spinner is shown, so the status is visible on every step
+from the moment it starts. The block is redrawn in place on a TTY; on a
+non-TTY one plain line per step change announces the step, agent usage
+events print one plain line each, and no heartbeat lines ever go into a
+log. The lines are fixed (kept as history) when a step completes; only
+lines appended during the current run are counted (pre-existing log files
+are baselined at startup). Step markers carry the progress N/M when the
+workflow file is readable. A step's final agent events accumulate before
+the step's "--- step X (completed)" marker.
 
 Usage: run-pipeline.py <workflow-id-or-path> [extra specify args...]
   run-pipeline.py review-pipeline
@@ -100,6 +100,9 @@ from _run_pipeline_common import (
     fmt_duration,
     fmt_minutes,
     fmt_thousands,
+    is_engine_error,
+    is_engine_header,
+    is_engine_step_start,
     is_feedback_gate,
     is_gate_menu_opener,
     print_log_event,
@@ -163,6 +166,9 @@ __all__ = [
     "fmt_minutes",
     "fmt_thousands",
     "forward_terminal_input",
+    "is_engine_error",
+    "is_engine_header",
+    "is_engine_step_start",
     "is_feedback_gate",
     "is_gate_menu_opener",
     "load_config",
@@ -235,10 +241,16 @@ def _consume_output(
 ) -> str:
     """Read specify's stdout until EOF, echoing it timestamped and handling gates.
 
-    Echo of the menu lines themselves is unchanged: every line prints as-is.
-    Returns the run id parsed from specify's final "Run ID:" line ("" if the
-    line never appeared); the run id is also stored on the monitor so late
-    state reads can locate the run directory.
+    The echo is filtered to the wrapper's OWN format (ADR-0013): the
+    engine's step-start lines (`▸ ...`) and one-time headers
+    (`Running workflow:`/`Version:`/`Status:`/`Run ID:`) are not printed;
+    engine errors and diagnostics (`Error:`/`Workflow failed:`/`Warning:`)
+    are re-printed as `[hh:mm:ss] [harness] <line as-is>`; the interactive
+    gate menu and any unknown line echo unchanged (fail-open). The run id is
+    parsed BEFORE the filtering, so the resume message still works. Returns
+    the run id parsed from specify's final "Run ID:" line ("" if the line
+    never appeared); the run id is also stored on the monitor so late state
+    reads can locate the run directory.
     """
     run_id = ""
     assert proc.stdout is not None
@@ -246,15 +258,27 @@ def _consume_output(
         line = line.rstrip()
         if not line:
             continue
-        if is_gate_menu_opener(line):
-            _handle_gate_menu(monitor, state_dir, master_fd, forward_pause)
-        # The echo goes through the emitter: the live block is cleared
-        # before the line (and redrawn after, unless a gate menu is open).
-        monitor.emit_stdout(f"[{stamp()}] {line}")
+        # The run id must be parsed before the engine-line filtering: the
+        # "Run ID:" line is dropped from the echo (ADR-0013), but it feeds
+        # the resume message on failure.
         if not run_id:
             run_id = run_id_from_text(line)
             if run_id:
                 monitor.run_id = run_id
+        if is_gate_menu_opener(line):
+            _handle_gate_menu(monitor, state_dir, master_fd, forward_pause)
+        # The echo goes through the emitter: the live block is cleared
+        # before the line (and redrawn after, unless a gate menu is open).
+        if is_engine_step_start(line) or is_engine_header(line):
+            # Strictly our format (ADR-0013): engine progress and one-time
+            # headers are not echoed.
+            continue
+        if is_engine_error(line):
+            # Engine errors/diagnostics are not dropped: re-emitted in the
+            # wrapper's own [harness] format (ADR-0013).
+            monitor.emit_stdout(f"[{stamp()}] [harness] {line}")
+        else:
+            monitor.emit_stdout(f"[{stamp()}] {line}")
     return run_id
 
 

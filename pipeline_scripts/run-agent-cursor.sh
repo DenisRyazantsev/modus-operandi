@@ -7,15 +7,16 @@
 # writes back SESSION_ID, so run-agent.sh's final "SESSION:<id>" line works
 # for both backends. A change to the cursor backend touches only this file.
 #
-# Deviation from ADR-0009 (documented per the answers): cursor-agent has no
-# fork primitive — `opencode run --session <id> --fork` is opencode-only, so
-# a --fork invocation here cannot fork the warm chat. Each parallel check
-# therefore mints its OWN fresh chat via `agent create-chat` (FORK=1 makes
-# run_cursor behave like a fresh-chat run: the stored warm chat id is never
-# resumed and the minted chat id is never saved to the session store), so
-# four concurrent checks never resume/corrupt one shared warm chat. The warm
-# context is lost on cursor — unavoidable without a fork primitive, and the
-# review prompts already instruct each check to read scope.txt itself.
+# Warm chats are per-role and per review kind: the per-kind review chats
+# (ADR-0013) are minted with `create-chat` on the kind's first check and
+# resumed with `--resume <chatId>` on every later check, so the reviewer
+# keeps its past findings across the review-fix-loop iterations. The minted
+# id is saved to the per-kind session file (SESSIONS_FILE already points at
+# it), never to the per-role store — the warm parent chat id stays
+# authoritative and is never resumed or mutated. cursor-agent has no fork
+# primitive (`opencode run --session <id> --fork` is opencode-only), so the
+# per-kind chat IS the fork: a fresh chat that inherits the review context
+# only through the review prompts themselves.
 
 resolve_cursor_binary() {
   # The specific `cursor-agent` name is probed FIRST because it is
@@ -86,7 +87,17 @@ run_cursor_once() {
   # the invocation writes into a raw sidecar first and only the valid JSON
   # lines are copied into $LOG_FILE below — the .jsonl stays pure for
   # extract_session_id and the log tailer, while the full raw output stays
-  # inspectable in the sidecar.
+  # inspectable in the sidecar (the raw file is per-invocation and may be
+  # truncated).
+  #
+  # The valid JSON lines are APPENDED to $LOG_FILE, never written over it:
+  # the per-kind review logs are stable files reused by every
+  # review-fix-loop iteration (ADR-0013), so truncating on each call would
+  # erase the previous iterations' events and the end-of-run statistics
+  # (collect_cursor_usage sums every .jsonl of the task) would undercount
+  # all but the last iteration. Appending also keeps the live-line tailer's
+  # byte offsets monotonic, so events are never re-read into the
+  # accumulators.
   #
   # The agent runs in the BACKGROUND so its pid can be recorded (the stale-
   # process cleanup in manage_pid_file matches the recorded pid's name).
@@ -106,7 +117,7 @@ import sys
 
 src, dst = sys.argv[1], sys.argv[2]
 with open(src, encoding="utf-8", errors="replace") as fh, open(
-    dst, "w", encoding="utf-8"
+    dst, "a", encoding="utf-8"
 ) as out:
     for line in fh:
         if not line.strip():
@@ -139,8 +150,15 @@ run_cursor() {
   }
 
   FIRST=0
-  if [ -z "$SESSION_ID" ] || [ "${FORK:-0}" -eq 1 ]; then
+  if [ -z "$SESSION_ID" ]; then
     FIRST=1
+    # SESSION_ID is guaranteed empty here on a kind's FIRST check: with
+    # --review-fork, session_paths pointed SESSIONS_FILE at the per-kind
+    # file, so run-agent.sh's read_session never loads the warm parent id
+    # into SESSION_ID. The old ADR-0009 guard "a fork must never fall back
+    # to the stored warm chat" therefore became UNREACHABLE when the
+    # --fork flag was removed (ADR-0013), not lost: a failed create-chat
+    # below can never resume the warm parent chat.
     # Mint a fresh chat through `create-chat`: its id always comes from
     # Cursor. A synthesized id in --resume is silently accepted by cursor
     # and starts an EMPTY chat, losing the context - so never invent one.
@@ -149,15 +167,11 @@ run_cursor() {
     CHAT_ID="$( "$CURSOR_BIN" create-chat 2>/dev/null | extract_chat_id )" || CHAT_ID=""
     if [ -n "$CHAT_ID" ]; then
       SESSION_ID="$CHAT_ID"
-      # Fork chats are per-check ephemeral: never write them into the shared
-      # session store (the parent warm chat id must stay authoritative).
-      if [ "${FORK:-0}" -ne 1 ]; then
-        save_session "$SESSION_ID"
-      fi
-    elif [ "${FORK:-0}" -eq 1 ]; then
-      # A fork must never fall back to the stored warm chat: clearing the id
-      # makes run_cursor_once run without --resume (cursor mints its own).
-      SESSION_ID=""
+      # The fresh chat id is saved to the CURRENT store file: the per-role
+      # file for a warm chat, the per-kind file for a review chat (ADR-0013)
+      # — the review chat never touches the per-role store, so the warm
+      # parent id stays authoritative.
+      save_session "$SESSION_ID"
     fi
   fi
 
@@ -179,10 +193,10 @@ $PROMPT"
   fi
   if [ -z "$SESSION_ID" ]; then
     # Fallback: the id was not obtained from create-chat, so recover it from
-    # the JSON output (always a Cursor-minted id, never synthesized). Fork
-    # ids stay out of the session store, like the opencode fork ids.
+    # the JSON output (always a Cursor-minted id, never synthesized). The id
+    # is saved to the current store file (per-role or per-kind, ADR-0013).
     SESSION_ID="$(extract_session_id)"
-    if [ -n "$SESSION_ID" ] && [ "${FORK:-0}" -ne 1 ]; then
+    if [ -n "$SESSION_ID" ]; then
       save_session "$SESSION_ID"
     fi
   fi

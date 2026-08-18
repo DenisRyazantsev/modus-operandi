@@ -170,7 +170,7 @@ class LiveMonitor:
         """One final poll after specify exits: late step results may still land.
 
         The monitor thread has already stopped by now, so also drain the
-        agent logs once here — otherwise lines written between the last 0.5s
+        agent logs once here — otherwise lines written between the last 0.25s
         poll tick and process exit (e.g. the agent's final reply before a
         step completes) are never shown and stay only in the .jsonl files.
         The drawn live block is cleared afterwards so the final run
@@ -183,7 +183,10 @@ class LiveMonitor:
         try:
             while not self._stop.is_set():
                 self._poll_once()
-                time.sleep(0.5)
+                # A 0.25 s tick (ADR-0013): the spinner advances every
+                # 0.25 s, so the block must be redrawn at least that often —
+                # a slower tick would physically cap the animation at 2 fps.
+                time.sleep(0.25)
         finally:
             # The wrapper is stopping. An aborted/rejected run may leave
             # current_step_id on the gate, so the gate would never close on

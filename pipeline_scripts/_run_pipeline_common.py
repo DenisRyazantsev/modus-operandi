@@ -32,11 +32,12 @@ ROLE_LABEL_WIDTH = 8
 # editor path and the gate signals like a normal gate again.
 FEEDBACK_GATE_MARKER = "feedback-gate"
 
-# The live status line's spinner cadence (ADR-0012): the frame shifts at
-# most once per second while the monitor redraws the block every 0.5 s tick
-# — the line visibly "breathes" between model turns without the text after
-# the frame shifting. A fixed constant: no config key.
-HEARTBEAT_SECONDS = 1.0
+# The live status line's spinner cadence (ADR-0012, ADR-0013): the frame is
+# chosen from the elapsed time (rich-style time-based spinner), so it
+# advances every heartbeat while the monitor redraws the block every 0.25 s
+# tick — the line visibly "breathes" between model turns without the text
+# after the frame shifting. A fixed constant: no config key.
+HEARTBEAT_SECONDS = 0.25
 
 # Single-column spinner frames (braille, each exactly one terminal column
 # wide): the line is `[hh:mm:ss] [<role>] <frame> [<step> N/M] ...` — the
@@ -81,6 +82,61 @@ def is_gate_menu_opener(line: str) -> bool:
     non-TTY runs never produce this line, so no suppression happens there.
     """
     return line.strip().startswith(GATE_MENU_PREFIX)
+
+
+# specify-cli v0.16.x prints a `  ▸ [<step-id>] <type> ...` line at the start
+# of every step (engine.on_step_start) and one-time headers at the beginning
+# (`Running workflow:`/`Version:`) and end (`Status:`/`Run ID:`) of a run.
+# The wrapper's own markers and live lines already show all of that, so under
+# the strict "our format only" rule (ADR-0013) these lines are NOT echoed.
+ENGINE_STEP_START_PREFIX = "▸ "
+ENGINE_HEADER_PREFIXES = (
+    "Running workflow:",
+    "Version:",
+    "Status:",
+    "Run ID:",
+)
+# Engine errors and diagnostics are NOT dropped — they are re-emitted in the
+# wrapper's own format, `[hh:mm:ss] [harness] <line as-is>` (ADR-0013), so
+# nothing the user must see is lost.
+ENGINE_ERROR_PREFIXES = (
+    "Error:",
+    "Workflow failed:",
+    "Warning:",
+)
+
+
+def is_engine_step_start(line: str) -> bool:
+    """True when line is specify's step-start line (`  ▸ [<step-id>] ...`).
+
+    Pure string predicate (ADR-0013): the line announces a step that the
+    wrapper's own `--- step ... (completed) [N/M]` markers and live status
+    lines already show, so it is filtered out of the echo.
+    """
+    return line.strip().startswith(ENGINE_STEP_START_PREFIX)
+
+
+def is_engine_header(line: str) -> bool:
+    """True when line is one of specify's one-time run header lines.
+
+    `Running workflow:`/`Version:` at the start, `Status:`/`Run ID:` at the
+    end of a run. The run id is parsed BEFORE this filtering
+    (run_id_from_text), so dropping the line loses nothing — the resume
+    message still works (ADR-0013). Pure string predicate.
+    """
+    stripped = line.strip()
+    return any(stripped.startswith(prefix) for prefix in ENGINE_HEADER_PREFIXES)
+
+
+def is_engine_error(line: str) -> bool:
+    """True when line is an engine error or diagnostic line.
+
+    `Error:`/`Workflow failed:`/`Warning:`. Such lines are not dropped: they
+    are re-printed in the wrapper's own `[hh:mm:ss] [harness]` format
+    (ADR-0013). Pure string predicate.
+    """
+    stripped = line.strip()
+    return any(stripped.startswith(prefix) for prefix in ENGINE_ERROR_PREFIXES)
 
 
 def is_feedback_gate(step_id: str | None) -> bool:

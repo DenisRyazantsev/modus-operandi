@@ -8,24 +8,59 @@
 # touches only this file.
 
 session_paths() {
+  # Per-role session record base name: sessions-<task-id>.json, or
+  # sessions.json without a task id.
   if [ -n "$TASK_ID" ]; then
-    SESSIONS_FILE="$STATE_DIR/sessions-$TASK_ID.json"
+    BASE="sessions-$TASK_ID"
   else
-    SESSIONS_FILE="$STATE_DIR/sessions.json"
+    BASE="sessions"
   fi
-  PID_FILE="$STATE_DIR/pids/$(basename "$SESSIONS_FILE").$ROLE.pid"
+  ROLE_SESSIONS_FILE="$STATE_DIR/$BASE.json"
+  SESSIONS_FILE="$ROLE_SESSIONS_FILE"
+  if [ -n "${REVIEW_FORK:-}" ]; then
+    # ADR-0013: a per-kind review fork session. One file per kind
+    # (srp|bugs|review|comment): the four parallel first-time checks never
+    # race on one file (session_store reads/writes a JSON file whole).
+    SESSIONS_FILE="$STATE_DIR/$BASE-review-$REVIEW_FORK.json"
+  fi
+  PID_FILE="$STATE_DIR/pids/$(basename "$SESSIONS_FILE" .json).$ROLE.pid"
   LOG_DIR="$STATE_DIR/logs"
   LOG_FILE="$LOG_DIR/$(basename "$SESSIONS_FILE" .json)-$ROLE.jsonl"
+  if [ -n "${REVIEW_FORK:-}" ]; then
+    # Stable per-kind log/pid names (ADR-0013): the tailer labels the live
+    # line [planner#<kind>] and the token sums continue between the
+    # review-fix-loop iterations, because the same file is reused.
+    #
+    # The -fork-<kind> suffix is a CROSS-FILE CONTRACT: agent_log_tailer.py
+    # matches it with `-fork-([A-Za-z0-9_-]+)$` and keys the live-line token
+    # accumulators on it (and collect_cursor_usage reads these files for the
+    # end-of-run statistics). The names are therefore recomputed from $BASE
+    # on purpose, NOT derived from SESSIONS_FILE: the session file's
+    # `.json`-scoped shape (sessions-<task>-review-<kind>.json) would lose
+    # the -fork- marker, collapsing the [planner#<kind>] label and merging
+    # the kind's token sums into the parent role accumulator. The first
+    # (role-shaped) PID_FILE/LOG_FILE assignments above are intentionally
+    # kept for the non-fork path; only this branch overrides them.
+    PID_FILE="$STATE_DIR/pids/$BASE-$ROLE-fork-$REVIEW_FORK.pid"
+    LOG_FILE="$LOG_DIR/$BASE-$ROLE-fork-$REVIEW_FORK.jsonl"
+  fi
 }
 
 read_session() {
+  read_session_from "$SESSIONS_FILE"
+}
+
+read_session_from() {
+  # Read the session id for ROLE from a given store file. Used to read the
+  # parent warm session from the per-role store while SESSIONS_FILE points
+  # at a per-kind review file (ADR-0013).
   python3 -c 'import json,sys
 p, r = sys.argv[1], sys.argv[2]
 try:
     d = json.load(open(p))
     sys.stdout.write(d.get(r, ""))
 except Exception:
-    pass' "$SESSIONS_FILE" "$ROLE"
+    pass' "$1" "$ROLE"
 }
 
 save_session() {
@@ -46,11 +81,15 @@ extract_session_id() {
   # piping sed into head: on a large log sed is still writing matches when
   # head has already exited, gets SIGPIPE, and with set -o pipefail the
   # whole script dies with exit 141. The regex covers opencode's "sessionID"
-  # and cursor's "session_id" JSON fields alike.
+  # and cursor's "session_id" JSON fields alike. The LAST match is taken:
+  # cursor logs accumulate across calls (run-agent-cursor.sh appends), so
+  # the newest event carries the id of the CURRENT call — the first match
+  # would resurrect an older chat's id after a bare-run re-mint. Opencode
+  # logs are truncated per call, where first and last match coincide.
   python3 -c 'import re, sys
-m = re.search(rb"\"session[_]?[iI][dD]\":\"([^\"]*)\"", open(sys.argv[1], "rb").read())
-if m:
-    sys.stdout.write(m.group(1).decode())' "$LOG_FILE"
+ms = re.findall(rb"\"session[_]?[iI][dD]\":\"([^\"]*)\"", open(sys.argv[1], "rb").read())
+if ms:
+    sys.stdout.write(ms[-1].decode())' "$LOG_FILE"
 }
 
 manage_pid_file() {
@@ -91,11 +130,8 @@ record_agent_pid() {
   # killed shell: no EXIT trap here, so when the workflow timeout kills the
   # step shell but not the agent, the next step's manage_pid_file finds the
   # orphan pid and kills it. A dead pid is harmless (kill -0 fails, the file
-  # is replaced). Fork pid files carry a per-invocation -fork-<pid> name that
-  # no later step can target, so they ARE removed on exit to keep the pids
-  # dir clean.
+  # is replaced). This applies to the per-role files and to the per-kind
+  # review fork files alike (ADR-0013): both have stable names, so a later
+  # step CAN target them for the stale-kill.
   echo "$1" > "$PID_FILE"
-  if [ "${FORK:-0}" -eq 1 ]; then
-    trap 'rm -f "$PID_FILE"' EXIT
-  fi
 }

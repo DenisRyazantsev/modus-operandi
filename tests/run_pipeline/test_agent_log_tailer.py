@@ -131,12 +131,13 @@ class AgentLogTailerTest(unittest.TestCase):
         self.assertEqual(events[0][1], "")
 
     def test_fork_log_files_carry_role_and_fork_id(self):
-        # Parallel review forks write per-invocation logs
-        # (sessions-<task>-<role>-fork-<pid>.jsonl, ADR-0009): the -fork-<pid>
-        # suffix must not leak into the role label, and the fork id must be
-        # carried for the live status lines' separate accumulators (ADR-0011).
+        # The review kinds write stable per-kind logs
+        # (sessions-<task>-<role>-fork-<kind>.jsonl, ADR-0013): the
+        # -fork-<kind> suffix must not leak into the role label, and the
+        # fork id (the kind) must be carried for the live status lines'
+        # separate accumulators labeled [planner#<kind>].
         tailer = self.mod.AgentLogTailer(self.dir)
-        log = self.dir / "sessions-parallel-review-20260816-planner-fork-4242.jsonl"
+        log = self.dir / "sessions-parallel-review-20260816-planner-fork-srp.jsonl"
         log.write_text(
             '{"type": "step_finish", "part": {"tokens": {"input": 1}}}\n',
             encoding="utf-8",
@@ -145,9 +146,21 @@ class AgentLogTailerTest(unittest.TestCase):
         self.assertEqual(len(events), 1)
         role, fork_id, text, event = events[0]
         self.assertEqual(role, "planner")
-        self.assertEqual(fork_id, "4242")
+        self.assertEqual(fork_id, "srp")
         self.assertEqual(text, "")
         self.assertEqual(event["type"], "step_finish")
+
+    def test_fork_log_files_accept_kinds_with_digits_and_dashes(self):
+        # The per-kind regex is ^[A-Za-z0-9_-]+$: a task-id-scoped kind
+        # suffix (e.g. a future loop id) must still parse.
+        tailer = self.mod.AgentLogTailer(self.dir)
+        log = self.dir / "sessions-task-42-planner-fork-bugs-2.jsonl"
+        log.write_text('{"type": "step_finish", "part": {}}\n', encoding="utf-8")
+        events = tailer.tail()
+        self.assertEqual(len(events), 1)
+        role, fork_id, text, event = events[0]
+        self.assertEqual(role, "planner")
+        self.assertEqual(fork_id, "bugs-2")
 
     def test_non_json_line_yields_none_event(self):
         # A non-JSON line still yields a quadruple (the raw text is

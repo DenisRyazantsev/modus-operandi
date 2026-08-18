@@ -264,9 +264,9 @@ class LiveLinesTest(unittest.TestCase):
 
 
 class SpinnerTest(unittest.TestCase):
-    """The spinner (ADR-0012): one-column frames shifting at most once per
-    HEARTBEAT_SECONDS (1.0 s), placed between the role label and the step
-    part."""
+    """The spinner (ADR-0012/0013): one-column frames, chosen from the
+    elapsed time (rich-style time-based cadence of 0.25 s), placed between
+    the role label and the step part."""
 
     def test_frames_are_single_column_cells(self):
         for frame in sys.modules["live_lines"].SPINNER_FRAMES:
@@ -290,27 +290,45 @@ class SpinnerTest(unittest.TestCase):
         self.assertIsNotNone(m)
         self.assertIn(m.group(1), sys.modules["live_lines"].SPINNER_FRAMES)
 
-    def test_frame_shifts_at_most_once_per_heartbeat(self):
-        # ADR-0012: the frame shifts at most once per HEARTBEAT_SECONDS
-        # (1.0 s), so the line "breathes" between model turns without the
-        # text after the frame moving. The first monotonic() value is
-        # consumed by __init__ as the last-shift timestamp.
+    def test_frame_advances_every_heartbeat_by_elapsed_time(self):
+        # ADR-0013: the frame is a function of the elapsed time since
+        # LiveLines was created (the rich time-based principle), so it
+        # advances every HEARTBEAT_SECONDS (0.25 s) and a skipped monitor
+        # tick advances several frames at once — the 4 fps cadence never
+        # drifts. The first monotonic() value is consumed by __init__ as
+        # the time origin.
         mod = load_run_pipeline()
         spinner = sys.modules["live_lines"].SPINNER_FRAMES
         with mock.patch.object(
             sys.modules["live_lines"].time,
             "monotonic",
-            side_effect=[10.0, 10.0, 10.9, 11.0],
+            side_effect=[10.0, 10.0, 10.2, 10.25, 10.5, 10.75, 11.0],
         ):
             live = mod.LiveLines(tty=True)
             live.set_step("study", 3)
             shown = []
-            for _ in range(3):
+            for _ in range(6):
                 m = re.search(r"\[harness\] (.) \[study", live.block()[0])
                 self.assertIsNotNone(m)
                 shown.append(spinner.index(m.group(1)))
-        # < 1 s: same frame; the 1 s boundary advances exactly one.
-        self.assertEqual(shown, [0, 0, 1])
+        # < 0.25 s: same frame; each 0.25 s boundary advances exactly one.
+        self.assertEqual(shown, [0, 0, 1, 2, 3, 4])
+
+    def test_skipped_tick_advances_several_frames_at_once(self):
+        # A missed monitor tick must not lose the cadence: after 1 s without
+        # a redraw the next frame is four beats ahead.
+        mod = load_run_pipeline()
+        spinner = sys.modules["live_lines"].SPINNER_FRAMES
+        with mock.patch.object(
+            sys.modules["live_lines"].time,
+            "monotonic",
+            side_effect=[10.0, 11.0],
+        ):
+            live = mod.LiveLines(tty=True)
+            live.set_step("study", 3)
+            m = re.search(r"\[harness\] (.) \[study", live.block()[0])
+            self.assertIsNotNone(m)
+            self.assertEqual(m.group(1), spinner[4])
 
     def test_frame_wraps_after_a_full_cycle(self):
         mod = load_run_pipeline()
@@ -319,18 +337,13 @@ class SpinnerTest(unittest.TestCase):
         with mock.patch.object(
             sys.modules["live_lines"].time,
             "monotonic",
-            side_effect=[10.0] + [10.0 + heartbeat * i for i in range(1, len(spinner) + 1)],
+            side_effect=[10.0, 10.0 + heartbeat * len(spinner)],
         ):
             live = mod.LiveLines(tty=True)
             live.set_step("study", 3)
-            shown = []
-            for _ in range(len(spinner)):
-                m = re.search(r"\[harness\] (.) \[study", live.block()[0])
-                self.assertIsNotNone(m)
-                shown.append(spinner.index(m.group(1)))
-        # One advance per heartbeat boundary: after a full cycle the frame
-        # wraps to the first.
-        self.assertEqual(shown, list(range(1, len(spinner))) + [0])
+            m = re.search(r"\[harness\] (.) \[study", live.block()[0])
+            self.assertIsNotNone(m)
+            self.assertEqual(m.group(1), spinner[0])
 
 
 class HarnessLineTest(unittest.TestCase):

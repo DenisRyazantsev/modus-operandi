@@ -216,7 +216,7 @@ class WorkflowStructureTest(InstallerTestCase):
         review_check = (self.home / ".config/opencode/scripts/review-check.sh").read_text(
             encoding="utf-8"
         )
-        self.assertIn('run-agent.sh" planner --fork --prompt-file', review_check)
+        self.assertIn('run-agent.sh" planner --review-fork', review_check)
         # The prompt namespace is parametrized: the yaml call passes "review",
         # the script picks review vs rereview from the per-kind snapshot.
         for prompt in (
@@ -605,7 +605,7 @@ class WorkflowStructureTest(InstallerTestCase):
         review_check = (self.home / ".config/opencode/scripts/review-check.sh").read_text(
             encoding="utf-8"
         )
-        self.assertIn('run-agent.sh" planner --fork --prompt-file', review_check)
+        self.assertIn('run-agent.sh" planner --review-fork', review_check)
         # The prompt namespace is parametrized: the yaml call passes "adr".
         for prompt in (
             '"$PROMPT_NS/srp-review.md"',

@@ -49,7 +49,24 @@ printf '%s\\n' '{"type":"result","session_id":"chat-agent-789","result":"ok"}'
 
 OPENCODE_SCRIPT = """#!/usr/bin/env bash
 printf '%s\\0' "$@" >> "$FAKE_OPENCODE_LOG"
-printf '%s\\n' '{"type":"init","sessionID":"sess-abc"}'
+fork=0
+session=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --fork) fork=1 ;;
+    --session) session="$2"; shift ;;
+  esac
+  shift
+done
+if [ "$fork" = "1" ]; then
+  printf '%s\\n' '{"type":"init","sessionID":"sess-fork-1"}'
+elif [ "$session" = "sess-gone" ]; then
+  # A continued session that no longer exists (opencode auto-compact/cleanup).
+  echo "Session not found"
+  exit 1
+else
+  printf '%s\\n' '{"type":"init","sessionID":"sess-abc"}'
+fi
 """
 
 
@@ -188,17 +205,6 @@ class RunAgentTest(unittest.TestCase):
         self.assertEqual(run[-1], "continue please")
         self.assertIn("SESSION:chat-old-456", result.stdout)
 
-    def test_cursor_reset_mints_a_new_chat(self):
-        _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_SCRIPT)
-        self._seed_session("planner", "chat-old-456")
-        result = self._run("planner", "start over", "--reset", SKLC_BACKEND="cursor")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        invs = read_invocations(self.cursor_log)
-        self.assertEqual(invs[0], ["create-chat"])
-        self.assertEqual(invs[1][9], "--resume")
-        self.assertEqual(invs[1][10], "chat-fresh-123")
-        self.assertEqual(self._sessions().get("planner"), "chat-fresh-123")
-
     def test_cursor_model_selected_by_role(self):
         _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_SCRIPT)
         self._run("planner", "plan something", SKLC_BACKEND="cursor")
@@ -267,12 +273,12 @@ class RunAgentTest(unittest.TestCase):
         )
 
 
-    # -- fork (ADR-0009): isolated sessions for the parallel checks ---------
+    # -- review fork (ADR-0013): one per-kind session per review check ------
 
-    def test_opencode_fork_forks_warm_session_and_keeps_parent_id(self):
+    def test_review_fork_first_call_forks_parent_and_saves_kind_id(self):
         _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
         self._seed_session("planner", "warm-999")
-        result = self._run("planner", "review now", "--fork")
+        result = self._run("planner", "review now", "--review-fork", "srp")
         self.assertEqual(result.returncode, 0, result.stderr)
         invs = read_invocations(self.opencode_log)
         self.assertEqual(
@@ -280,29 +286,89 @@ class RunAgentTest(unittest.TestCase):
             ["run", "--session", "warm-999", "--fork", "--agent", "planner",
              "--auto", "--format", "json", "review now"],
         )
-        # The fork's new session id is NOT written into the store: the parent
-        # stays authoritative for the next fork (ADR-0009).
+        # The fork's id is saved to the per-kind file, never to the per-role
+        # store: the parent warm session stays authoritative.
+        kind_file = self.state / "sessions-review-srp.json"
+        self.assertEqual(
+            json.loads(kind_file.read_text(encoding="utf-8"))["planner"],
+            "sess-fork-1",
+        )
         self.assertEqual(self._sessions().get("planner"), "warm-999")
-        # The fork wrote its own per-invocation log file, so four concurrent
-        # forks never truncate one shared role log over each other.
-        fork_logs = list((self.state / "logs").glob("*-fork-*.jsonl"))
-        self.assertEqual(len(fork_logs), 1)
+        self.assertIn("SESSION:sess-fork-1", result.stdout)
+        # Stable per-kind log/pid files: the tailer labels the live line
+        # [planner#srp] and the token sums continue between iterations.
+        self.assertTrue(
+            (self.state / "logs" / "sessions-planner-fork-srp.jsonl").is_file()
+        )
+        self.assertTrue(
+            (self.state / "pids" / "sessions-planner-fork-srp.pid").is_file()
+        )
 
-    def test_opencode_fork_without_warm_session_errors(self):
+    def test_review_fork_second_call_continues_without_fork(self):
         _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
-        result = self._run("planner", "review now", "--fork")
+        self._seed_session("planner", "warm-999")
+        kind_file = self.state / "sessions-review-srp.json"
+        kind_file.write_text(json.dumps({"planner": "sess-fork-1"}), encoding="utf-8")
+        result = self._run("planner", "review again", "--review-fork", "srp")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        invs = read_invocations(self.opencode_log)
+        self.assertEqual(
+            invs[0],
+            ["run", "--session", "sess-fork-1", "--agent", "planner",
+             "--auto", "--format", "json", "review again"],
+        )
+        # The id is not re-saved (it did not change); the parent store is
+        # untouched.
+        self.assertEqual(
+            json.loads(kind_file.read_text(encoding="utf-8"))["planner"],
+            "sess-fork-1",
+        )
+        self.assertEqual(self._sessions().get("planner"), "warm-999")
+        self.assertIn("SESSION:sess-fork-1", result.stdout)
+
+    def test_review_fork_vanished_session_clears_id_and_reforks_parent(self):
+        # A continue that fails with "Session not found" (opencode
+        # auto-compact/cleanup) drops the per-kind id and forks the parent
+        # again (ADR-0013).
+        _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
+        self._seed_session("planner", "warm-999")
+        kind_file = self.state / "sessions-review-srp.json"
+        kind_file.write_text(json.dumps({"planner": "sess-gone"}), encoding="utf-8")
+        result = self._run("planner", "review again", "--review-fork", "srp")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        invs = read_invocations(self.opencode_log)
+        self.assertEqual(
+            invs[0],
+            ["run", "--session", "sess-gone", "--agent", "planner",
+             "--auto", "--format", "json", "review again"],
+        )
+        self.assertEqual(
+            invs[1],
+            ["run", "--session", "warm-999", "--fork", "--agent", "planner",
+             "--auto", "--format", "json", "review again"],
+        )
+        self.assertEqual(
+            json.loads(kind_file.read_text(encoding="utf-8"))["planner"],
+            "sess-fork-1",
+        )
+        self.assertIn("SESSION:sess-fork-1", result.stdout)
+
+    def test_review_fork_without_warm_session_errors(self):
+        _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
+        result = self._run("planner", "review now", "--review-fork", "srp")
         self.assertEqual(result.returncode, 2)
         self.assertIn("no warm session to fork", result.stderr)
 
-    def test_opencode_fork_with_prompt_file_parses_flags_in_any_order(self):
-        # The parallel fan-out invokes `planner --fork --prompt-file <path>`
-        # (ADR-0009): --prompt-file must be recognized at any position, not
-        # only as the second argument, or the leftover flag hits usage().
+    def test_review_fork_with_prompt_file_parses_flags_in_any_order(self):
+        # The parallel fan-out invokes `planner --review-fork <kind>
+        # --prompt-file <path>` (ADR-0013): --prompt-file must be recognized
+        # at any position, not only as the second argument, or the leftover
+        # flag hits usage().
         _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
         self._seed_session("planner", "warm-999")
         prompt = self.tmp / "review.md"
         prompt.write_text("review now", encoding="utf-8")
-        result = self._run("planner", "--fork", "--prompt-file", str(prompt))
+        result = self._run("planner", "--review-fork", "srp", "--prompt-file", str(prompt))
         self.assertEqual(result.returncode, 0, result.stderr)
         invs = read_invocations(self.opencode_log)
         self.assertEqual(
@@ -310,36 +376,126 @@ class RunAgentTest(unittest.TestCase):
             ["run", "--session", "warm-999", "--fork", "--agent", "planner",
              "--auto", "--format", "json", "review now"],
         )
-        self.assertEqual(self._sessions().get("planner"), "warm-999")
+        kind_file = self.state / "sessions-review-srp.json"
+        self.assertEqual(
+            json.loads(kind_file.read_text(encoding="utf-8"))["planner"],
+            "sess-fork-1",
+        )
 
-    def test_cursor_fork_mints_fresh_chat_without_saving(self):
-        # cursor-agent has no fork primitive (ADR-0009 deviation, documented
-        # in run-agent-cursor.sh): a fork invocation mints a FRESH chat and
-        # never resumes the stored warm chat, so four concurrent checks
-        # cannot corrupt a shared chat.
+    def test_review_fork_invalid_kind_errors(self):
+        _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
+        result = self._run("planner", "review now", "--review-fork", "srp bad!")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("invalid --review-fork", result.stderr)
+
+    def test_review_fork_files_scoped_by_task_id(self):
+        _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
+        # The parent warm session is task-scoped too: sessions-task-42.json.
+        (self.state / "sessions-task-42.json").write_text(
+            json.dumps({"planner": "warm-999"}), encoding="utf-8"
+        )
+        result = self._run(
+            "planner", "review now", "--review-fork", "bugs", "--task", "task-42"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        kind_file = self.state / "sessions-task-42-review-bugs.json"
+        self.assertEqual(
+            json.loads(kind_file.read_text(encoding="utf-8"))["planner"],
+            "sess-fork-1",
+        )
+        self.assertTrue(
+            (self.state / "logs" / "sessions-task-42-planner-fork-bugs.jsonl").is_file()
+        )
+
+    def test_cursor_review_fork_first_call_mints_and_saves_kind_chat(self):
+        # cursor-agent has no fork primitive (ADR-0013, documented in
+        # run-agent-cursor.sh): the per-kind chat IS the fork. The first
+        # check of a kind mints a fresh chat, saves its id to the per-kind
+        # file (never to the shared store) and prefixes the role body.
         _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_SCRIPT)
         self._seed_session("planner", "warm-456")
-        result = self._run("planner", "review now", "--fork", SKLC_BACKEND="cursor")
+        result = self._run(
+            "planner", "review now", "--review-fork", "srp", SKLC_BACKEND="cursor"
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         invs = read_invocations(self.cursor_log)
         self.assertEqual(invs[0], ["create-chat"])
         run = invs[1]
         self.assertEqual(run[9], "--resume")
-        self.assertEqual(run[10], "chat-fresh-123")  # the FRESH chat
+        self.assertEqual(run[10], "chat-fresh-123")  # the per-kind chat
         self.assertTrue(run[-1].startswith(PLANNER_BODY))
-        # The fresh chat id is ephemeral: the warm id stays in the store.
+        # The per-kind chat id lands in the per-kind file; the warm parent
+        # chat id stays in the shared store, untouched.
+        kind_file = self.state / "sessions-review-srp.json"
+        self.assertEqual(
+            json.loads(kind_file.read_text(encoding="utf-8"))["planner"],
+            "chat-fresh-123",
+        )
         self.assertEqual(self._sessions().get("planner"), "warm-456")
+        self.assertIn("SESSION:chat-fresh-123", result.stdout)
 
-    def test_cursor_fork_with_failed_create_chat_never_resumes_warm_chat(self):
+    def test_cursor_review_fork_resumes_saved_kind_chat(self):
+        _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_SCRIPT)
+        self._seed_session("planner", "warm-456")
+        kind_file = self.state / "sessions-review-srp.json"
+        kind_file.write_text(json.dumps({"planner": "chat-srp-1"}), encoding="utf-8")
+        result = self._run(
+            "planner", "review again", "--review-fork", "srp", SKLC_BACKEND="cursor"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        invs = read_invocations(self.cursor_log)
+        self.assertEqual([i[0] for i in invs], ["-p"])  # no create-chat
+        run = invs[0]
+        self.assertEqual(run[9], "--resume")
+        self.assertEqual(run[10], "chat-srp-1")
+        # Resumed chats are hot: the bare prompt, no role body.
+        self.assertEqual(run[-1], "review again")
+        self.assertEqual(self._sessions().get("planner"), "warm-456")
+        self.assertIn("SESSION:chat-srp-1", result.stdout)
+
+    def test_cursor_review_fork_recovers_kind_chat_when_create_chat_fails(self):
         _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_NO_CREATE_SCRIPT)
         self._seed_session("planner", "warm-456")
-        result = self._run("planner", "review now", "--fork", SKLC_BACKEND="cursor")
+        result = self._run(
+            "planner", "review now", "--review-fork", "srp", SKLC_BACKEND="cursor"
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         invs = read_invocations(self.cursor_log)
         self.assertEqual(invs[0], ["create-chat"])  # attempted, failed
         run = invs[1]
-        self.assertNotIn("--resume", run)  # bare run: cursor mints its own
+        self.assertNotIn("--resume", run)  # no id: bare run, cursor mints
+        self.assertTrue(run[-1].startswith(PLANNER_BODY))
+        kind_file = self.state / "sessions-review-srp.json"
+        self.assertEqual(
+            json.loads(kind_file.read_text(encoding="utf-8"))["planner"],
+            "chat-from-json",
+        )
         self.assertEqual(self._sessions().get("planner"), "warm-456")
+        self.assertIn("SESSION:chat-from-json", result.stdout)
+
+    def test_cursor_review_fork_log_accumulates_across_iterations(self):
+        # Regression (ADR-0013 bug fix): the per-kind cursor log is a stable
+        # file and must ACCUMULATE across the review-fix-loop iterations —
+        # the end-of-run statistics (collect_cursor_usage) sums every event
+        # of the file, so truncating on each call would drop all but the
+        # last iteration's tokens.
+        _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_SCRIPT)
+        self._seed_session("planner", "warm-456")
+        first = self._run(
+            "planner", "review now", "--review-fork", "srp", SKLC_BACKEND="cursor"
+        )
+        self.assertEqual(first.returncode, 0, first.stderr)
+        second = self._run(
+            "planner", "review again", "--review-fork", "srp", SKLC_BACKEND="cursor"
+        )
+        self.assertEqual(second.returncode, 0, second.stderr)
+        log = self.state / "logs" / "sessions-planner-fork-srp.jsonl"
+        self.assertTrue(log.is_file())
+        events = [
+            line for line in log.read_text(encoding="utf-8").splitlines() if line.strip()
+        ]
+        # One result event per invocation, both preserved.
+        self.assertEqual(len(events), 2)
 
 
 if __name__ == "__main__":

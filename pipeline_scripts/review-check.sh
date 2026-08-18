@@ -5,7 +5,9 @@
 # calls this script once per pending kind. It dispatches the kind to its
 # report prefix and prompt files, computes the next report number, exports
 # STATE_DIR/LATEST/N(/SNAP) for the @TOKEN@ prompt substitution and runs the
-# check in a FORK of the warm planner session (ADR-0009).
+# check in the per-kind fork of the warm planner session (ADR-0013: the first
+# check of a kind forks the warm session, every later check continues the
+# same fork).
 #
 # Usage: review-check.sh <state_dir> <task_id> <item> <prompt-ns>
 #
@@ -57,9 +59,9 @@ if [ "$PROMPT_NS" = "review" ]; then
   snapfile="$STATE_DIR/tasks/current/$ITEM-snapshot.sha"
   if [ -s "$snapfile" ]; then
     export SNAP="$(cat "$snapfile")"
-    "$SCRIPT_DIR/run-agent.sh" planner --fork --prompt-file "$PROMPTS_DIR/$REREVIEW"
+    "$SCRIPT_DIR/run-agent.sh" planner --review-fork "$ITEM" --prompt-file "$PROMPTS_DIR/$REREVIEW"
   else
-    "$SCRIPT_DIR/run-agent.sh" planner --fork --prompt-file "$PROMPTS_DIR/$PROMPT"
+    "$SCRIPT_DIR/run-agent.sh" planner --review-fork "$ITEM" --prompt-file "$PROMPTS_DIR/$PROMPT"
   fi
   # Snapshot the repository after the check: the next iteration's re-review
   # diffs the fixed code against it (untracked files are excluded - the
@@ -68,5 +70,5 @@ if [ "$PROMPT_NS" = "review" ]; then
   [ -n "$snap" ] || snap=HEAD
   printf '%s' "$snap" > "$snapfile"
 else
-  "$SCRIPT_DIR/run-agent.sh" planner --fork --prompt-file "$PROMPTS_DIR/$PROMPT"
+  "$SCRIPT_DIR/run-agent.sh" planner --review-fork "$ITEM" --prompt-file "$PROMPTS_DIR/$PROMPT"
 fi

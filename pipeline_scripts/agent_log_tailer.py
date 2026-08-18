@@ -48,13 +48,14 @@ class AgentLogTailer:
             lines, _ = self._read_appended(path)
             if not lines:
                 continue
-            # Parallel review forks write per-invocation log files
-            # (sessions-<task>-<role>-fork-<pid>.jsonl, see run-agent.sh):
-            # the -fork-<pid> suffix is stripped for the role and kept as
-            # the fork id.
-            fork_m = re.search(r"-fork-(\d+)$", path.stem)
+            # The review kinds write stable per-kind log files
+            # (sessions-<task>-<role>-fork-<kind>.jsonl, see run-agent.sh,
+            # ADR-0013): the -fork-<kind> suffix is stripped for the role
+            # and kept as the fork id (the kind), so the live status lines
+            # carry separate accumulators labeled [planner#<kind>].
+            fork_m = re.search(r"-fork-([A-Za-z0-9_-]+)$", path.stem)
             fork_id = fork_m.group(1) if fork_m else ""
-            stem = re.sub(r"-fork-\d+$", "", path.stem)
+            stem = re.sub(r"-fork-[A-Za-z0-9_-]+$", "", path.stem)
             role = stem.rsplit("-", 1)[-1]
             for line in lines:
                 event = None

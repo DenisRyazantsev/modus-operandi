@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # run-agent.sh - session glue for the adr-pipeline workflow.
 #
-# Usage: run-agent.sh <role> "<prompt>" [--task <task-id>] [--reset] [--fork]
-#        run-agent.sh <role> --prompt-file <path> [--task <task-id>] [--reset] [--fork]
+# Usage: run-agent.sh <role> "<prompt>" [--task <task-id>] [--review-fork <kind>]
+#        run-agent.sh <role> --prompt-file <path> [--task <task-id>] [--review-fork <kind>]
 #
 # Keeps one warm agent session per role (stored in <state_dir>/sessions.json)
 # and resumes it between workflow steps, so the agent does not re-read the
@@ -13,16 +13,23 @@
 #   cursor    -> `cursor-agent|agent -p --output-format json --force --trust
 #                --model <role-model> [--resume <chatId>] ...`
 #
-#   --task <id>   scopes the session record (informational, kept for future use)
-#   --reset       drop the stored session for the role and start a fresh one
-#   --fork        run in an ISOLATED fork of the warm session (ADR-0009): the
-#                 prompt executes against a fork that inherits the warm context
-#                 but never touches the parent. The fork's id is NOT written to
-#                 the session store — the parent id is kept for the next fork.
-#                 Backend-specific isolation: opencode forks the warm session
-#                 (`opencode run --session <id> --fork`); cursor has no fork
-#                 primitive, so each fork invocation mints a fresh chat instead
-#                 (see run-agent-cursor.sh).
+#   --task <id>         scopes the session record (informational, kept for
+#                       future use)
+#   --review-fork <kind> run the prompt in an ISOLATED per-kind fork of the
+#                       warm session (ADR-0013, replaces the ADR-0009 --fork):
+#                       the FIRST call of a kind forks the warm session and
+#                       saves the fork's id in
+#                       <state_dir>/sessions-<task-id>-review-<kind>.json;
+#                       every later call of the same kind continues that same
+#                       fork (`opencode run --session <id>` WITHOUT --fork;
+#                       cursor: `--resume <chatId>`), so the reviewer keeps
+#                       its past findings across the review-fix-loop
+#                       iterations. One fork per review kind
+#                       (srp|bugs|review|comment) lives through the whole
+#                       loop; the parent warm session is never mutated. If
+#                       the saved fork session vanished (opencode
+#                       auto-compact/cleanup, "Session not found"), the id is
+#                       dropped and the parent is forked again.
 #
 # When --task is omitted, the id is taken from the <state_dir>/tasks/current
 # symlink that the workflow's generate-task-id step maintains.
@@ -49,8 +56,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 usage() {
-  echo "usage: $0 <role> \"<prompt>\" [--task <task-id>] [--reset] [--fork]" >&2
-  echo "       $0 <role> --prompt-file <path> [--task <task-id>] [--reset] [--fork]" >&2
+  echo "usage: $0 <role> \"<prompt>\" [--task <task-id>] [--review-fork <kind>]" >&2
+  echo "       $0 <role> --prompt-file <path> [--task <task-id>] [--review-fork <kind>]" >&2
   echo "       role must be 'planner' or 'executor'" >&2
   exit 2
 }
@@ -61,12 +68,12 @@ shift
 [ "$ROLE" = "planner" ] || [ "$ROLE" = "executor" ] || usage
 
 # Flags are order-independent; --prompt-file is recognized at any position
-# (the parallel fan-out calls `planner --fork --prompt-file <path>`).
+# (the parallel fan-out calls `planner --review-fork <kind> --prompt-file
+# <path>`).
 PROMPT=""
 PROMPT_FILE=""
 TASK_ID=""
-RESET=0
-FORK=0
+REVIEW_FORK=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --prompt-file)
@@ -77,10 +84,10 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || usage
       TASK_ID="$2"
       shift 2 ;;
-    --reset)
-      RESET=1; shift ;;
-    --fork)
-      FORK=1; shift ;;
+    --review-fork)
+      [ $# -ge 2 ] || usage
+      REVIEW_FORK="$2"
+      shift 2 ;;
     *)
       # The bare positional prompt is accepted once, anywhere among the flags.
       if [ -z "$PROMPT" ] && [ -z "$PROMPT_FILE" ]; then
@@ -137,26 +144,21 @@ if [ -n "$TASK_ID" ] && ! printf '%s' "$TASK_ID" | grep -qE '^[A-Za-z0-9_-]+$'; 
   exit 2
 fi
 
+if [ -n "$REVIEW_FORK" ] && ! printf '%s' "$REVIEW_FORK" | grep -qE '^[A-Za-z0-9_-]+$'; then
+  echo "error: invalid --review-fork value '$REVIEW_FORK'; use only letters, digits, '_' or '-'" >&2
+  exit 2
+fi
+
 # The session store owns the per-role records, the pid files and the
 # stale-agent cleanup (session_store.sh, sourced: it reads the variables
-# above and sets SESSIONS_FILE/PID_FILE/LOG_FILE).
+# above and sets SESSIONS_FILE/PID_FILE/LOG_FILE). With --review-fork the
+# paths point at the per-kind files (ADR-0013); ROLE_SESSIONS_FILE keeps the
+# per-role store, whose warm session is forked on the kind's first call.
 source "$SCRIPT_DIR/session_store.sh"
 session_paths
-if [ "$FORK" -eq 1 ]; then
-  # Parallel forks run concurrently (the fan-out's max_concurrency): every
-  # invocation needs its OWN log file and pid file, otherwise four processes
-  # would truncate the same role log over each other and manage_pid_file's
-  # stale-kill would murder a sibling fork mid-run. $$ keeps them unique; the
-  # tailer recognizes the -fork-<pid> log names (agent_log_tailer.py).
-  LOG_FILE="${LOG_FILE%.jsonl}-fork-$$.jsonl"
-  PID_FILE="${PID_FILE%.pid}-fork-$$.pid"
-fi
 manage_pid_file "$BACKEND"
 
-SESSION_ID=""
-if [ "${RESET:-0}" -eq 0 ]; then
-  SESSION_ID="$(read_session)"
-fi
+SESSION_ID="$(read_session)"
 
 if [ "$BACKEND" = "cursor" ]; then
   # --- cursor backend: cursor-agent/agent headless with warm chats --------
@@ -166,10 +168,6 @@ if [ "$BACKEND" = "cursor" ]; then
   run_cursor
 else
   # --- opencode backend ----------------------------------------------------
-  if [ "$FORK" -eq 1 ] && [ -z "$SESSION_ID" ]; then
-    echo "error: --fork requires a stored $ROLE session (no warm session to fork); run the warm-up step first" >&2
-    exit 2
-  fi
   # Stream opencode into a log file instead of a command substitution: the
   # JSON event stream is large, and capturing it through a pipe made opencode
   # die with SIGPIPE (exit 141) mid-run. A file also keeps a durable per-role
@@ -182,38 +180,87 @@ else
   # workflow runner captures step output through a pipe, and a large stream
   # (dozens of tool calls -> hundreds of KB) made the reader close early,
   # SIGPIPE-ing this script (exit 141). The full log stays in $LOG_FILE.
+  run_opencode() {
+    # $1: opencode args before --agent: "", "--session <id>" or
+    # "--session <parent-id> --fork". Leaves the exit status in RC.
+    #
+    # $1 is deliberately expanded UNQUOTED: bash word-splits the multi-word
+    # flag string into separate argv entries ("--session <id> --fork" ->
+    # "--session", "<id>", "--fork"), and the empty string of the
+    # `run_opencode ""` call vanishes under the same splitting. The missing
+    # quotes are load-bearing — do NOT "fix" them to "$1", that would pass
+    # the whole string as ONE argument and break every agent call.
+    RC=0
+    opencode run $1 --agent "$ROLE" --auto $ATTACH_FLAG --format json "$PROMPT" > "$LOG_FILE" 2>&1 &
+    AGENT_PID=$!
+    record_agent_pid "$AGENT_PID"
+    wait "$AGENT_PID" || RC=$?
+  }
+
   RC=0
   AGENT_PID=""
+  if [ -n "$SESSION_ID" ]; then
+    # Continue the saved session: the role's warm session, or a per-kind
+    # review fork — WITHOUT --fork: the fork was created once and is only
+    # continued (ADR-0013).
+    run_opencode "--session $SESSION_ID"
+    if [ "$RC" -ne 0 ]; then
+      if [ -n "$REVIEW_FORK" ] && grep -q "Session not found" "$LOG_FILE"; then
+        # The per-kind fork session vanished (opencode auto-compact or
+        # cleanup): drop the stale id and re-fork the parent below
+        # (ADR-0013).
+        #
+        # The rm is the ONLY "clear" primitive: save_session rewrites the
+        # per-kind file but never deletes a key, and the re-fork below
+        # always ends in save_session — without the rm this clearing would
+        # be undone. And the rm must survive even a FAILED re-fork (the
+        # extract-session error exits before save): then the NEXT
+        # invocation of this kind sees no id and forks the parent directly
+        # instead of retrying the dead session. It is not dead code.
+        rm -f "$SESSIONS_FILE"
+        SESSION_ID=""
+      else
+        echo "run-agent: opencode exited $RC; full log: $LOG_FILE" >&2
+        exit "$RC"
+      fi
+    fi
+  fi
   if [ -z "$SESSION_ID" ]; then
-    opencode run --agent "$ROLE" --auto $ATTACH_FLAG --format json "$PROMPT" > "$LOG_FILE" 2>&1 &
-    AGENT_PID=$!
-    record_agent_pid "$AGENT_PID"
-    wait "$AGENT_PID" || RC=$?
-    if [ "$RC" -ne 0 ]; then
-      echo "run-agent: opencode exited $RC; full log: $LOG_FILE" >&2
-      exit "$RC"
+    if [ -n "$REVIEW_FORK" ]; then
+      # First check of this kind — or the re-fork after a vanished session:
+      # fork the parent warm session once (ADR-0013). The parent id lives in
+      # the per-role store and is never mutated; the fork's own id is saved
+      # to the per-kind file.
+      PARENT_ID="$(read_session_from "$ROLE_SESSIONS_FILE")"
+      if [ -z "$PARENT_ID" ]; then
+        echo "error: --review-fork requires a stored $ROLE session (no warm session to fork); run the warm-up step first" >&2
+        exit 2
+      fi
+      run_opencode "--session $PARENT_ID --fork"
+      if [ "$RC" -ne 0 ]; then
+        echo "run-agent: opencode exited $RC; full log: $LOG_FILE" >&2
+        exit "$RC"
+      fi
+      SESSION_ID="$(extract_session_id)"
+      if [ -z "$SESSION_ID" ]; then
+        echo "error: could not extract a session id from opencode output" >&2
+        exit 2
+      fi
+      save_session "$SESSION_ID"
+    else
+      # No saved role session yet: a brand-new warm session.
+      run_opencode ""
+      if [ "$RC" -ne 0 ]; then
+        echo "run-agent: opencode exited $RC; full log: $LOG_FILE" >&2
+        exit "$RC"
+      fi
+      SESSION_ID="$(extract_session_id)"
+      if [ -z "$SESSION_ID" ]; then
+        echo "error: could not extract a session id from opencode output" >&2
+        exit 2
+      fi
+      save_session "$SESSION_ID"
     fi
-    SESSION_ID="$(extract_session_id)"
-    if [ -z "$SESSION_ID" ]; then
-      echo "error: could not extract a session id from opencode output" >&2
-      exit 2
-    fi
-    save_session "$SESSION_ID"
-  else
-    FORK_FLAG=""
-    if [ "$FORK" -eq 1 ]; then
-      FORK_FLAG="--fork"
-    fi
-    opencode run --session "$SESSION_ID" $FORK_FLAG --agent "$ROLE" --auto $ATTACH_FLAG --format json "$PROMPT" > "$LOG_FILE" 2>&1 &
-    AGENT_PID=$!
-    record_agent_pid "$AGENT_PID"
-    wait "$AGENT_PID" || RC=$?
-    if [ "$RC" -ne 0 ]; then
-      echo "run-agent: opencode exited $RC; full log: $LOG_FILE" >&2
-      exit "$RC"
-    fi
-    # A fork's new session id is deliberately NOT saved: the parent id in the
-    # store stays authoritative for the next fork (ADR-0009).
   fi
 fi
 

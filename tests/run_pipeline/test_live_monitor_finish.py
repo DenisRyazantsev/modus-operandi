@@ -30,8 +30,8 @@ class LiveMonitorFinishTest(unittest.TestCase):
     """finish() must drain BOTH late step results and late agent-log events.
 
     The tail thread has already stopped when finish() runs, so events
-    written between the last 0.5s poll tick and process exit would otherwise
-    never reach the live status lines (ADR-0011).
+    written between the last 0.25s poll tick and process exit would
+    otherwise never reach the live status lines (ADR-0011).
     """
 
     def test_finish_prints_late_step_finish_line(self):

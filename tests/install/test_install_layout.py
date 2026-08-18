@@ -205,9 +205,10 @@ class InstallLayoutTest(InstallerTestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("--task)\n      [ $# -ge 2 ] || usage", run_agent)
         # --prompt-file is parsed in the same order-independent flag loop as
-        # --task (the parallel fan-out calls `--fork --prompt-file <path>`).
+        # --task (the parallel fan-out calls `--review-fork <kind>
+        # --prompt-file <path>`, ADR-0013).
         self.assertIn("--prompt-file)\n      [ $# -ge 2 ] || usage", run_agent)
-        self.assertIn("--fork)", run_agent)
+        self.assertIn("--review-fork)", run_agent)
         # The stale-process cleanup lives in session_store.sh (one concern
         # per file): the pid file, the backend process-name pattern and the
         # kill are all owned there, shared by both backends.

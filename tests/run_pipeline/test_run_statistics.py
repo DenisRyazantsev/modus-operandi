@@ -203,6 +203,41 @@ class RunStatisticsTest(unittest.TestCase):
         # The step_finish fallback was ignored: no cost accumulated.
         self.assertEqual(usage["cost"], 0.0)
 
+    def test_collect_cursor_usage_sees_all_review_loop_iterations(self):
+        # Regression (ADR-0013 bug fix): the per-kind review log is a stable
+        # file that run-agent-cursor.sh APPENDS to on every check, so the
+        # end-of-run statistics must see every review-fix-loop iteration of a
+        # kind — truncating the file on each call would leave only the last
+        # iteration's usage in the sum.
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            state = self._state(tmp, {"planner": "p1"})
+            logs_dir = state / "logs"
+            logs_dir.mkdir(parents=True)
+            log = logs_dir / "sessions-task-1-planner-fork-srp.jsonl"
+            log.write_text(
+                "\n".join(
+                    json.dumps(event)
+                    for event in [
+                        # First review-fix-loop iteration of the srp kind.
+                        {
+                            "type": "result",
+                            "usage": {"inputTokens": 10, "cacheReadTokens": 7},
+                        },
+                        # Second iteration, appended to the same file.
+                        {
+                            "type": "result",
+                            "usage": {"inputTokens": 5, "cacheReadTokens": 3},
+                        },
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            usage = mod.run_statistics.collect_cursor_usage(state)
+        self.assertEqual(usage["input"], 15)
+        self.assertEqual(usage["cache_read"], 10)
+
     def test_collect_cursor_usage_counts_step_finish_only_files(self):
         # Old cursor builds emit only the opencode-shaped step_finish: a
         # file without any result-style event still counts the fallback
