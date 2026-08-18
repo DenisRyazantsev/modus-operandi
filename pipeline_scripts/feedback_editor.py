@@ -18,31 +18,50 @@ import sys
 import threading
 from pathlib import Path
 
+from _run_pipeline_common import extract_numbered_questions, questions_source_file
 from editor import resolve_feedback_editor
 
 
-def create_feedback_file(path: Path) -> None:
-    """Create the empty feedback.md for the revise gate.
+def create_feedback_file(path: Path, source_doc: Path | None = None) -> None:
+    """Create the feedback.md for the revise gate.
 
     Never overwrites an existing file: the planner may have written one, or
-    the user may have started writing during an earlier fallback.
+    the user may have started writing during an earlier fallback. A NEW file
+    is seeded (ADR-0012) with the numbered questions of the source
+    document's open-questions section (study.md for the motivation gate,
+    adr.md for the ADR gate); a missing document — or a document without
+    questions — leaves the file empty.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    if not path.exists():
-        path.touch()
+    if path.exists():
+        return
+    path.touch()
+    questions: list[str] = []
+    if source_doc is not None:
+        with contextlib.suppress(OSError, UnicodeDecodeError):
+            questions = extract_numbered_questions(source_doc.read_text(encoding="utf-8"))
+    if questions:
+        path.write_text("\n".join(questions) + "\n", encoding="utf-8")
 
 
 def open_feedback_editor(
-    feedback_path: Path, pause: threading.Event, master_fd: int
+    state_dir: str,
+    pause: threading.Event,
+    master_fd: int,
+    step_id: str | None,
 ) -> bool:
     """Own the feedback gates' editor interaction.
 
     Any step whose id contains "feedback-gate" routes here (the ADR revise
     gate, the motivation clarify gate — the wrapper recognizes them by the
     shared marker, so the handling is identical for all of them). Pauses
-    stdin forwarding, creates feedback.md (never overwriting), opens
-    it in the platform editor and, on editor close, answers the gate with
-    `continue` so the workflow continues (the revise step reads feedback.md).
+    stdin forwarding, creates feedback.md in the current task dir (never
+    overwriting; a NEW file is seeded with the numbered open questions of
+    the gate's document — study.md for a `motivation` gate, adr.md for an
+    `adr` gate — so the questions are in front of the user while writing,
+    ADR-0012), opens it in the platform editor and, on editor close,
+    answers the gate with `continue` so the workflow continues (the revise
+    step reads feedback.md).
     The editor resolution (editor.py) returns a mode: "waited" (macOS
     TextEdit or the terminal chain) runs the editor blocking and the wrapper
     answers the gate; "detached" (Linux GUI in a separate window) launches
@@ -52,7 +71,13 @@ def open_feedback_editor(
     file is still created, forwarding is left running and the gate stays
     interactive for manual input.
     """
-    create_feedback_file(feedback_path)
+    task_dir = Path.cwd() / state_dir / "tasks" / "current"
+    source_doc: Path | None = None
+    source_name = questions_source_file(step_id or "")
+    if source_name is not None:
+        source_doc = task_dir / source_name
+    feedback_path = task_dir / "feedback.md"
+    create_feedback_file(feedback_path, source_doc)
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         return False
     resolved = resolve_feedback_editor()

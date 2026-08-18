@@ -32,6 +32,7 @@ class LiveMonitor:
         prior_runs: set[str],
         logs_dir: Path | None = None,
         step_ids: list[str] | None = None,
+        backend: str = "opencode",
     ) -> None:
         self.run_id: str = ""
         self._poller = StepResultPoller(run_state_dir, self.run_id)
@@ -43,7 +44,10 @@ class LiveMonitor:
         self.gate = GateState()
         self._step_ids = step_ids
         total_steps = len(step_ids) if step_ids is not None else None
-        self._live = LiveLines(total_steps=total_steps)
+        # The backend (opencode/cursor) reaches the live lines through the
+        # monitor: the price is omitted on cursor, which reports no cost
+        # (ADR-0012).
+        self._live = LiveLines(total_steps=total_steps, backend=backend)
         self._emitter = BufferedEmitter(self.gate)
 
     def start(self) -> None:
@@ -99,6 +103,7 @@ class LiveMonitor:
             # directory discovered.
             run_id = self.run_id or self._discoverer.discover()
         state: dict[str, Any] | None = None
+        step_changed = False
         if run_id:
             self.run_id = run_id
             self._poller.run_id = run_id
@@ -118,7 +123,7 @@ class LiveMonitor:
                 # line shows the step without N/M rather than crash the
                 # monitor thread.
                 step_index = None
-            self._live.set_step(
+            step_changed = self._live.set_step(
                 (state or {}).get("current_step_id") or "", step_index
             )
         # Agent logs are drained BEFORE the step results: a step's final
@@ -133,9 +138,12 @@ class LiveMonitor:
                 self._drain_tailer()
                 # Fix the live lines before the marker: they stay in the
                 # terminal as history (printed plainly), then the marker
-                # prints. The next step_finish of the same process opens a
-                # new line with the continued sums.
-                fixed = self._live.fix_all()
+                # prints. The completed step's id is passed so the fixed
+                # copies keep the completed step's label — the engine has
+                # usually already advanced current_step_id to the next step
+                # by now (bug fix). The next event of the same process opens
+                # a new line with the continued sums.
+                fixed = self._live.fix_all(step_id)
                 if fixed:
                     self._emitter.emit_live(fixed, plain=True)
                 # The marker shows the completed step's OWN position in the
@@ -149,6 +157,14 @@ class LiveMonitor:
             # Redraw the live block after any fixed lines / markers (TTY
             # only; on a non-TTY the block is empty).
             self._emitter.emit_live(self._live.block())
+            if step_changed and not self._live.tty and not self._live.step_has_events:
+                # The step-start line is emitted after the drain on purpose:
+                # set_step resets the per-step event window, the drain then
+                # marks the window as having events, and only a step with no
+                # agent lines yet gets the harness announcement — moving the
+                # drain above the state read would silently duplicate
+                # announcements (ADR-0012).
+                self._emitter.emit_live([self._live.harness_step_line()], plain=True)
 
     def finish(self) -> None:
         """One final poll after specify exits: late step results may still land.

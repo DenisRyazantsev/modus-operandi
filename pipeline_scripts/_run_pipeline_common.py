@@ -32,6 +32,17 @@ ROLE_LABEL_WIDTH = 8
 # editor path and the gate signals like a normal gate again.
 FEEDBACK_GATE_MARKER = "feedback-gate"
 
+# The live status line's spinner cadence (ADR-0012): the frame shifts at
+# most once per second while the monitor redraws the block every 0.5 s tick
+# — the line visibly "breathes" between model turns without the text after
+# the frame shifting. A fixed constant: no config key.
+HEARTBEAT_SECONDS = 1.0
+
+# Single-column spinner frames (braille, each exactly one terminal column
+# wide): the line is `[hh:mm:ss] [<role>] <frame> [<step> N/M] ...` — the
+# frame never shifts the text that follows it (ADR-0012).
+SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
 
 def stamp() -> str:
     return time.strftime("%H:%M:%S")
@@ -80,6 +91,60 @@ def is_feedback_gate(step_id: str | None) -> bool:
     gate recognition is unit-testable without a running workflow.
     """
     return step_id is not None and FEEDBACK_GATE_MARKER in step_id
+
+
+def questions_source_file(step_id: str) -> str | None:
+    """The document whose open-questions section seeds feedback.md.
+
+    Selected by the gate step id substring (ADR-0012): a gate id containing
+    `motivation` seeds from study.md (the motivation clarify gate), one
+    containing `adr` from adr.md (the ADR revise gate); anything else — no
+    seeding, the file stays empty. Pure function for unit tests.
+    """
+    if "motivation" in step_id:
+        return "study.md"
+    if "adr" in step_id:
+        return "adr.md"
+    return None
+
+
+def extract_numbered_questions(doc: str) -> list[str]:
+    r"""The numbered questions of the document's open-questions section.
+
+    The section is the one whose heading (a line starting with `#`) contains
+    `open questions` or `открытые вопросы` (case-insensitive); its numbered
+    lines (`^\d+.`) up to the next heading are the questions. A question
+    keeps its continuation lines — wrapped or indented, not starting with a
+    digit — until the next numbered line or the next heading (blank lines
+    are skipped), so a multi-line question is captured in full, not
+    truncated to its lead (bug fix). Lines are returned stripped of
+    surrounding whitespace. No such section — or none of its lines are
+    numbered — yields []. Pure helper of the feedback.md seeding
+    (ADR-0012), unit-tested without a running workflow.
+    """
+    questions: list[str] = []
+    current: list[str] | None = None
+    in_section = False
+    for line in doc.splitlines():
+        if line.startswith("#"):
+            if in_section:
+                break
+            if re.search(r"open questions|открытые вопросы", line, re.IGNORECASE):
+                in_section = True
+            continue
+        if not in_section:
+            continue
+        if re.match(r"^\d+\.", line):
+            if current is not None:
+                questions.append("\n".join(current))
+            current = [line.strip()]
+        elif current is not None:
+            stripped = line.strip()
+            if stripped:
+                current.append(stripped)
+    if current is not None:
+        questions.append("\n".join(current))
+    return questions
 
 
 def existing_run_ids(run_state_dir: Path) -> set[str]:

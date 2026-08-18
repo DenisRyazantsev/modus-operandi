@@ -48,6 +48,11 @@ def build_paths(home: str | Path) -> Paths:
         "buffered_emitter": base / ".config" / "opencode" / "scripts" / "buffered_emitter.py",
         "live_monitor": base / ".config" / "opencode" / "scripts" / "live_monitor.py",
         "live_lines": base / ".config" / "opencode" / "scripts" / "live_lines.py",
+        # The agent-log usage schema (opencode step_finish, cursor usage
+        # shapes) is a separate concern used by both the live lines and the
+        # run statistics: copied next to them so the installed modules stay
+        # importable (SRP split).
+        "usage_parser": base / ".config" / "opencode" / "scripts" / "usage_parser.py",
         # run-pipeline.py is further split one concern per file: the
         # config-to-invocation mapping, the statistics, the victory sound,
         # the feedback gate's editor interaction and the pty plumbing.

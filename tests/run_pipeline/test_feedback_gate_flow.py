@@ -7,6 +7,7 @@ import os
 import pty
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -78,8 +79,11 @@ class FeedbackGateFlowTest(unittest.TestCase):
             )
         self.assertEqual(rc, 0)
         editor.assert_called_once()
-        feedback_path = editor.call_args.args[0]
-        self.assertTrue(str(feedback_path).endswith("tasks/current/feedback.md"))
+        state_dir, pause, master_fd, step_id = editor.call_args.args
+        self.assertEqual(state_dir, ".workflow")
+        self.assertEqual(step_id, "adr-feedback-gate")
+        self.assertIsNotNone(master_fd)
+        self.assertIsInstance(pause, threading.Event)
         # No victory sound for the feedback gate itself: only the final
         # success signal fires.
         self.assertEqual(notify.call_count, 1)
@@ -93,6 +97,7 @@ class FeedbackGateFlowTest(unittest.TestCase):
             )
         self.assertEqual(rc, 0)
         editor.assert_called_once()
+        self.assertEqual(editor.call_args.args[3], "adr-loop:adr-feedback-gate:1")
         self.assertEqual(notify.call_count, 1)
 
     def test_feedback_gate_fallback_without_sound(self):

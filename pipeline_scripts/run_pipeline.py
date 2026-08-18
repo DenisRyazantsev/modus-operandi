@@ -38,13 +38,18 @@ statistics never change the exit code.
 
 Agent logs are no longer echoed (ADR-0011): instead each active process —
 a role, or a role+fork for the parallel review forks — shows one live
-status line with the cumulative token/cost sums from the agent-log
-`step_finish` events, redrawn in place on a TTY and printed once per event
-on a non-TTY. The lines are fixed (kept as history) when a step completes;
-only lines appended during the current run are counted (pre-existing log
-files are baselined at startup). Step markers carry the progress N/M when
-the workflow file is readable. A step's final agent events accumulate
-before the step's "--- step X (completed)" marker.
+status line with the cumulative token/cost sums from the agent-log events
+(ADR-0012: opencode `step_finish`, cursor result events with usage), and
+while a step has no agent events yet a synthesized `[harness]` line with a
+spinner is shown, so the status is visible on every step from the moment
+it starts. The block is redrawn in place on a TTY; on a non-TTY one plain
+line per step change announces the step, agent usage events print one
+plain line each, and no heartbeat lines ever go into a log. The lines are
+fixed (kept as history) when a step completes; only lines appended during
+the current run are counted (pre-existing log files are baselined at
+startup). Step markers carry the progress N/M when the workflow file is
+readable. A step's final agent events accumulate before the step's "---
+step X (completed)" marker.
 
 Usage: run-pipeline.py <workflow-id-or-path> [extra specify args...]
   run-pipeline.py review-pipeline
@@ -91,6 +96,7 @@ from pathlib import Path
 
 from _run_pipeline_common import (
     existing_run_ids,
+    extract_numbered_questions,
     fmt_duration,
     fmt_minutes,
     fmt_thousands,
@@ -98,6 +104,7 @@ from _run_pipeline_common import (
     is_gate_menu_opener,
     print_log_event,
     print_step_result,
+    questions_source_file,
     render_log_event,
     role_label,
     run_id_from_text,
@@ -151,6 +158,7 @@ __all__ = [
     "effective_backend",
     "existing_run_ids",
     "export_session_info",
+    "extract_numbered_questions",
     "fmt_duration",
     "fmt_minutes",
     "fmt_thousands",
@@ -164,6 +172,7 @@ __all__ = [
     "print_log_event",
     "print_run_statistics",
     "print_step_result",
+    "questions_source_file",
     "read_session_ids",
     "render_log_event",
     "resolve_editor",
@@ -194,18 +203,22 @@ def _handle_gate_menu(
     """
     state = monitor.read_current_state()
     monitor.gate.open(state)
-    if is_feedback_gate((state or {}).get("current_step_id")):
-        # The ADR revise feedback gate: the wrapper owns the answer.
-        # feedback.md is created (never overwritten) and opened in the
-        # terminal editor; on editor close the gate is answered with
-        # `continue` so the workflow continues (adr-revise reads
+    step_id = (state or {}).get("current_step_id")
+    if is_feedback_gate(step_id):
+        # The feedback gate: the wrapper owns the answer. feedback.md is
+        # created in the current task dir (never overwritten; a NEW file is
+        # seeded with the numbered open questions of the gate's document —
+        # study.md for a motivation gate, adr.md for an ADR gate) and opened
+        # in the terminal editor; on editor close the gate is answered with
+        # `continue` so the workflow continues (the revise step reads
         # feedback.md). If no editor can run, the gate stays interactive for
         # manual input. No victory sound is played for this gate in any path.
         if master_fd is not None:
             open_feedback_editor(
-                Path.cwd() / state_dir / "tasks" / "current" / "feedback.md",
+                state_dir,
                 forward_pause,
                 master_fd,
+                step_id,
             )
     else:
         # The human is needed: play the same signal used for a finished run
@@ -360,7 +373,12 @@ def main() -> int:
     # missing/unreadable file degrades to None and the progress is omitted
     # (ADR-0011).
     step_ids = workflow_step_ids(source)
-    monitor = LiveMonitor(run_state_dir, prior_runs, logs_dir, step_ids=step_ids)
+    # The backend reaches the live lines through the monitor: on cursor the
+    # price is omitted (no cost reported), on opencode it is shown
+    # (ADR-0012).
+    monitor = LiveMonitor(
+        run_state_dir, prior_runs, logs_dir, step_ids=step_ids, backend=backend
+    )
     # Wall-clock run time is measured directly around the child process; it
     # covers every completion path (success, failure, abort).
     t0 = time.monotonic()

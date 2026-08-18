@@ -30,6 +30,7 @@ _MODULES = (
     "buffered_emitter",
     "live_monitor",
     "live_lines",
+    "usage_parser",
     "config_invocation",
     "run_statistics",
     "latency_table",

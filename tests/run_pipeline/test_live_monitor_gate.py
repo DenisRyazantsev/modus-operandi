@@ -78,12 +78,14 @@ class LiveMonitorGateTest(unittest.TestCase):
                 with mock.patch("sys.stdout", captured):
                     monitor._poll_once()
             # Nothing printed while the gate is open; the step result, the
-            # gate step id and the live line are all captured instead.
+            # gate step id, the live line and the step-start harness line
+            # are all captured instead (ADR-0012).
             self.assertEqual(captured.getvalue(), "")
             self.assertEqual(monitor.gate._gate_step_id, "adr-gate")
             self.assertEqual(len(monitor._emitter.buffered_steps), 1)
-            self.assertEqual(len(monitor._emitter.buffered_fixed), 1)
+            self.assertEqual(len(monitor._emitter.buffered_fixed), 2)
             self.assertIn("cache 4", monitor._emitter.buffered_fixed[0])
+            self.assertIn("[harness]", monitor._emitter.buffered_fixed[1])
 
     def test_flushes_buffer_when_engine_moves_past_gate(self):
         mod = load_run_pipeline()

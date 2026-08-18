@@ -159,6 +159,124 @@ class RunStatisticsTest(unittest.TestCase):
         self.assertIn("cache: read 9 032 013 · write 0", out)
         self.assertIn("cost: $0.03", out)
 
+    def test_collect_cursor_usage_reuses_the_shared_parser(self):
+        # collect_cursor_usage sums the cursor logs through the shared
+        # usage_parser (SRP split): nested usage objects, flat cache names
+        # and top-level token fields all accumulate; a malformed event is
+        # skipped whole instead of failing the statistics; a step_finish in
+        # a file that shows result-style events is ignored (no double
+        # count, bug fix).
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            state = self._state(tmp, {"planner": "p1"})
+            logs_dir = state / "logs"
+            logs_dir.mkdir(parents=True)
+            log = logs_dir / "sessions-task-1-executor.jsonl"
+            log.write_text(
+                "\n".join(
+                    json.dumps(event)
+                    for event in [
+                        {
+                            "type": "result",
+                            "usage": {"inputTokens": 10, "cacheReadTokens": 7},
+                        },
+                        {"type": "result", "inputTokens": 5, "outputTokens": 3},
+                        {
+                            "type": "step_finish",
+                            "part": {
+                                "tokens": {"input": 100, "cache": {"read": 1}},
+                                "cost": 0.5,
+                            },
+                        },
+                        {"type": "result", "usage": {"inputTokens": "abc"}},
+                        {"type": "text", "part": {"type": "text", "text": "x"}},
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            usage = mod.run_statistics.collect_cursor_usage(state)
+        self.assertEqual(usage["input"], 15)
+        self.assertEqual(usage["output"], 3)
+        self.assertEqual(usage["cache_read"], 7)
+        self.assertEqual(usage["cache_write"], 0)
+        # The step_finish fallback was ignored: no cost accumulated.
+        self.assertEqual(usage["cost"], 0.0)
+
+    def test_collect_cursor_usage_counts_step_finish_only_files(self):
+        # Old cursor builds emit only the opencode-shaped step_finish: a
+        # file without any result-style event still counts the fallback
+        # (bug fix regression guard).
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            state = self._state(tmp, {"planner": "p1"})
+            logs_dir = state / "logs"
+            logs_dir.mkdir(parents=True)
+            log = logs_dir / "sessions-task-1-executor.jsonl"
+            log.write_text(
+                json.dumps(
+                    {
+                        "type": "step_finish",
+                        "part": {
+                            "tokens": {
+                                "input": 10,
+                                "output": 2,
+                                "reasoning": 1,
+                                "cache": {"read": 4, "write": 0},
+                            },
+                            "cost": 0.03,
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            usage = mod.run_statistics.collect_cursor_usage(state)
+        self.assertEqual(usage["input"], 10)
+        self.assertEqual(usage["output"], 2)
+        self.assertEqual(usage["reasoning"], 1)
+        self.assertEqual(usage["cache_read"], 4)
+        self.assertAlmostEqual(usage["cost"], 0.03)
+
+    def test_malformed_result_event_does_not_suppress_step_finish_tokens(self):
+        # Regression (bug fix): a malformed or unrecognized-shape
+        # result-style event is skipped without disabling the fallback —
+        # the step_finish tokens of the same file must still count.
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            state = self._state(tmp, {"planner": "p1"})
+            logs_dir = state / "logs"
+            logs_dir.mkdir(parents=True)
+            log = logs_dir / "sessions-task-1-executor.jsonl"
+            log.write_text(
+                "\n".join(
+                    json.dumps(event)
+                    for event in [
+                        {"type": "result", "usage": {"inputTokens": "abc"}},
+                        {"type": "result", "usage": {"total": 42}},
+                        {
+                            "type": "step_finish",
+                            "part": {
+                                "tokens": {
+                                    "input": 100,
+                                    "output": 2,
+                                    "reasoning": 1,
+                                    "cache": {"read": 4, "write": 0},
+                                },
+                                "cost": 0.03,
+                            },
+                        },
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            usage = mod.run_statistics.collect_cursor_usage(state)
+        self.assertEqual(usage["input"], 100)
+        self.assertEqual(usage["output"], 2)
+        self.assertEqual(usage["cache_read"], 4)
+        self.assertAlmostEqual(usage["cost"], 0.03)
+
     def test_print_run_statistics_degrades_to_zeros(self):
         # No sessions file / no opencode: the block still prints with zeros
         # and the wrapper must not crash.

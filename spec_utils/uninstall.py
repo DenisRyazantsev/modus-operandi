@@ -29,6 +29,7 @@ def do_uninstall(paths: Paths, yes: bool) -> None:
         paths["buffered_emitter"],
         paths["live_monitor"],
         paths["live_lines"],
+        paths["usage_parser"],
         paths["config_invocation"],
         paths["run_statistics"],
         paths["notify"],

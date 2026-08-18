@@ -29,6 +29,9 @@ class FeedbackEditorTest(unittest.TestCase):
         ):
             yield
 
+    def _feedback_path(self, tmp):
+        return Path(tmp) / ".workflow" / "tasks" / "current" / "feedback.md"
+
     def test_answers_continue_after_terminal_editor(self):
         # Linux without a GUI: the terminal chain runs blocking and the
         # wrapper answers the gate with `continue`.
@@ -36,7 +39,7 @@ class FeedbackEditorTest(unittest.TestCase):
         real_master, real_slave = pty.openpty()
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                path = Path(tmp) / "feedback.md"
+                path = self._feedback_path(tmp)
                 written = []
 
                 def which(name):
@@ -44,6 +47,7 @@ class FeedbackEditorTest(unittest.TestCase):
 
                 with (
                     self._tty(),
+                    mock.patch.object(Path, "cwd", return_value=Path(tmp)),
                     mock.patch("sys.platform", "linux"),
                     mock.patch.dict("os.environ", {}, clear=True),
                     mock.patch("shutil.which", side_effect=which),
@@ -60,7 +64,7 @@ class FeedbackEditorTest(unittest.TestCase):
                     ),
                 ):
                     result = mod.open_feedback_editor(
-                        path, threading.Event(), real_master
+                        ".workflow", threading.Event(), real_master, "adr-feedback-gate"
                     )
                 self.assertTrue(result)
                 self.assertEqual(run.call_args.args[0], ["nano", str(path)])
@@ -74,10 +78,11 @@ class FeedbackEditorTest(unittest.TestCase):
         real_master, real_slave = pty.openpty()
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                path = Path(tmp) / "feedback.md"
+                path = self._feedback_path(tmp)
                 written = []
                 with (
                     self._tty(),
+                    mock.patch.object(Path, "cwd", return_value=Path(tmp)),
                     mock.patch("sys.platform", "darwin"),
                     mock.patch(
                         "subprocess.run", return_value=mock.Mock(returncode=0)
@@ -89,7 +94,7 @@ class FeedbackEditorTest(unittest.TestCase):
                     ),
                 ):
                     result = mod.open_feedback_editor(
-                        path, threading.Event(), real_master
+                        ".workflow", threading.Event(), real_master, "adr-feedback-gate"
                     )
                 self.assertTrue(result)
                 self.assertEqual(
@@ -107,10 +112,11 @@ class FeedbackEditorTest(unittest.TestCase):
         # the window. Forwarding is never paused.
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "feedback.md"
+            path = self._feedback_path(tmp)
             pause = threading.Event()
             with (
                 self._tty(),
+                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
                 mock.patch("sys.platform", "linux"),
                 mock.patch(
                     "shutil.which",
@@ -122,7 +128,7 @@ class FeedbackEditorTest(unittest.TestCase):
                 mock.patch("subprocess.Popen") as popen,
                 mock.patch("os.write") as write,
             ):
-                result = mod.open_feedback_editor(path, pause, 999)
+                result = mod.open_feedback_editor(".workflow", pause, 999, "adr-gate:1")
             self.assertFalse(result)
             self.assertFalse(pause.is_set())
             popen.assert_called_once()
@@ -135,14 +141,17 @@ class FeedbackEditorTest(unittest.TestCase):
     def test_falls_back_when_not_a_tty(self):
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "feedback.md"
+            path = self._feedback_path(tmp)
             with (
                 self._tty(is_tty=False),
+                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
                 mock.patch("subprocess.run") as run,
                 mock.patch("subprocess.Popen") as popen,
                 mock.patch("os.write") as write,
             ):
-                result = mod.open_feedback_editor(path, threading.Event(), 999)
+                result = mod.open_feedback_editor(
+                    ".workflow", threading.Event(), 999, "adr-feedback-gate"
+                )
             self.assertFalse(result)
             run.assert_not_called()
             popen.assert_not_called()
@@ -153,15 +162,18 @@ class FeedbackEditorTest(unittest.TestCase):
     def test_falls_back_when_no_editor(self):
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "feedback.md"
+            path = self._feedback_path(tmp)
             with (
                 self._tty(),
+                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
                 mock.patch("sys.platform", "linux"),
                 mock.patch.dict("os.environ", {}, clear=True),
                 mock.patch("shutil.which", return_value=None),
                 mock.patch("subprocess.run") as run,
             ):
-                result = mod.open_feedback_editor(path, threading.Event(), 999)
+                result = mod.open_feedback_editor(
+                    ".workflow", threading.Event(), 999, "adr-feedback-gate"
+                )
             self.assertFalse(result)
             run.assert_not_called()
             self.assertTrue(path.is_file())
@@ -172,31 +184,37 @@ class FeedbackEditorTest(unittest.TestCase):
         mod = load_run_pipeline()
         pause = threading.Event()
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "feedback.md"
-            with self._tty(is_tty=False):
-                result = mod.open_feedback_editor(path, pause, 999)
+            path = self._feedback_path(tmp)
+            with (
+                self._tty(is_tty=False),
+                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
+            ):
+                result = mod.open_feedback_editor(".workflow", pause, 999, None)
             self.assertFalse(result)
             self.assertFalse(pause.is_set())
+            self.assertTrue(path.is_file())
 
     def test_waited_editor_failure_falls_back(self):
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "feedback.md"
             with (
                 self._tty(),
+                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
                 mock.patch("sys.platform", "darwin"),
                 mock.patch("subprocess.run", side_effect=OSError("boom")),
                 mock.patch("sys.stderr", io.StringIO()),
             ):
-                result = mod.open_feedback_editor(path, threading.Event(), 999)
+                result = mod.open_feedback_editor(
+                    ".workflow", threading.Event(), 999, "adr-feedback-gate"
+                )
             self.assertFalse(result)
 
     def test_detached_launch_failure_falls_back(self):
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "feedback.md"
             with (
                 self._tty(),
+                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
                 mock.patch("sys.platform", "linux"),
                 mock.patch(
                     "shutil.which",
@@ -208,5 +226,7 @@ class FeedbackEditorTest(unittest.TestCase):
                 mock.patch("subprocess.Popen", side_effect=OSError("boom")),
                 mock.patch("sys.stderr", io.StringIO()),
             ):
-                result = mod.open_feedback_editor(path, threading.Event(), 999)
+                result = mod.open_feedback_editor(
+                    ".workflow", threading.Event(), 999, "adr-feedback-gate"
+                )
             self.assertFalse(result)

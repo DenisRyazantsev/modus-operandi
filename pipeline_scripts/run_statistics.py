@@ -20,6 +20,7 @@ from typing import Any
 
 from _run_pipeline_common import fmt_duration, fmt_thousands
 from latency_table import print_latency_table
+from usage_parser import event_usage, is_result_style
 
 
 def read_session_ids(state_dir: Path) -> dict[str, str]:
@@ -153,9 +154,15 @@ def collect_cursor_usage(state_dir: Path) -> dict[str, int | float]:
     Only files named after the current task (sessions-<task-id>-*.jsonl) are
     read, so previous tasks never bleed into the block. Each `-p` call emits
     one result event with that call's usage; summing every event yields the
-    run's totals. The cursor CLI is in beta: the cache counters appeared both
-    as a nested `cache` object and as top-level cacheReadTokens/cacheWriteTokens
-    fields, so both shapes are read.
+    run's totals. The field names and shapes are parsed by the shared
+    usage_parser.event_usage — the same single source of truth the live
+    status lines use (SRP split), covering the nested `usage` object
+    (camelCase and snake_case keys, nested cache dict or flat cache names)
+    and the top-level token fields of the event; a malformed event is
+    skipped whole instead of failing the statistics. Each file is pre-scanned
+    for a result-style event: a file that shows the modern shape disables the
+    `step_finish` fallback entirely, so a transitional build emitting both
+    shapes cannot double-count (bug fix).
     """
     totals = _empty_totals()
     task_id = current_task_id(state_dir)
@@ -167,24 +174,47 @@ def collect_cursor_usage(state_dir: Path) -> dict[str, int | float]:
             lines = path.read_text(encoding="utf-8").splitlines()
         except OSError:
             continue
+        events: list[dict[str, Any]] = []
         for line in lines:
             try:
                 event = json.loads(line)
             except Exception:
                 continue
-            usage = event.get("usage")
-            if not isinstance(usage, dict):
+            if isinstance(event, dict):
+                events.append(event)
+        # Pre-scan: the step_finish fallback is disabled only when a
+        # result-style event actually PARSES — a malformed or
+        # unrecognized-shape event must not suppress the step_finish tokens
+        # of the rest of the file (bug fix).
+        prefer_result = False
+        for event in events:
+            if not is_result_style(event):
                 continue
-            totals["input"] += int(usage.get("inputTokens") or 0)
-            totals["output"] += int(usage.get("outputTokens") or 0)
-            totals["reasoning"] += int(usage.get("reasoningTokens") or 0)
-            cache = usage.get("cache")
-            if isinstance(cache, dict):
-                totals["cache_read"] += int(cache.get("read") or 0)
-                totals["cache_write"] += int(cache.get("write") or 0)
-            else:
-                totals["cache_read"] += int(usage.get("cacheReadTokens") or 0)
-                totals["cache_write"] += int(usage.get("cacheWriteTokens") or 0)
+            try:
+                usage = event_usage(event, False)
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if usage is not None:
+                prefer_result = True
+                break
+        for event in events:
+            try:
+                usage = event_usage(event, prefer_result)
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if usage is None:
+                continue
+            totals["input"] += int(usage.get("input") or 0)
+            totals["output"] += int(usage.get("output") or 0)
+            totals["reasoning"] += int(usage.get("reasoning") or 0)
+            totals["cache_read"] += int(usage.get("cache_read") or 0)
+            totals["cache_write"] += int(usage.get("cache_write") or 0)
+            # The shared parser returns cost only for the opencode-shaped
+            # `step_finish` fallback that old cursor CLI versions emitted;
+            # cursor reports no authoritative cost, so the print path shows
+            # `n/a` by design — this accumulator line exists solely to keep
+            # the totals dict shape uniform across backends.
+            totals["cost"] += float(usage.get("cost") or 0)
     return totals
 
 

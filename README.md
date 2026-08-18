@@ -80,14 +80,21 @@ them after a failure:
 ~/.config/opencode/scripts/run-pipeline.py adr-pipeline -i feature="..."
 ```
 
-It prefixes every line with an hh:mm:ss timestamp, streams each step's output
-as it finishes (from the run state) with the progress marker
-`--- step <id> (completed) [N/M]`, and shows one live status line per active
-process with the cumulative token/cost usage (redrawn in place on a TTY; one
-plain line per agent `step_finish` event when stdout is not a TTY). On
-failure it prints the resume command. The per-stage latency table at the end
-shows durations in whole minutes plus each stage's share of the total wall
-time.
+It prefixes every line with an hh:mm:ss timestamp and streams each step's
+output as it finishes (from the run state) with the progress marker
+`--- step <id> (completed) [N/M]`. While a step runs, a live status block
+is shown (ADR-0012): the moment a step starts, a `[harness]` line with a
+spinner (`[hh:mm:ss] [harness] <spin> [<step> N/M]`) appears, and the
+first agent event of the step replaces it with one line per active process
+carrying the cumulative token/cost sums — on the cursor backend too, whose
+per-turn `usage` fields are read the same way as the run statistics (no
+price: cursor reports no cost). The block is redrawn in place on a TTY;
+when stdout is not a TTY no ANSI block is drawn, each step start prints
+one plain `[hh:mm:ss] [harness] [<step> N/M]` line and each agent usage
+event one plain line — no per-second heartbeat lines ever go into a log.
+On failure it prints the resume command. The per-stage latency table at
+the end shows durations in whole minutes plus each stage's share of the
+total wall time.
 
 ## Requirements
 
@@ -191,10 +198,16 @@ heading in the saved file is rewritten to `# ADR-<XXXX>: <title>`.
 The human touch points are the ADR gate (adr-pipeline) and the feedback
 gates: at a feedback gate the wrapper opens your editor with
 `.workflow/tasks/current/feedback.md` and the run continues automatically
-when the editor closes (macOS: TextEdit in a separate window; Linux: GNOME
-Text Editor via Flatpak/RPM, or the desktop opener — the gate then stays
-interactive and you press `continue` after closing the window; without a GUI
-the terminal editor `$VISUAL → $EDITOR → nano → vi` is used).
+when the editor closes. A NEW feedback.md is seeded (ADR-0012) with the
+numbered questions of the gate's document — the «открытые вопросы» / «Open
+Questions» section of `study.md` for the motivation gate, of `adr.md` for
+the ADR revise gate — so the questions you are answering are in front of
+you while you write; an existing file is never overwritten, and a document
+without such a section leaves the file empty. (macOS: TextEdit in a
+separate window; Linux: GNOME Text Editor via Flatpak/RPM, or the desktop
+opener — the gate then stays interactive and you press `continue` after
+closing the window; without a GUI the terminal editor
+`$VISUAL → $EDITOR → nano → vi` is used).
 
 At the ADR gate you can choose `approve`, `revise`, or `reject`:
 
