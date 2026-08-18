@@ -18,12 +18,16 @@ Or use the installed global launcher `spec-run` (also from any project, no
 
 ```
 spec-run adr "build a kanban board"
+spec-run task "add a dark mode toggle"
 spec-run review
 spec-run review --branch-diff
 ```
 
 `spec-run adr "feature"` runs the installed `adr-pipeline` with `-i feature=<feature>`
-(all non-flag arguments are joined), `spec-run review` runs the `review-pipeline`
+(all non-flag arguments are joined), `spec-run task "task"` runs the installed
+`task-pipeline` with `-i task=<task>` (the task pipeline first studies the
+project and researches the approach before writing the ADR), `spec-run review`
+runs the `review-pipeline`
 (whole codebase by default, `--branch-diff` adds `-i branch-diff=true`), and other
 `-i key=value` arguments (e.g. `-i task_id=my-feature`) are passed through unchanged.
 `spec-run --help` prints usage. The launcher lives at `~/.local/bin/spec-run` and is
@@ -32,6 +36,19 @@ already (the installer warns about this).
 
 Full cycle: ADR → executor questions → planner answers → implementation → review → fixes until the reviewer says
 `VERDICT: PASS`.
+
+A third workflow, `task-pipeline`, starts from a raw task instead of a ready
+feature: the planner first studies the project and writes a motivation study
+(`study.md`), which you can clarify through a gate (with no round limit: the
+full study text is shown in the gate message and the loop continues until you
+choose `clear`); then it researches the approach on the web and writes a
+proposal (`proposal.md`) with pros/cons/alternatives, and writes the ADR from
+the study + proposal — no separate proposal or ADR gate. The executor's
+questions are also asked in a loop (up to 3
+rounds): after the planner answers, the executor re-asks anything the answers
+left open, so questions are closed before implementation instead of surfacing
+in the code. Run it with `spec-run task "task description"` or
+`specify workflow run ~/.config/spec-kit-llm-client/task-pipeline.yml -i task="..."`.
 
 A second workflow, `review-pipeline`, does the review part alone. By default it
 reviews the **entire codebase** of the project and fixes findings:
@@ -121,6 +138,7 @@ workflow:
   max_comment_iterations: 5    # comment (readability) review-fix loop ceiling
   max_adr_iterations: 3        # ADR approve/revise/reject loop ceiling
   max_implement_iterations: 2  # implement verify/retry loop ceiling (guard against an empty implementation)
+  max_questions_iterations: 3  # task-pipeline executor questions loop ceiling
   shell_timeout: 7200          # per-step timeout in seconds for agent steps (2h)
   adr_dir: architecture        # directory where approved ADRs are saved
   human_gates: true            # false = gates auto-approve (non-interactive)
@@ -276,6 +294,24 @@ verdicts pass or `max_fix_iterations` is exhausted) → `sync-adr` → `pass-che
 (reports `REVIEW OK: all verdicts PASS` or a `WARNING` listing the kinds that
 never passed).
 
+The `task-pipeline` shares the tail of the adr-pipeline (from `save-adr` to
+`pass-check`) but replaces the front: `study` (planner writes `study.md`:
+project understanding, reformulated task, presumed motivation, numbered open
+questions) → `motivation-loop` (a `study-display` step shows the full
+`study.md` in the gate message; the gate is `clear`/`clarify` — on `clarify`
+the planner revises `study.md` from your `feedback.md`, and the loop repeats
+until `clear`, with no round limit) → `research` (planner uses web search and
+writes `proposal.md`: motivation, proposed solution, pros, cons,
+alternatives, implementation plan, source links) → `write-adr` (planner
+writes `adr.md` from `study.md` + `proposal.md` — no proposal agreement gate,
+no separate ADR gate).
+The executor's questions are asked in `executor-questions-loop` (up to
+`max_questions_iterations`): `executor-questions` rewrites `questions.md` with
+the remaining questions (or `QUESTIONS: NONE`), `check_questions.py` checks the
+first line, and `planner-answers` answers the current round; after the rounds
+run out the pipeline continues with `implement` and the executor works from
+`adr.md` + `answers.md`, recording deviations in `deviation.md`.
+
 Before the review stages, `implement-loop` guards against an executor that
 finished without doing any work: `check_implementation.py` (installed next to
 `check_review.py`) exits non-zero when the repository has no new changes (`git
@@ -367,6 +403,7 @@ spec_utils/
   workflows/
     adr-pipeline.yml        ADR pipeline source (state_dir/adr_dir delivered at runtime)
     review-pipeline.yml     review-only workflow source
+    task-pipeline.yml       task -> motivation -> research -> ADR pipeline source
 pipeline_scripts/           installed scripts (copied verbatim; config via args/env)
   spec_run.py               global spec-run launcher (~/.local/bin/spec-run)
   run_pipeline.py           run-pipeline.py wrapper (timestamps, logs, statistics)
@@ -374,6 +411,7 @@ pipeline_scripts/           installed scripts (copied verbatim; config via args/
   name-task.sh              one-shot task-slug generator (generate-task-id)
   save_adr.py               release/sync an ADR (save, sync)
   check_review.py           verdict gate for the review loops (review/srp/bugs/comment)
+  check_questions.py        questions-loop exit condition (QUESTIONS: NONE?)
   check_implementation.py   implement guard (changes present?)
   task_utils.py             shared helpers (task-dir resolution)
   adr_utils.py              text rules for save_adr.py (slug, numbering, headings)

@@ -202,3 +202,71 @@ class BuildCommandTest(unittest.TestCase):
     def test_adr_without_feature_is_invalid(self):
         with self.assertRaises(self.mod.InvalidInvocation):
             self.mod.build_command(["adr"])
+
+    def test_task_joins_arguments(self):
+        cmd = self.mod.build_command(["task", "add a dark mode toggle"])
+        self.assertEqual(
+            cmd,
+            [self.mod.RUN_PIPELINE, self.mod.TASK_WORKFLOW, "-i", "task=add a dark mode toggle"],
+        )
+
+    def test_task_joins_multiple_argv_elements_into_task(self):
+        cmd = self.mod.build_command(["task", "add", "a", "dark", "mode", "toggle"])
+        self.assertEqual(cmd[-2:], ["-i", "task=add a dark mode toggle"])
+
+    def test_task_passthrough_inputs(self):
+        cmd = self.mod.build_command(["task", "feat", "-i", "task_id=my-task"])
+        self.assertEqual(
+            cmd,
+            [
+                self.mod.RUN_PIPELINE,
+                self.mod.TASK_WORKFLOW,
+                "-i",
+                "task=feat",
+                "-i",
+                "task_id=my-task",
+            ],
+        )
+
+    def test_task_combined_input_element(self):
+        cmd = self.mod.build_command(["task", "feat", "-i task_id=my-task"])
+        self.assertEqual(
+            cmd,
+            [
+                self.mod.RUN_PIPELINE,
+                self.mod.TASK_WORKFLOW,
+                "-i",
+                "task=feat",
+                "-i task_id=my-task",
+            ],
+        )
+
+    def test_task_arg_starting_with_dash_i_stays_in_task(self):
+        cmd = self.mod.build_command(["task", "feat", "-i18n"])
+        self.assertEqual(
+            cmd,
+            [self.mod.RUN_PIPELINE, self.mod.TASK_WORKFLOW, "-i", "task=feat -i18n"],
+        )
+        self.assertNotIn("-i18n", cmd[3:])
+
+    def test_task_dangling_dash_i_is_invalid(self):
+        with self.assertRaises(self.mod.InvalidInvocation):
+            self.mod.build_command(["task", "feat", "-i"])
+
+    def test_task_without_task_is_invalid(self):
+        with self.assertRaises(self.mod.InvalidInvocation):
+            self.mod.build_command(["task"])
+
+    def test_backend_flag_prepends_to_task(self):
+        cmd = self.mod.build_command(["--backend", "cursor", "task", "add a toggle"])
+        self.assertEqual(
+            cmd,
+            [
+                self.mod.RUN_PIPELINE,
+                "--backend",
+                "cursor",
+                self.mod.TASK_WORKFLOW,
+                "-i",
+                "task=add a toggle",
+            ],
+        )

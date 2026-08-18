@@ -52,6 +52,7 @@ def apply(paths: Paths, update: bool = False) -> None:
     render.render_step_scripts(paths)
     render.render_workflow(cfg, paths)
     render.render_review_workflow(cfg, paths)
+    render.render_task_workflow(cfg, paths)
     render.render_prompts(paths)
     render.render_spec_run(paths)
     # Record the repo's install.py path: `spec-run edit` re-applies the config

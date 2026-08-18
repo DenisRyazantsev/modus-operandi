@@ -1,0 +1,1 @@
+Read @STATE_DIR@/tasks/current/feedback.md. If it contains feedback, update @STATE_DIR@/tasks/current/study.md accordingly: clarify the motivation, answer the open questions the human pointed at, and renumber the remaining open questions. If it is empty or missing, do nothing.

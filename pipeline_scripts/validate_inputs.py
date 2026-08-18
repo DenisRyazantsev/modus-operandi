@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""validate_inputs.py - validate the adr-pipeline inputs against shell injection.
+"""validate_inputs.py - validate the pipeline inputs against shell injection.
 
 Usage:
   validate_inputs.py task-id <run_id>
   validate_inputs.py feature <run_id>
+  validate_inputs.py task <run_id>
 
 The values are later embedded inside double-quoted shell arguments
 (generate-task-id, write-adr, save-adr), so they must be rejected when they
@@ -18,8 +19,8 @@ validated in python, where the text never enters a shell context:
   delimiter would terminate the heredoc at parse time and the remaining
   feature lines would execute as shell).
 
-task-id rejects anything outside [A-Za-z0-9_-]; feature rejects double
-quote, backtick, dollar sign and backslash.
+task-id rejects anything outside [A-Za-z0-9_-]; feature and task reject
+double quote, backtick, dollar sign and backslash.
 
 The run id comes from the workflow context ({{ context.run_id }}), not from
 "newest directory by mtime": a concurrently started run, or a resumed run
@@ -33,9 +34,10 @@ from __future__ import annotations
 import json
 import re
 import sys
+from typing import Any
 
 
-def _load_inputs(run_id: str) -> dict:
+def _load_inputs(run_id: str) -> dict[str, Any]:
     if not run_id:
         print(
             "error: cannot locate the current run state; cannot validate the input",
@@ -75,15 +77,28 @@ def cmd_feature(run_id: str) -> None:
         sys.exit(1)
 
 
+def cmd_task(run_id: str) -> None:
+    task = _load_inputs(run_id).get("task") or ""
+    if re.search(r"[\"`$\\]", task):
+        print(
+            "error: task contains characters unsafe for shell (quote, backtick, "
+            "dollar, backslash); rephrase it",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = argv if argv is not None else sys.argv[1:]
-    if len(args) != 2 or args[0] not in ("task-id", "feature"):
+    if len(args) != 2 or args[0] not in ("task-id", "feature", "task"):
         print(__doc__, file=sys.stderr)
         return 2
     if args[0] == "task-id":
         cmd_task_id(args[1])
-    else:
+    elif args[0] == "feature":
         cmd_feature(args[1])
+    else:
+        cmd_task(args[1])
     return 0
 
 

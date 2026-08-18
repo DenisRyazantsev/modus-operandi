@@ -61,6 +61,7 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
         "save_adr",
         "check_review",
         "check_implementation",
+        "check_questions",
         "task_utils",
         "adr_utils",
         "agent_call",
@@ -164,6 +165,7 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
     for _, path in (
         ("adr-pipeline.yml", paths["workflow"]),
         ("review-pipeline.yml", paths["review_workflow"]),
+        ("task-pipeline.yml", paths["task_workflow"]),
     ):
         if not path.exists():
             errors.append(f"generated workflow missing: {path}")
@@ -189,6 +191,7 @@ def check_workflow_syntax(paths: Paths) -> list[str]:
     for wf_name, path in (
         ("adr-pipeline.yml", paths["workflow"]),
         ("review-pipeline.yml", paths["review_workflow"]),
+        ("task-pipeline.yml", paths["task_workflow"]),
     ):
         result = proc.run([specify, "workflow", "info", str(path)], check=False)
         if result.returncode != 0:

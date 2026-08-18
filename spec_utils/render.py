@@ -193,12 +193,13 @@ def render_victory_wav(paths: Paths) -> None:
 
 def render_adr_scripts(paths: Paths) -> None:
     # save_adr.py imports task_utils.py, adr_utils.py and agent_call.py, and
-    # check_review.py imports task_utils.py, so all six scripts must be copied
-    # together to stay importable from scripts/.
+    # check_review.py / check_questions.py import task_utils.py, so all seven
+    # scripts must be copied together to stay importable from scripts/.
     for key in (
         "task_utils",
         "check_review",
         "check_implementation",
+        "check_questions",
         "save_adr",
         "adr_utils",
         "agent_call",
@@ -246,6 +247,7 @@ _LOOP_ITERATION_KEYS = {
     "adr-loop": "max_adr_iterations",
     "implement-loop": "max_implement_iterations",
     "review-fix-loop": "max_fix_iterations",
+    "executor-questions-loop": "max_questions_iterations",
 }
 
 
@@ -301,6 +303,12 @@ def render_workflow(cfg: dict[str, Any], paths: Paths) -> None:
 def render_review_workflow(cfg: dict[str, Any], paths: Paths) -> None:
     paths["review_workflow"].write_text(
         _generate_workflow("review-pipeline", cfg), encoding="utf-8"
+    )
+
+
+def render_task_workflow(cfg: dict[str, Any], paths: Paths) -> None:
+    paths["task_workflow"].write_text(
+        _generate_workflow("task-pipeline", cfg), encoding="utf-8"
     )
 
 

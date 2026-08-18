@@ -23,6 +23,7 @@ the launcher keeps its single import surface.
 
 Usage:
   spec-run adr "feature description" [-i key=value ...]
+  spec-run task "task description" [-i key=value ...]
   spec-run review [--branch-diff]
   spec-run edit
   spec-run --backend cursor adr "feature description"   # override the backend for this run
@@ -31,6 +32,8 @@ Usage:
 Examples:
   spec-run adr "build a kanban board"
   spec-run adr "build a kanban board" -i task_id=kanban
+  spec-run task "add a dark mode toggle"
+  spec-run task "add a dark mode toggle" -i task_id=dark-mode
   spec-run --backend cursor adr "build a kanban board"
   spec-run review
   spec-run review --branch-diff
@@ -42,6 +45,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 # The exceptions package (one class per file) and the edit/editor modules
 # ship next to this launcher — source: pipeline_scripts/, installed: <bin
@@ -63,6 +67,7 @@ __all__ = [
     "INSTALL_PATH_FILE",
     "REVIEW_WORKFLOW",
     "RUN_PIPELINE",
+    "TASK_WORKFLOW",
     "USAGE",
     "build_command",
     "print_usage",
@@ -88,6 +93,7 @@ def _config_dir() -> Path:
 RUN_PIPELINE = str(_scripts_dir() / "run-pipeline.py")
 ADR_WORKFLOW = str(_config_dir() / "adr-pipeline.yml")
 REVIEW_WORKFLOW = str(_config_dir() / "review-pipeline.yml")
+TASK_WORKFLOW = str(_config_dir() / "task-pipeline.yml")
 CONFIG = str(_config_dir() / "config.yml")
 
 # The repo's install.py path, recorded by the installer for `spec-run edit`.
@@ -103,6 +109,12 @@ USAGE = """Usage: spec-run <subcommand> [args]
       Run the full ADR pipeline for the feature (ADR -> implementation ->
       review). All non-flag arguments after `adr` are joined into the feature
       input; -i key=value arguments are passed through to the workflow.
+
+  spec-run task "task description" [-i key=value ...]
+      Run the full task pipeline for the task (motivation study -> research ->
+      ADR -> implementation -> review). All non-flag arguments after `task`
+      are joined into the task input; -i key=value arguments are passed
+      through to the workflow.
 
   spec-run review [--branch-diff] [-i key=value ...]
       Review the project code (default: the whole codebase). With --branch-diff
@@ -152,6 +164,8 @@ def build_command(argv: list[str]) -> list[str]:
         raise HelpRequested
     if head == "adr":
         return _build_adr_command(rest, backend)
+    if head == "task":
+        return _build_task_command(rest, backend)
     if head == "review":
         return _build_review_command(rest, backend)
     if head == "edit":
@@ -164,12 +178,25 @@ def build_command(argv: list[str]) -> list[str]:
     raise InvalidInvocation
 
 
-def _build_adr_command(rest: list[str], backend: str | None = None) -> list[str]:
+def _build_text_input_command(
+    rest: list[str], backend: str | None, workflow: str, input_key: str
+) -> list[str]:
+    """Map the text-input subcommands (adr/task) to a run-pipeline command.
+
+    Both subcommands share one parsing concern: the non-flag arguments are
+    joined into a single text input (`-i <input_key>=<joined text>`), while
+    `-i key=value` pairs (two argv elements) and `-i key=value` single
+    elements are passed through to the workflow unchanged. A dangling `-i`
+    without a value is an invalid invocation, not a flag to forward: specify
+    would fail with a confusing parser error, while other bad calls get a
+    clear usage. The space in the `-i ` prefix is required so text like
+    `-integration` is not mistaken for an input.
+    """
     cmd = [RUN_PIPELINE]
     if backend:
         cmd += ["--backend", backend]
-    cmd.append(ADR_WORKFLOW)
-    feature_parts: list[str] = []
+    cmd.append(workflow)
+    text_parts: list[str] = []
     passed: list[str] = []
     i = 0
     while i < len(rest):
@@ -187,18 +214,26 @@ def _build_adr_command(rest: list[str], backend: str | None = None) -> list[str]
             continue
         if arg.startswith("-i "):
             # Combined single element: `-i key=value`. The space is required
-            # so feature text like `-integration` is not mistaken for an input.
+            # so text like `-integration` is not mistaken for an input.
             passed.append(arg)
         else:
-            feature_parts.append(arg)
+            text_parts.append(arg)
         i += 1
-    feature = " ".join(feature_parts)
-    if not feature:
+    text = " ".join(text_parts)
+    if not text:
         raise InvalidInvocation
     cmd.append("-i")
-    cmd.append("feature=" + feature)
+    cmd.append(f"{input_key}={text}")
     cmd.extend(passed)
     return cmd
+
+
+def _build_adr_command(rest: list[str], backend: str | None = None) -> list[str]:
+    return _build_text_input_command(rest, backend, ADR_WORKFLOW, "feature")
+
+
+def _build_task_command(rest: list[str], backend: str | None = None) -> list[str]:
+    return _build_text_input_command(rest, backend, TASK_WORKFLOW, "task")
 
 
 def _build_review_command(rest: list[str], backend: str | None = None) -> list[str]:
@@ -225,7 +260,7 @@ def _build_review_command(rest: list[str], backend: str | None = None) -> list[s
     return cmd
 
 
-def print_usage(stream=None) -> None:
+def print_usage(stream: Any = None) -> None:
     """Print the usage text; defaults to stdout, pass sys.stderr for errors."""
     if stream is None:
         stream = sys.stdout

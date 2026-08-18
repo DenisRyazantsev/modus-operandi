@@ -24,6 +24,10 @@ class LauncherPathsTest(unittest.TestCase):
                 str(base / "spec-kit-llm-client" / "review-pipeline.yml"),
             )
             self.assertEqual(
+                mod.TASK_WORKFLOW,
+                str(base / "spec-kit-llm-client" / "task-pipeline.yml"),
+            )
+            self.assertEqual(
                 mod.CONFIG, str(base / "spec-kit-llm-client" / "config.yml")
             )
             self.assertEqual(

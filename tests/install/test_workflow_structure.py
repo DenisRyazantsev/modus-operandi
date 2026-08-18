@@ -80,6 +80,7 @@ class WorkflowStructureTest(InstallerTestCase):
         for rel in (
             ".config/spec-kit-llm-client/adr-pipeline.yml",
             ".config/spec-kit-llm-client/review-pipeline.yml",
+            ".config/spec-kit-llm-client/task-pipeline.yml",
         ):
             parsed = self.parsed_workflow(rel)
             missing: list = []
@@ -746,6 +747,7 @@ class WorkflowStructureTest(InstallerTestCase):
         for rel in (
             ".config/spec-kit-llm-client/adr-pipeline.yml",
             ".config/spec-kit-llm-client/review-pipeline.yml",
+            ".config/spec-kit-llm-client/task-pipeline.yml",
         ):
             workflow = self.parsed_workflow(rel)
             for step_id, run in self.shell_runs(workflow["steps"]):
@@ -759,3 +761,4 @@ class WorkflowStructureTest(InstallerTestCase):
                     0,
                     msg=f"{rel} step {step_id!r} fails sh -n:\n{proc.stderr}",
                 )
+

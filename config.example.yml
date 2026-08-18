@@ -30,6 +30,7 @@ workflow:
   max_comment_iterations: 5      # legacy: no longer binds a separate comment loop (kept for backward compatibility)
   max_adr_iterations: 3          # ceiling for the human ADR approve/revise/reject loop
   max_implement_iterations: 2    # ceiling for the implement verify/retry loop (guard against an empty implementation)
+  max_questions_iterations: 3    # ceiling for the task-pipeline executor questions loop
   shell_timeout: 7200            # per-step timeout in seconds for agent steps (2h)
   adr_dir: architecture          # directory (repo-relative) where approved ADRs are saved
   human_gates: true              # false = gates auto-approve (non-interactive runs)

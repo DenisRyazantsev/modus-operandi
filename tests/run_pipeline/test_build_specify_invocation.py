@@ -73,6 +73,43 @@ class BuildSpecifyInvocationTest(unittest.TestCase):
             cmd, _, _, _ = self._invoke(mod, tmp, self._cfg(human_gates=False))
         self.assertNotIn("adr_verdict=", cmd)
 
+    def test_task_pipeline_passes_motivation_verdict(self):
+        # The task-pipeline gate is the motivation gate (the proposal gate
+        # was removed, ADR-0011): with human_gates true the verdict input is
+        # passed empty (interactive), and adr_verdict is not passed at all.
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            cmd, _, _, _ = self._invoke(mod, tmp, self._cfg(), source="task-pipeline")
+        self.assertIn("motivation_verdict=", cmd)
+        self.assertNotIn("proposal_verdict=", cmd)
+        self.assertNotIn("adr_verdict=", cmd)
+
+    def test_task_pipeline_human_gates_false_omits_verdicts(self):
+        # With human_gates false the default auto-approves the gate, so no
+        # verdict inputs are passed.
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            cmd, _, _, _ = self._invoke(
+                mod, tmp, self._cfg(human_gates=False), source="task-pipeline"
+            )
+        self.assertNotIn("motivation_verdict=", cmd)
+        self.assertNotIn("proposal_verdict=", cmd)
+        self.assertNotIn("adr_verdict=", cmd)
+
+    def test_task_pipeline_path_source_is_detected(self):
+        # The source may be a path to the installed workflow, not just the id.
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            cmd, _, _, _ = self._invoke(
+                mod,
+                tmp,
+                self._cfg(),
+                source="/home/u/.config/spec-kit-llm-client/task-pipeline.yml",
+            )
+        self.assertIn("motivation_verdict=", cmd)
+        self.assertNotIn("proposal_verdict=", cmd)
+        self.assertNotIn("adr_verdict=", cmd)
+
     def test_extra_args_are_appended(self):
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:

@@ -20,6 +20,7 @@ def build_paths(home: str | Path) -> Paths:
         "spec_run": base / ".local" / "bin" / "spec-run",
         "workflow": base / ".config" / "spec-kit-llm-client" / "adr-pipeline.yml",
         "review_workflow": base / ".config" / "spec-kit-llm-client" / "review-pipeline.yml",
+        "task_workflow": base / ".config" / "spec-kit-llm-client" / "task-pipeline.yml",
         "prompts": base / ".config" / "spec-kit-llm-client" / "prompts",
         "run_agent": base / ".config" / "opencode" / "scripts" / "run-agent.sh",
         "name_task": base / ".config" / "opencode" / "scripts" / "name-task.sh",
@@ -73,6 +74,7 @@ def build_paths(home: str | Path) -> Paths:
         "check_implementation": (
             base / ".config" / "opencode" / "scripts" / "check_implementation.py"
         ),
+        "check_questions": base / ".config" / "opencode" / "scripts" / "check_questions.py",
         "task_utils": base / ".config" / "opencode" / "scripts" / "task_utils.py",
         "adr_utils": base / ".config" / "opencode" / "scripts" / "adr_utils.py",
         "agent_call": base / ".config" / "opencode" / "scripts" / "agent_call.py",

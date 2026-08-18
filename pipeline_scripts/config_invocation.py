@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 # The installed config.yml: the only runtime source of the workflow settings
 # (state_dir, adr_dir, use_serve, human_gates). `__file__` is the installed
@@ -26,7 +27,7 @@ CONFIG_PATH = Path(
 BACKENDS = ("opencode", "cursor")
 
 
-def normalize_config(cfg: dict) -> dict:
+def normalize_config(cfg: dict[str, Any]) -> dict[str, Any]:
     """Fold the legacy top-level `models:` into `opencode.models`.
 
     The installer does the same at install time (spec_utils/config.py,
@@ -42,7 +43,7 @@ def normalize_config(cfg: dict) -> dict:
     return cfg
 
 
-def effective_backend(cfg: dict, cli_backend: str | None) -> str:
+def effective_backend(cfg: dict[str, Any], cli_backend: str | None) -> str:
     """Effective backend: the --backend CLI flag wins over the config key,
     which defaults to opencode. An invalid value in either place degrades to
     the config/default instead of failing the run.
@@ -53,7 +54,7 @@ def effective_backend(cfg: dict, cli_backend: str | None) -> str:
     return backend if backend in BACKENDS else "opencode"
 
 
-def role_model(cfg: dict, backend: str, role: str) -> str:
+def role_model(cfg: dict[str, Any], backend: str, role: str) -> str:
     """Model slug of a role under the active backend ("" when unset).
 
     The opencode agent files carry the opencode model; the exported value is
@@ -65,7 +66,7 @@ def role_model(cfg: dict, backend: str, role: str) -> str:
     return model if isinstance(model, str) else ""
 
 
-def load_config(config_path: Path | None = None) -> dict:
+def load_config(config_path: Path | None = None) -> dict[str, Any]:
     """Read the installed config.yml into a dict, or {} on any failure.
 
     config_path defaults to the module's CONFIG_PATH; the run-pipeline entry
@@ -89,7 +90,7 @@ def load_config(config_path: Path | None = None) -> dict:
 
 
 def build_specify_invocation(
-    cfg: dict, source: str, extra: list[str], cli_backend: str | None = None
+    cfg: dict[str, Any], source: str, extra: list[str], cli_backend: str | None = None
 ) -> tuple[list[str], dict[str, str], str, Path]:
     """Map the installed config + argv to the specify invocation.
 
@@ -105,8 +106,10 @@ def build_specify_invocation(
       exported as SKLC_BACKEND together with the role models of the active
       backend (SKLC_PLANNER_MODEL/SKLC_EXECUTOR_MODEL) for
       run-agent.sh/name-task.sh;
-    - human_gates decides whether the ADR gate's verdict input is passed as
-      empty (interactive) or left to its "approve" default (auto-approve);
+    - human_gates decides whether the gate verdict inputs are passed as
+      empty (interactive) or left to their defaults (auto-approve): the
+      adr-pipeline's ADR gate binds adr_verdict, the task-pipeline's
+      motivation gate binds motivation_verdict;
     - run-agent.sh keeps its sessions/logs/pids under the same state dir the
       workflow steps write artifacts to, so it must see SKLC_STATE_DIR.
     """
@@ -117,6 +120,13 @@ def build_specify_invocation(
     adr_dir = workflow.get("adr_dir") or "architecture"
     use_serve = bool(workflow.get("use_serve", False))
     human_gates = bool(workflow.get("human_gates", True))
+    # `source` is argv[0] — the raw workflow path the user passed (e.g.
+    # ~/.config/spec-kit-llm-client/task-pipeline.yml) or a bare id in tests,
+    # so only a substring test matches both forms; an exact match or an
+    # explicit flag would not. The else branch below intentionally keeps the
+    # legacy behavior of always passing adr_verdict, which review-pipeline
+    # tolerates as an undeclared input.
+    is_task_pipeline = "task-pipeline" in str(source)
     attach_flag = "--attach http://localhost:4096" if use_serve else ""
     scripts_dir = str(Path(__file__).resolve().parent)
     env = dict(os.environ)
@@ -138,10 +148,13 @@ def build_specify_invocation(
         f"adr_dir={adr_dir}",
     ]
     if human_gates:
-        # Interactive gates: an empty adr_verdict falls through to the human
-        # prompt. Non-interactive runs omit it, so the declared default
-        # "approve" auto-approves the ADR gate (matching human_gates: false).
-        specify_cmd += ["-i", "adr_verdict="]
+        # Interactive gates: an empty verdict input falls through to the
+        # human prompt. Non-interactive runs omit it, so the declared
+        # defaults auto-approve the gates (matching human_gates: false).
+        if is_task_pipeline:
+            specify_cmd += ["-i", "motivation_verdict="]
+        else:
+            specify_cmd += ["-i", "adr_verdict="]
     specify_cmd += extra
 
     logs_dir = Path.cwd() / state_dir / "logs"
