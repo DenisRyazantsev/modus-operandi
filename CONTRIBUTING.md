@@ -45,6 +45,12 @@ the dev installer copy to `~/.config/opencode/scripts/` verbatim.
    the workflow inputs as `"$1"`, `"$2"`, ... — the workflows never compute paths or values.
 4. New inline logic anywhere in a workflow is a merge-blocker.
 
+## Development
+
+From a checkout, `python3 install.py --home <dir>` installs the rendered
+pipeline into `<dir>` (used by the tests); run the launcher with
+`uv run spec-run` (or `python -m spec_run.cli`) after `uv sync`.
+
 ## Testing and linting
 
 ```

@@ -1,8 +1,26 @@
 # Spec Run
 
-## Motivation
+Automate spec-driven "planner -> executor" workflows in LLM clients (opencode
+and cursor): task planning, task implementing and code review.
 
-Automate repetitive workflows in LLM clients (opencode and cursor).
+## Quick start
+
+```shell
+pip install spec-run
+spec-run edit   # pick your models and backend
+spec-run task "<task-description>"
+```
+
+## Install
+
+`spec-run` works right after install: the first run renders the pipeline
+files (agents, scripts, workflows, prompts) into `~/.config/spec-run/` and
+`~/.config/opencode/`, and creates `~/.config/spec-run/config.yml` from the
+example. Updates arrive through PyPI (`pip install -U spec-run`); the render
+is re-applied automatically on the next run.
+
+Requirements: Python >= 3.12, and one backend CLI on PATH — `opencode`
+(default) or `cursor-agent` (see `--backend cursor` below).
 
 ## Usage
 
@@ -26,7 +44,7 @@ If you have a workflow like this
 then you can use this command
 
 ```shell
-spec-run task "<feature-description>"
+spec-run task "<task-description>"
 ```
 
 ### Review
@@ -46,10 +64,38 @@ then you can use this command
 spec-run review
 ```
 
-### Backend
-
-By default, opencode is used. If you need the cursor backend, use the `--backend cursor` flag:
+To review only the changes between the current branch and the default branch:
 
 ```shell
-spec-run --backend cursor task "<feature-description>"
+spec-run review --branch-diff
 ```
+
+### Backend
+
+By default, opencode is used. If you need the cursor backend, use the
+`--backend cursor` flag:
+
+```shell
+spec-run --backend cursor task "<task-description>"
+```
+
+### Config
+
+```shell
+spec-run edit
+```
+
+opens `~/.config/spec-run/config.yml` in your terminal editor. On save and
+close it validates the file: a valid config is applied, an invalid one is
+rolled back and the error is reported with its line number.
+
+## Uninstall
+
+```shell
+spec-run uninstall
+pip uninstall spec-run
+```
+
+removes the rendered pipeline files (`~/.config/spec-run` and the spec-run
+files under `~/.config/opencode`) — run `pip uninstall spec-run` afterwards
+to remove the package itself.
