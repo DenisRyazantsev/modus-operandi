@@ -15,7 +15,7 @@ import types
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-_SRC_DIR = REPO_ROOT / "pipeline_scripts"
+_SRC_DIR = REPO_ROOT / "src/spec_run/data/pipeline_scripts"
 
 # The modules that make up the run-pipeline wrapper: the entry plus the
 # one-class-per-file modules, the shared helpers module and the

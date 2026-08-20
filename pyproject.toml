@@ -1,21 +1,79 @@
+[build-system]
+requires = ["uv_build >= 0.12.1, <0.13.0"]
+build-backend = "uv_build"
+
 [project]
-name = "spec-kit-llm-client"
+name = "spec-run"
 version = "0.1.0"
-requires-python = ">=3.14"
-dependencies = ["pyyaml"]
+description = "Spec-driven planner -> executor pipelines for opencode and cursor"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Denis Riazantsev", email = "metacodeine@gmail.com" },
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Build Tools",
+]
+dependencies = ["specify-cli>=0.16", "pyyaml"]
+
+[project.urls]
+repository = "https://github.com/DenisRyazantsev/spec-run"
+
+[project.scripts]
+spec-run = "spec_run.cli:main"
 
 [dependency-groups]
-dev = ["ruff", "mypy", "types-PyYAML"]
+dev = ["pytest", "ruff", "mypy", "types-PyYAML"]
 
 [tool.ruff]
-target-version = "py314"
+target-version = "py312"
 line-length = 100
 lint.select = ["E", "F", "I", "W", "B", "UP", "SIM"]
 
 [tool.mypy]
-python_version = "3.14"
+python_version = "3.12"
 strict = true
-files = ["install.py", "spec_utils", "pipeline_scripts/save_adr.py", "pipeline_scripts/check_review.py", "pipeline_scripts/check_implementation.py", "pipeline_scripts/check_questions.py", "pipeline_scripts/task_utils.py", "pipeline_scripts/adr_utils.py", "pipeline_scripts/agent_call.py"]
+# The standalone data scripts are not part of the spec_run package (no
+# __init__.py under data/): with explicit package bases mypy maps them only
+# through mypy_path, so their sibling imports resolve to the same module
+# names the scripts use at runtime.
+explicit_package_bases = true
+files = [
+    "install.py",
+    "src/spec_run",
+    # The standalone pipeline scripts are data (rendered verbatim into
+    # ~/.config/opencode/scripts), but they are first-class code: keep them
+    # under strict checking like the pre-pip installer did.
+    "src/spec_run/data/pipeline_scripts/save_adr.py",
+    "src/spec_run/data/pipeline_scripts/check_review.py",
+    "src/spec_run/data/pipeline_scripts/check_implementation.py",
+    "src/spec_run/data/pipeline_scripts/check_questions.py",
+    "src/spec_run/data/pipeline_scripts/task_utils.py",
+    "src/spec_run/data/pipeline_scripts/adr_utils.py",
+    "src/spec_run/data/pipeline_scripts/agent_call.py",
+]
+# The rest of the package data is runtime artifact material (rendered
+# verbatim, exercised by pytest); the negative lookahead keeps the
+# explicitly checked standalone scripts above in scope.
+exclude = [
+    "src/spec_run/data/(?!pipeline_scripts/(save_adr|check_review|check_implementation|check_questions|task_utils|adr_utils|agent_call)\\.py$)",
+]
+# The standalone scripts import each other from the same directory (e.g.
+# save_adr.py imports adr_utils/agent_call/task_utils); point mypy at it so
+# those sibling imports resolve. "src" is the explicit package base of the
+# spec_run package.
+mypy_path = ["src", "src/spec_run/data/pipeline_scripts"]
 
 [[tool.mypy.overrides]]
 module = "tests.*"

@@ -104,7 +104,7 @@ class BuildSpecifyInvocationTest(unittest.TestCase):
                 mod,
                 tmp,
                 self._cfg(),
-                source="/home/u/.config/spec-kit-llm-client/task-pipeline.yml",
+                source="/home/u/.config/spec-run/task-pipeline.yml",
             )
         self.assertIn("motivation_verdict=", cmd)
         self.assertNotIn("proposal_verdict=", cmd)

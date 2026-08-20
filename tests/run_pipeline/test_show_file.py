@@ -5,9 +5,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from spec_utils import REPO_ROOT
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-SCRIPT = REPO_ROOT / "pipeline_scripts" / "show-file.sh"
+SCRIPT = REPO_ROOT / "src/spec_run/data/pipeline_scripts" / "show-file.sh"
 
 
 class ShowFileTest(unittest.TestCase):

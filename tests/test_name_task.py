@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-NAME_TASK = REPO_ROOT / "pipeline_scripts" / "name-task.sh"
+NAME_TASK = REPO_ROOT / "src/spec_run/data/pipeline_scripts" / "name-task.sh"
 
 CURSOR_AGENT_SCRIPT = """#!/usr/bin/env bash
 printf '%s\\0' "$@" >> "$FAKE_CURSOR_LOG"

@@ -29,7 +29,7 @@ class WorkflowStepIdsTest(unittest.TestCase):
     def test_resolves_bare_id_from_installed_config_dir(self):
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
-            config_dir = Path(tmp) / "spec-kit-llm-client"
+            config_dir = Path(tmp) / "spec-run"
             config_dir.mkdir(parents=True)
             (config_dir / "task-pipeline.yml").write_text(
                 "steps:\n  - id: a\n  - id: b\n", encoding="utf-8"

@@ -11,10 +11,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 # check_review.py imports task_utils.py from the same directory.
-sys.path.insert(0, str(REPO_ROOT / "pipeline_scripts"))
+sys.path.insert(0, str(REPO_ROOT / "src/spec_run/data/pipeline_scripts"))
 
 _SPEC = importlib.util.spec_from_file_location(
-    "check_review", REPO_ROOT / "pipeline_scripts" / "check_review.py"
+    "check_review", REPO_ROOT / "src/spec_run/data/pipeline_scripts" / "check_review.py"
 )
 assert _SPEC is not None and _SPEC.loader is not None
 check_review = importlib.util.module_from_spec(_SPEC)

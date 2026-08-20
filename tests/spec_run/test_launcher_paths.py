@@ -16,21 +16,13 @@ class LauncherPathsTest(unittest.TestCase):
                 mod.RUN_PIPELINE, str(base / "opencode" / "scripts" / "run-pipeline.py")
             )
             self.assertEqual(
-                mod.ADR_WORKFLOW,
-                str(base / "spec-kit-llm-client" / "adr-pipeline.yml"),
-            )
-            self.assertEqual(
                 mod.REVIEW_WORKFLOW,
-                str(base / "spec-kit-llm-client" / "review-pipeline.yml"),
+                str(base / "spec-run" / "review-pipeline.yml"),
             )
             self.assertEqual(
                 mod.TASK_WORKFLOW,
-                str(base / "spec-kit-llm-client" / "task-pipeline.yml"),
+                str(base / "spec-run" / "task-pipeline.yml"),
             )
             self.assertEqual(
-                mod.CONFIG, str(base / "spec-kit-llm-client" / "config.yml")
-            )
-            self.assertEqual(
-                mod.INSTALL_PATH_FILE,
-                base / "spec-kit-llm-client" / "install-path.txt",
+                mod.CONFIG, str(base / "spec-run" / "config.yml")
             )

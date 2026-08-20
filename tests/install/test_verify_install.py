@@ -2,7 +2,7 @@
 
 from unittest import mock
 
-from spec_utils import InstallError, config, paths, proc, tool_discovery, verify, versions
+from spec_run import InstallError, config, paths, proc, tool_discovery, verify
 
 from .fake_result import FakeResult
 from .install_helpers import which_fake
@@ -26,8 +26,9 @@ def _opencode_cfg() -> dict:
 
 
 class VerifyInstallTest(InstallerTestCase):
-    """verify.verify_install: all errors are collected, and specify-version
-    failures degrade to the documented messages."""
+    """verify.verify_install: all errors are collected, and the specify
+    syntax probe degrades to the documented message when specify is off
+    PATH."""
 
     def test_verify_collects_all_errors(self):
         layout = paths.build_paths(str(self.home))
@@ -38,7 +39,7 @@ class VerifyInstallTest(InstallerTestCase):
         run_agent.chmod(0o755)
 
         def run_fake(cmd, cwd=None, env=None, check=True):
-            if cmd[1:3] == ["workflow", "run"]:
+            if cmd[1:3] == ["workflow", "info"]:
                 return FakeResult(1, "", "Error: Required input 'feature' not provided.\n")
             if cmd[-3:] == ["opencode", "agent", "list"]:
                 return FakeResult(0, "build (primary)\n")
@@ -98,14 +99,8 @@ class VerifyInstallTest(InstallerTestCase):
 
         with (
             mock.patch.object(tool_discovery, "find_in_path", side_effect=which_off_specify),
-            mock.patch.object(
-                versions,
-                "latest_specify_version",
-                return_value=((0, 16), "/home/u/.local/bin/specify"),
-            ),
             self.assertRaises(InstallError) as cm,
         ):
             verify.verify_install(layout, cfg)
         err = str(cm.exception)
         self.assertIn("'specify' not found on PATH", err)
-        self.assertIn("/home/u/.local/bin/specify", err)

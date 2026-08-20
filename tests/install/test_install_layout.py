@@ -2,9 +2,11 @@
 
 import os
 
-from spec_utils import REPO_ROOT
+from spec_run import __version__
 
 from .installer_test_case import InstallerTestCase
+
+DATA_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "src", "spec_run", "data")
 
 
 class InstallLayoutTest(InstallerTestCase):
@@ -52,24 +54,14 @@ class InstallLayoutTest(InstallerTestCase):
             ".config/opencode/scripts/adr_utils.py",
             ".config/opencode/scripts/agent_call.py",
             ".config/opencode/scripts/show-file.sh",
-            ".config/spec-kit-llm-client/adr-pipeline.yml",
-            ".config/spec-kit-llm-client/review-pipeline.yml",
-            ".config/spec-kit-llm-client/task-pipeline.yml",
-            ".config/spec-kit-llm-client/config.example.yml",
-            ".config/spec-kit-llm-client/prompts/review/srp-review.md",
-            ".config/spec-kit-llm-client/prompts/adr/implement.md",
-            ".config/spec-kit-llm-client/prompts/task/study.md",
-            ".config/spec-kit-llm-client/prompts/srp-fix.md",
-            ".config/spec-kit-llm-client/install-path.txt",
-            ".local/bin/spec-run",
-            # spec-run's exceptions package (one class per file) and the
-            # edit/editor modules copied next to the launcher.
-            ".local/bin/exceptions/__init__.py",
-            ".local/bin/exceptions/help_requested.py",
-            ".local/bin/exceptions/invalid_invocation.py",
-            ".local/bin/exceptions/edit_requested.py",
-            ".local/bin/edit_command.py",
-            ".local/bin/editor.py",
+            ".config/spec-run/review-pipeline.yml",
+            ".config/spec-run/task-pipeline.yml",
+            ".config/spec-run/config.example.yml",
+            ".config/spec-run/install-version.txt",
+            ".config/spec-run/prompts/review/srp-review.md",
+            ".config/spec-run/prompts/adr/implement.md",
+            ".config/spec-run/prompts/task/study.md",
+            ".config/spec-run/prompts/srp-fix.md",
         ]
         for rel in expected:
             self.assertTrue((self.home / rel).exists(), rel)
@@ -78,7 +70,11 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertTrue(
             os.access(self.home / ".config/opencode/scripts/prompt_subst.sh", os.X_OK)
         )
-        self.assertTrue(os.access(self.home / ".local/bin/spec-run", os.X_OK))
+        # The adr pipeline is gone and no launcher is rendered into
+        # ~/.local/bin anymore (the console script comes from pip).
+        self.assertFalse((self.home / ".config/spec-run/adr-pipeline.yml").exists())
+        self.assertFalse((self.home / ".config/spec-run/install-path.txt").exists())
+        self.assertFalse((self.home / ".local/bin/spec-run").exists())
 
     def test_reinstall_preserves_user_config(self):
         self.assertEqual(self.install(), 0)
@@ -96,6 +92,14 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertEqual(self.install(), 0)
         self.assertIn("# USER EDITED", self.read_config())
         self.assertIn("my-model", self.read_config())
+
+    def test_install_version_marker(self):
+        # The marker records the package version, so the launcher bootstrap
+        # knows the rendered artifacts are current.
+        self.assertEqual(self.install(), 0)
+        marker = self.home / ".config/spec-run/install-version.txt"
+        self.assertTrue(marker.exists())
+        self.assertEqual(marker.read_text(encoding="utf-8").strip(), __version__)
 
     def test_rendered_executor_has_model_and_permissions(self):
         self.assertEqual(self.install(), 0)
@@ -123,12 +127,12 @@ class InstallLayoutTest(InstallerTestCase):
             self.read_config().replace("state_dir: .workflow", "state_dir: meta")
         )
         self.assertEqual(self.install(), 0)
-        workflow = (self.home / ".config/spec-kit-llm-client/adr-pipeline.yml").read_text(
+        workflow = (self.home / ".config/spec-run/task-pipeline.yml").read_text(
             encoding="utf-8"
         )
         self.assertNotIn("meta", workflow)
         self.assertIn("{{ inputs.state_dir }}", workflow)
-        parsed = self.parsed_workflow()
+        parsed = self.parsed_workflow(".config/spec-run/task-pipeline.yml")
         self.assertEqual(parsed["inputs"]["state_dir"]["default"], ".workflow")
         run_agent = (self.home / ".config/opencode/scripts/run-agent.sh").read_text(
             encoding="utf-8"
@@ -170,30 +174,13 @@ class InstallLayoutTest(InstallerTestCase):
         common = self.home / ".config/opencode/scripts/_run_pipeline_common.py"
         self.assertIn('strftime("%H:%M:%S")', common.read_text(encoding="utf-8"))
 
-    def test_spec_run_launcher_installed(self):
-        self.assertEqual(self.install(), 0)
-        launcher = self.home / ".local/bin/spec-run"
-        self.assertTrue(launcher.exists())
-        self.assertTrue(os.access(launcher, os.X_OK))
-        text = launcher.read_text(encoding="utf-8")
-        # Paths are derived from XDG_CONFIG_HOME/$HOME at runtime, not baked.
-        self.assertIn("XDG_CONFIG_HOME", text)
-        self.assertIn("install-path.txt", text)
-        self.assertIn("os.execv", text)
-        self.assertNotIn(str(self.home), text)
-        # The installer records the repo's install.py path for `spec-run edit`.
-        install_path = self.home / ".config/spec-kit-llm-client/install-path.txt"
-        self.assertTrue(install_path.exists())
-        self.assertEqual(
-            install_path.read_text(encoding="utf-8").strip(), str(REPO_ROOT / "install.py")
-        )
-
     def test_victory_wav_shipped_next_to_wrapper(self):
         self.assertEqual(self.install(), 0)
         wav = self.home / ".config/opencode/scripts/victory.wav"
         self.assertTrue(wav.is_file())
-        shipped = REPO_ROOT / "architecture" / "assets" / "victory.wav"
-        self.assertEqual(wav.read_bytes(), shipped.read_bytes())
+        shipped = os.path.join(DATA_ROOT, "victory.wav")
+        with open(shipped, "rb") as fh:
+            self.assertEqual(wav.read_bytes(), fh.read())
 
     def test_run_agent_guards(self):
         self.assertEqual(self.install(), 0)

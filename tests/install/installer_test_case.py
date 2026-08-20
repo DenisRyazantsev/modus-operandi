@@ -6,8 +6,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from spec_utils import cli as install
-from spec_utils import proc, tool_discovery, yaml_loader
+from spec_run import installer_cli as install
+from spec_run import proc, tool_discovery, yaml_loader
 
 from .install_helpers import make_run, which_fake
 
@@ -28,7 +28,7 @@ class InstallerTestCase(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def parsed_workflow(self, rel=".config/spec-kit-llm-client/adr-pipeline.yml"):
+    def parsed_workflow(self, rel=".config/spec-run/review-pipeline.yml"):
         return yaml_loader.yaml.safe_load(
             (self.home / rel).read_text(encoding="utf-8")
         )
@@ -59,10 +59,10 @@ class InstallerTestCase(unittest.TestCase):
         return self.run_main(["--home", str(self.home), *extra])[0]
 
     def read_config(self):
-        path = self.home / ".config" / "spec-kit-llm-client" / "config.yml"
+        path = self.home / ".config" / "spec-run" / "config.yml"
         return path.read_text(encoding="utf-8")
 
     def write_config(self, text):
-        path = self.home / ".config" / "spec-kit-llm-client" / "config.yml"
+        path = self.home / ".config" / "spec-run" / "config.yml"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")

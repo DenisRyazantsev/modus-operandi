@@ -1,13 +1,10 @@
 """Unit tests for config.apply_defaults."""
 
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from spec_utils import config
+from spec_run import config
 
 
 class ApplyDefaultsTest(unittest.TestCase):
@@ -19,7 +16,6 @@ class ApplyDefaultsTest(unittest.TestCase):
         self.assertEqual(cfg["workflow"]["max_srp_iterations"], 5)
         self.assertEqual(cfg["workflow"]["max_bug_iterations"], 5)
         self.assertEqual(cfg["workflow"]["max_comment_iterations"], 5)
-        self.assertEqual(cfg["workflow"]["max_adr_iterations"], 3)
         self.assertEqual(cfg["workflow"]["max_implement_iterations"], 2)
         self.assertEqual(cfg["workflow"]["max_questions_iterations"], 3)
         self.assertEqual(cfg["workflow"]["shell_timeout"], 7200)

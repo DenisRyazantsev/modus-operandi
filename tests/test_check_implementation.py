@@ -8,8 +8,10 @@ from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+_PS_DIR = REPO_ROOT / "src" / "spec_run" / "data" / "pipeline_scripts"
+
 _SPEC = importlib.util.spec_from_file_location(
-    "check_implementation", REPO_ROOT / "pipeline_scripts" / "check_implementation.py"
+    "check_implementation", _PS_DIR / "check_implementation.py"
 )
 assert _SPEC is not None and _SPEC.loader is not None
 check_implementation = importlib.util.module_from_spec(_SPEC)

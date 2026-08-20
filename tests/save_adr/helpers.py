@@ -14,10 +14,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 # appended (not inserted at 0) so its modules never shadow the test packages
 # during unittest discovery (e.g. pipeline_scripts/spec_run.py must not win
 # over tests/spec_run/ when discovery imports the "spec_run" package).
-sys.path.append(str(REPO_ROOT / "pipeline_scripts"))
+sys.path.append(str(REPO_ROOT / "src/spec_run/data/pipeline_scripts"))
 
 _SPEC = importlib.util.spec_from_file_location(
-    "save_adr_under_test", REPO_ROOT / "pipeline_scripts" / "save_adr.py"
+    "save_adr_under_test", REPO_ROOT / "src/spec_run/data/pipeline_scripts" / "save_adr.py"
 )
 assert _SPEC is not None and _SPEC.loader is not None
 # Registered under a distinct name so it does not shadow the tests.save_adr

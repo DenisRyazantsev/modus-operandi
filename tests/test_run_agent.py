@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-RUN_AGENT = REPO_ROOT / "pipeline_scripts" / "run-agent.sh"
+RUN_AGENT = REPO_ROOT / "src/spec_run/data/pipeline_scripts" / "run-agent.sh"
 
 PLANNER_BODY = "You are the planner and reviewer in a spec-driven pipeline."
 EXECUTOR_BODY = "You are the executor in a spec-driven pipeline."
@@ -129,7 +129,7 @@ class RunAgentTest(unittest.TestCase):
         for name in ("run-agent.sh", "session_store.sh", "run-agent-cursor.sh",
                      "prompt_subst.sh"):
             dst = self.scripts / name
-            shutil.copy2(REPO_ROOT / "pipeline_scripts" / name, dst)
+            shutil.copy2(REPO_ROOT / "src/spec_run/data/pipeline_scripts" / name, dst)
             if name in ("run-agent.sh", "prompt_subst.sh"):
                 dst.chmod(0o755)
         self.run_agent = self.scripts / "run-agent.sh"
