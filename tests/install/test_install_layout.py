@@ -104,7 +104,7 @@ class InstallLayoutTest(InstallerTestCase):
     def test_rendered_executor_has_model_and_permissions(self) -> None:
         self.assertEqual(self.install(), 0)
         executor = (self.home / ".config/opencode/agent/executor.md").read_text(encoding="utf-8")
-        self.assertIn("opencode/deepseek-v4-flash-free", executor)
+        self.assertIn("opencode/big-pickle", executor)
         self.assertIn("reasoningEffort: max", executor)
         self.assertIn("permission", executor)
 

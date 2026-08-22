@@ -13,7 +13,7 @@ opencode:                  # models for the opencode backend (legacy top-level `
       reasoning: max                  # reasoning effort passed to the provider (e.g. minimal, low, high, max)
     executor:
       provider: opencode
-      model: deepseek-v4-flash-free   # cheap/fast model for implementation (free on Zen; paid: deepseek-v4-flash, ...)
+      model: big-pickle               # model for implementation (free on Zen; paid: deepseek-v4-flash, ...)
       reasoning: max                  # reasoning effort passed to the provider
 
 cursor:                    # models for the cursor backend (passed to cursor-agent as --model <slug>)
