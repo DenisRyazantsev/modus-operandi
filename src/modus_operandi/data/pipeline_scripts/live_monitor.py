@@ -97,7 +97,9 @@ class LiveMonitor:
         for role, fork_id, _text, event in self._tailer.tail():
             line = self._live.add_event(role, fork_id, event)
             if line is not None:
-                # Non-TTY: one plain line per step_finish event.
+                # Non-TTY: one plain line per event with usage (add_event
+                # returns a line for any event type that carries usage —
+                # cursor result-style events included).
                 self._emitter.emit_live([line], plain=True)
 
     def _poll_once(self, run_id: str | None = None) -> None:
@@ -115,7 +117,7 @@ class LiveMonitor:
             # current_step_id, the poller reuses the same data, and the live
             # lines need the current step for the N/M progress.
             state = self._poller.read_state()
-            if self.gate.update(state):
+            if self.gate.update_and_closed(state):
                 # The engine moved past the gate: flush what was buffered
                 # while the menu was open, then resume live emission.
                 self._emitter.flush()
