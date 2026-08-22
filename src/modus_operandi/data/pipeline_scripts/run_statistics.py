@@ -18,7 +18,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from _run_pipeline_common import fmt_duration, fmt_thousands
+from display import fmt_duration, fmt_thousands
 from latency_table import print_latency_table
 from usage_parser import event_usage, is_result_style
 

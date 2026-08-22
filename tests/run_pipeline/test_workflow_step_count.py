@@ -97,7 +97,9 @@ class StepMarkerTest(unittest.TestCase):
         captured = io.StringIO()
         with (
             stdout(captured),
-            mock.patch.object(mod._run_pipeline_common, "stamp", return_value="07:51:37"),
+            # print_step_result lives in display.py, so the timestamp patch
+            # must target that module (not the entry module).
+            mock.patch.object(mod.display, "stamp", return_value="07:51:37"),
         ):
             mod.print_step_result("study", {"status": "completed", "output": {"stdout": ""}}, 3, 15)
         self.assertIn("[07:51:37] --- step study (completed) [4/15]", captured.getvalue())

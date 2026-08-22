@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from _run_pipeline_common import TERMINAL_STATUSES
+from run_state import TERMINAL_STATUSES
 
 
 class StepResultPoller:

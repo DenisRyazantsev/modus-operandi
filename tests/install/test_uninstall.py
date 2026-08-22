@@ -31,9 +31,13 @@ class UninstallTest(InstallerTestCase):
             ".config/opencode/scripts/run-agent-cursor.sh",
             ".config/opencode/scripts/prompt_subst.sh",
             ".config/opencode/scripts/run-pipeline.py",
-            # run-pipeline.py is split one class per file: the modules are
+            # run-pipeline.py is split one concern per file: the modules are
             # removed together with the wrapper.
-            ".config/opencode/scripts/_run_pipeline_common.py",
+            ".config/opencode/scripts/engine_output.py",
+            ".config/opencode/scripts/feedback_gate.py",
+            ".config/opencode/scripts/display.py",
+            ".config/opencode/scripts/run_state.py",
+            ".config/opencode/scripts/workflow_info.py",
             ".config/opencode/scripts/run_id_discoverer.py",
             ".config/opencode/scripts/step_result_poller.py",
             ".config/opencode/scripts/agent_log_tailer.py",
@@ -121,6 +125,19 @@ class UninstallTest(InstallerTestCase):
         self.assertFalse((bin_dir / "editor.py").exists())
         self.assertIn("kept the pip console scripts", sink.getvalue())
         self.assertIn("pip uninstall modus-operandi", sink.getvalue())
+
+    def test_uninstall_removes_legacy_split_modules(self) -> None:
+        # A machine upgraded from the released 0.1.0 package still has
+        # scripts/_run_pipeline_common.py on disk (the pre-split module,
+        # replaced by the five one-concern modules): uninstall must remove
+        # it too, or "removes every modus-operandi-owned file" would be a
+        # lie forever.
+        self.assertEqual(self.install(), 0)
+        legacy = self.home / ".config/opencode/scripts/_run_pipeline_common.py"
+        legacy.write_text("legacy split module\n", encoding="utf-8")
+        rc, _ = self.run_main(["--home", str(self.home), "--uninstall", "--yes"])
+        self.assertEqual(rc, 0)
+        self.assertFalse(legacy.exists())
 
     def test_uninstall_prompt_declined_removes_nothing(self) -> None:
         self.assertEqual(self.install(), 0)

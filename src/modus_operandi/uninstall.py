@@ -28,7 +28,11 @@ _SCRIPTS_KEYS = (
     "run_agent_cursor",
     "prompt_subst",
     "run_pipeline",
-    "run_pipeline_common",
+    "engine_output",
+    "feedback_gate",
+    "display",
+    "run_state",
+    "workflow_info",
     "run_id_discoverer",
     "step_result_poller",
     "agent_log_tailer",
@@ -72,6 +76,14 @@ _SCRIPTS_KEYS = (
 # the pip model. The live pip console script (pip install --user) is
 # detected and kept — pip uninstall removes it together with the package.
 _LEGACY_BIN_NAMES = ("modus-operandi", "editor.py", "edit_command.py")
+
+# Files that pre-split releases rendered into scripts/ but no current
+# _SCRIPTS_KEYS entry references: the released 0.1.0 package installed
+# _run_pipeline_common.py, which the one-concern module split replaced.
+# Nothing imports these leftovers, but uninstall claims to remove every
+# modus-operandi-owned file, so an upgraded machine must not keep them
+# forever.
+_LEGACY_SCRIPT_NAMES = ("_run_pipeline_common.py",)
 
 
 def pip_installed_bin(paths: Paths) -> set[Path]:
@@ -122,6 +134,13 @@ def do_uninstall(paths: Paths, yes: bool) -> int:
         if path.exists():
             path.unlink()
             removed.append(str(path))
+    # Scripts of pre-split releases (see _LEGACY_SCRIPT_NAMES): no current
+    # key points at them, so they are removed by name.
+    for name in _LEGACY_SCRIPT_NAMES:
+        legacy = paths["scripts"] / name
+        if legacy.exists():
+            legacy.unlink()
+            removed.append(str(legacy))
     for name in _LEGACY_BIN_NAMES:
         legacy = paths["user_bin"] / name
         if legacy in pip_owned:

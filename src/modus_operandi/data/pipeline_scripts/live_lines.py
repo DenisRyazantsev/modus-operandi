@@ -21,8 +21,8 @@ drawing); on a non-TTY no ANSI is drawn — the harness line prints once per
 step change (plain, no spinner, no heartbeat) and one plain line is returned
 per event WITH usage (opencode `step_finish`, cursor usage events), which
 the caller prints. When a workflow step completes, every active line is
-fixed: returned as plain history lines and cleared, so the next event of the
-same process opens a new line (the sums continue).
+pinned: returned as plain history lines and cleared, so the next event of
+the same process opens a new line (the sums continue).
 """
 
 from __future__ import annotations
@@ -31,13 +31,20 @@ import sys
 import time
 from typing import Any
 
-from _run_pipeline_common import (
-    HEARTBEAT_SECONDS,
-    SPINNER_FRAMES,
-    fmt_thousands,
-    stamp,
-)
+from display import fmt_thousands, stamp
 from usage_parser import event_usage, is_result_style
+
+# The live status line's spinner cadence (ADR-0012, ADR-0013): the frame is
+# chosen from the elapsed time (rich-style time-based spinner), so it
+# advances every heartbeat while the monitor redraws the block every 0.25 s
+# tick — the line visibly "breathes" between model turns without the text
+# after the frame shifting. A fixed constant: no config key.
+HEARTBEAT_SECONDS = 0.25
+
+# Single-column spinner frames (braille, each exactly one terminal column
+# wide): the line is `[hh:mm:ss] [<role>] <frame> [<step> N/M] ...` — the
+# frame never shifts the text that follows it (ADR-0012).
+SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
 class LiveLines:
@@ -60,7 +67,7 @@ class LiveLines:
         self._step_index: int | None = None
         self._step_has_events = False
         # The step label each active line was opened under and the harness
-        # line was last rendered under: fix_all() renders the fixed copies
+        # line was last rendered under: pin_all() renders the pinned copies
         # with these captured labels, so a completed step's lines keep their
         # own step even after the engine advanced current_step_id (bug fix).
         self._line_steps: dict[tuple[str, str], tuple[str, int | None]] = {}
@@ -73,10 +80,6 @@ class LiveLines:
         # time, so the 4 fps cadence (ADR-0013) never drifts even when a
         # monitor tick is skipped.
         self._t0 = time.monotonic()
-
-    @property
-    def step_index(self) -> int | None:
-        return self._step_index
 
     @property
     def total_steps(self) -> int | None:
@@ -149,7 +152,7 @@ class LiveLines:
         self._active.add(key)
         self._step_has_events = True
         if newly_active:
-            # The line is opened for the step that is current NOW: fix_all()
+            # The line is opened for the step that is current NOW: pin_all()
             # renders the fixed copy with this captured label, so the
             # completed step's lines keep their own step even after the
             # engine has advanced current_step_id (bug fix, ADR-0012).
@@ -281,15 +284,15 @@ class LiveLines:
             return [self._harness_line(self._step_id, self._step_index)]
         return []
 
-    def fix_all(self, completed_step_id: str | None = None) -> list[str]:
-        """Fix every line on screen — the process lines and the harness line
+    def pin_all(self, completed_step_id: str | None = None) -> list[str]:
+        """Pin every line on screen — the process lines and the harness line
         — as plain history lines and clear the block (TTY only; on a non-TTY
         each event already printed its own line).
 
-        The fixed copies are rendered with the step label each line was
+        The pinned copies are rendered with the step label each line was
         opened/render under, never with the engine's already-advanced
         current_step_id: a completed step's lines keep their own step, and
-        the harness line is fixed only when it belongs to the completed
+        the harness line is pinned only when it belongs to the completed
         step (`completed_step_id`) — otherwise it stays live for the next
         step, so nothing is duplicated above the step marker (bug fix).
         The next event of the same process opens a new line with the
@@ -297,7 +300,7 @@ class LiveLines:
         starts with the harness line again (ADR-0012).
         """
         if not self._tty:
-            # fix_all is also the step-boundary hook: the event window
+            # pin_all is also the step-boundary hook: the event window
             # resets so the next step's harness line can print, and _active
             # is cleared so the next event re-opens the process line and
             # re-captures the CURRENT step's label — a stale _active would
@@ -314,9 +317,9 @@ class LiveLines:
             and (completed_step_id is None or self._harness_step[0] == completed_step_id)
         ):
             # In production the monitor always passes the completed step's
-            # id, so None means "no specific step known — fix whatever is
+            # id, so None means "no specific step known — pin whatever is
             # on screen" (a direct-call/test default), not a runtime path;
-            # the id match is what prevents fixing a harness that belongs
+            # the id match is what prevents pinning a harness that belongs
             # to a different step.
             lines.append(self._harness_line(*self._harness_step))
         self._active.clear()

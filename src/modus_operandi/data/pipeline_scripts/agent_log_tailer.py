@@ -7,8 +7,6 @@ import json
 import re
 from pathlib import Path
 
-from _run_pipeline_common import render_log_event
-
 
 class AgentLogTailer:
     """Tails the per-role agent logs (<state_dir>/logs/*.jsonl).
@@ -36,8 +34,9 @@ class AgentLogTailer:
         Raw file reading (byte offsets) lives in _read_appended(). The role
         and the fork id come from the log file name (ADR-0011: the parallel
         review forks write per-invocation files, so the live status lines
-        can keep separate accumulators), the text from render_log_event
-        (always empty since ADR-0011) and the event is the parsed JSON
+        can keep separate accumulators), the text is always empty (since
+        ADR-0011 nothing is printed from the agent logs — the live status
+        lines replace the old log echo) and the event is the parsed JSON
         object of the line (None for a non-JSON line) — the live status
         lines consume the `step_finish` events from it.
         """
@@ -61,10 +60,9 @@ class AgentLogTailer:
                 event = None
                 with contextlib.suppress(Exception):
                     event = json.loads(line)
-                # The role is fixed per log file; render_log_event maps the
-                # line to a (role, text) pair and never varies the role.
-                _, text = render_log_event(role, line)
-                events.append((role, fork_id, text, event))
+                # Nothing is printed from the agent logs anymore (ADR-0011):
+                # the text element of the quadruple is always empty.
+                events.append((role, fork_id, "", event))
         return events
 
     def _read_appended(self, path: Path) -> tuple[list[str], int]:

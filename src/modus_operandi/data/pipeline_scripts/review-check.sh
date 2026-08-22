@@ -13,7 +13,7 @@
 #
 #   item       one of srp|bugs|review|comment
 #   prompt-ns  "review" (review-pipeline: rereview-vs-review selected by the
-#              per-kind snapshot file) or "adr" (adr-pipeline: full review
+#              per-kind snapshot file) or "adr" (task-pipeline: full review
 #              every iteration, no snapshot)
 set -euo pipefail
 

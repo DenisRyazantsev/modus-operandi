@@ -18,7 +18,7 @@ from .helpers import FakeProc, load_run_pipeline, point_config_at
 
 
 class FeedbackGateFlowTest(unittest.TestCase):
-    """main() recognizes the ADR revise feedback gate: the editor opens and
+    """main() recognizes the feedback gate: the editor opens and
     no victory sound is played (both for the editor path and the manual
     fallback); regular gates still notify()."""
 

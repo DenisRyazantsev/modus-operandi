@@ -7,13 +7,13 @@ import time
 from pathlib import Path
 from typing import Any
 
-from _run_pipeline_common import step_marker_index
 from agent_log_tailer import AgentLogTailer
 from buffered_emitter import BufferedEmitter
 from gate_state import GateState
 from live_lines import LiveLines
 from run_id_discoverer import RunIdDiscoverer
 from step_result_poller import StepResultPoller
+from workflow_info import step_marker_index
 
 
 class LiveMonitor:
@@ -89,8 +89,7 @@ class LiveMonitor:
 
     def _drain_tailer(self) -> None:
         """Feed the appended agent-log events into the live status lines."""
-        for role, fork_id, text, event in self._tailer.tail():
-            self._emitter.emit_log(role, text)
+        for role, fork_id, _text, event in self._tailer.tail():
             line = self._live.add_event(role, fork_id, event)
             if line is not None:
                 # Non-TTY: one plain line per step_finish event.
@@ -136,16 +135,16 @@ class LiveMonitor:
                 # after the drain above (e.g. the agent's final reply before
                 # the step completed) accumulate before this step's marker.
                 self._drain_tailer()
-                # Fix the live lines before the marker: they stay in the
+                # Pin the live lines before the marker: they stay in the
                 # terminal as history (printed plainly), then the marker
-                # prints. The completed step's id is passed so the fixed
+                # prints. The completed step's id is passed so the pinned
                 # copies keep the completed step's label — the engine has
                 # usually already advanced current_step_id to the next step
                 # by now (bug fix). The next event of the same process opens
                 # a new line with the continued sums.
-                fixed = self._live.fix_all(step_id)
-                if fixed:
-                    self._emitter.emit_live(fixed, plain=True)
+                pinned = self._live.pin_all(step_id)
+                if pinned:
+                    self._emitter.emit_live(pinned, plain=True)
                 # The marker shows the completed step's OWN position in the
                 # workflow (the engine's current_step_index has usually
                 # already advanced to the next step by the time the result

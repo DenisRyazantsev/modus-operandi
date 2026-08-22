@@ -2,9 +2,9 @@
 
 One responsibility: own the wrapper's console output and the gate-open
 buffering policy for it. While a human-gate menu is on screen (GateState
-raised by the stdout reader), finished steps, agent-log lines and live-block
-lines are appended to the buffer instead of printed; flush() prints them —
-logs before step markers, the live block last — and is called when the
+raised by the stdout reader), finished steps and live-block lines are
+appended to the buffer instead of printed; flush() prints them — the
+fixed history lines, then the step markers — and is called when the
 engine moves past the gate or the wrapper stops.
 
 The emitter is also the single owner of the live status block (ADR-0011):
@@ -21,7 +21,7 @@ import sys
 import threading
 from typing import Any
 
-from _run_pipeline_common import print_log_event, print_step_result
+from display import print_step_result
 from gate_state import GateState
 
 
@@ -32,7 +32,6 @@ class BufferedEmitter:
         self._gate = gate
         self._lock = threading.Lock()
         self._buffered_steps: list[tuple[str, dict[str, Any], int | None, int | None]] = []
-        self._buffered_logs: list[tuple[str, str]] = []
         self._buffered_fixed: list[str] = []
         self._buffered_block: list[str] | None = None
         self._block_height = 0
@@ -65,22 +64,6 @@ class BufferedEmitter:
             else:
                 self._clear_block()
                 print_step_result(step_id, result, step_index, total_steps)
-                self._redraw_block()
-
-    def emit_log(self, role: str, text: str) -> None:
-        """Buffer or print one agent-log line, per the gate state.
-
-        Since ADR-0011 the tailer always delivers an empty text, so this is
-        a no-op; the plumbing stays for future use.
-        """
-        if not text:
-            return
-        with self._lock:
-            if self._gate.is_open:
-                self._buffered_logs.append((role, text))
-            else:
-                self._clear_block()
-                print_log_event(role, text)
                 self._redraw_block()
 
     def emit_live(self, lines: list[str], plain: bool = False) -> None:
@@ -118,16 +101,13 @@ class BufferedEmitter:
     def flush(self) -> None:
         """Print the events that were buffered while the gate menu was open.
 
-        Logs are flushed before the step markers so the "agent lines precede
-        the step's completion marker" invariant holds for buffered output
-        too; the latest live block is drawn last, right before live printing
-        resumes — nothing is lost.
+        The fixed history lines print first, then the step markers, so the
+        "agent lines precede the step's completion marker" invariant holds
+        for buffered output too; the latest live block is drawn last, right
+        before live printing resumes — nothing is lost.
         """
         with self._lock:
             self._clear_block()
-            for role, text in self._buffered_logs:
-                print_log_event(role, text)
-            self._buffered_logs.clear()
             for line in self._buffered_fixed:
                 print(line, flush=True)
             self._buffered_fixed.clear()
@@ -193,10 +173,6 @@ class BufferedEmitter:
     @property
     def buffered_steps(self) -> list[tuple[str, dict[str, Any], int | None, int | None]]:
         return self._buffered_steps
-
-    @property
-    def buffered_logs(self) -> list[tuple[str, str]]:
-        return self._buffered_logs
 
     @property
     def buffered_fixed(self) -> list[str]:

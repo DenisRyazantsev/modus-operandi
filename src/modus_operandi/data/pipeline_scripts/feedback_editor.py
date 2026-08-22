@@ -18,19 +18,19 @@ import sys
 import threading
 from pathlib import Path
 
-from _run_pipeline_common import extract_numbered_questions, questions_source_file
 from editor import resolve_feedback_editor
+from feedback_gate import extract_numbered_questions, questions_source_file
 
 
 def create_feedback_file(path: Path, source_doc: Path | None = None) -> None:
-    """Create the feedback.md for the revise gate.
+    """Create the feedback.md for the feedback gate.
 
     Never overwrites an existing file: the planner may have written one, or
     the user may have started writing during an earlier fallback. A NEW file
     is seeded (ADR-0012) with the numbered questions of the source
-    document's open-questions section (study.md for the motivation gate,
-    adr.md for the ADR gate); a missing document — or a document without
-    questions — leaves the file empty.
+    document's open-questions section (study.md for the motivation gate);
+    a missing document — or a document without questions — leaves the file
+    empty.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
@@ -52,9 +52,10 @@ def open_feedback_editor(
 ) -> bool:
     """Own the feedback gates' editor interaction.
 
-    Any step whose id contains "feedback-gate" routes here (the ADR revise
-    gate, the motivation clarify gate — the wrapper recognizes them by the
-    shared marker, so the handling is identical for all of them). Pauses
+    Any step whose id contains "feedback-gate" routes here — every shipped
+    feedback gate shares that marker substring (currently only the task
+    pipeline's `motivation-feedback-gate`), so the handling is identical
+    for all of them. Pauses
     stdin forwarding, creates feedback.md in the current task dir (never
     overwriting; a NEW file is seeded with the numbered open questions of
     the gate's document — study.md for a `motivation` gate, adr.md for an

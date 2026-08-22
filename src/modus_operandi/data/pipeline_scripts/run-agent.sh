@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run-agent.sh - session glue for the adr-pipeline workflow.
+# run-agent.sh - session glue for the task-pipeline workflow.
 #
 # Usage: run-agent.sh <role> "<prompt>" [--task <task-id>] [--review-fork <kind>]
 #        run-agent.sh <role> --prompt-file <path> [--task <task-id>] [--review-fork <kind>]

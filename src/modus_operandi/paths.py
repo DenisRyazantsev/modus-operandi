@@ -41,9 +41,13 @@ def _layout(base: Path) -> Paths:
         "planner_body": base / "opencode" / "scripts" / "planner-body.txt",
         "executor_body": base / "opencode" / "scripts" / "executor-body.txt",
         "run_pipeline": base / "opencode" / "scripts" / "run-pipeline.py",
-        # run-pipeline.py is split one class per file; the modules below are
-        # copied next to it so the installed wrapper stays importable.
-        "run_pipeline_common": (base / "opencode" / "scripts" / "_run_pipeline_common.py"),
+        # run-pipeline.py is split one concern per file; the modules below
+        # are copied next to it so the installed wrapper stays importable.
+        "engine_output": base / "opencode" / "scripts" / "engine_output.py",
+        "feedback_gate": base / "opencode" / "scripts" / "feedback_gate.py",
+        "display": base / "opencode" / "scripts" / "display.py",
+        "run_state": base / "opencode" / "scripts" / "run_state.py",
+        "workflow_info": base / "opencode" / "scripts" / "workflow_info.py",
         "run_id_discoverer": base / "opencode" / "scripts" / "run_id_discoverer.py",
         "step_result_poller": base / "opencode" / "scripts" / "step_result_poller.py",
         "agent_log_tailer": base / "opencode" / "scripts" / "agent_log_tailer.py",

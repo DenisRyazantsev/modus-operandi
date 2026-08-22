@@ -19,8 +19,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from _run_pipeline_common import fmt_minutes
 from check_review import KIND_ORDER
+from display import fmt_minutes
 
 # The engine's nested fan-out item step ids are review-fan:check:<index> on
 # retry-loop iteration 1 and review-fix-loop:review-fan:<iter>:check:<index>
@@ -40,7 +40,7 @@ def _epoch(iso: str) -> float:
         return 0.0
 
 
-def collect_latency(state_dir: Path, run_dir: Path | None) -> list[dict[str, Any]]:
+def collect_latency(run_dir: Path | None) -> list[dict[str, Any]]:
     """Parse the run's log.jsonl into per-step (id, start, end, status) records.
 
     The engine persists step start/stop with timestamps in
@@ -156,7 +156,7 @@ def print_latency_table(state_dir: Path, run_dir: Path | None) -> None:
     every percent. Missing data (no log.jsonl, no agent logs) degrades to
     an empty block — never a crash.
     """
-    records = collect_latency(state_dir, run_dir)
+    records = collect_latency(run_dir)
     if not records:
         return
     agent_ts = _agent_timestamps(state_dir)

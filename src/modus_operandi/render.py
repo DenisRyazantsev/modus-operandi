@@ -26,6 +26,7 @@ _DATA = files("modus_operandi").joinpath("data")
 # Agents (frontmatter values written as data into the markdown)
 # ---------------------------------------------------------------------------
 
+
 def _role_body(name: str) -> str:
     """The role prompt body, read from package data (content as data, never
     in code — same rule as the prompt files under data/prompts/)."""
@@ -130,11 +131,14 @@ def render_name_task(paths: Paths) -> None:
 
 def render_run_pipeline(paths: Paths) -> None:
     # run-pipeline.py is split one class per file; the modules below must all
-    # be copied together so the installed wrapper stays importable. The path
-    # key of the shared module differs from its filename (leading underscore).
+    # be copied together so the installed wrapper stays importable.
     _install_script("run_pipeline.py", paths["run_pipeline"], executable=True)
     for key, source_name in (
-        ("run_pipeline_common", "_run_pipeline_common.py"),
+        ("engine_output", "engine_output.py"),
+        ("feedback_gate", "feedback_gate.py"),
+        ("display", "display.py"),
+        ("run_state", "run_state.py"),
+        ("workflow_info", "workflow_info.py"),
         ("run_id_discoverer", "run_id_discoverer.py"),
         ("step_result_poller", "step_result_poller.py"),
         ("agent_log_tailer", "agent_log_tailer.py"),
@@ -258,11 +262,7 @@ def _generate_workflow(source_name: str, cfg: dict[str, Any]) -> str:
     source = _DATA.joinpath("workflows", f"{source_name}.yml")
     data = yaml.safe_load(source.read_text(encoding="utf-8"))
     _patch_workflow_numbers(data, cfg)
-    return str(
-        yaml.safe_dump(
-            data, allow_unicode=True, sort_keys=False, default_flow_style=False
-        )
-    )
+    return str(yaml.safe_dump(data, allow_unicode=True, sort_keys=False, default_flow_style=False))
 
 
 def render_review_workflow(cfg: dict[str, Any], paths: Paths) -> None:

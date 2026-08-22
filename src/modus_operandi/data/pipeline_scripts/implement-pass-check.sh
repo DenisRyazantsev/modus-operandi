@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# implement-pass-check.sh - adr-pipeline implement-pass-check step.
+# implement-pass-check.sh - task-pipeline implement-pass-check step.
 #
 # Fails the run when two implement attempts produced no repository changes.
 # The workflow never embeds shell logic (CONTRIBUTING.md), so the check and

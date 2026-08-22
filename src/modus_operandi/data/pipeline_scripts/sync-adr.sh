@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# sync-adr.sh - adr-pipeline sync-adr step.
+# sync-adr.sh - task-pipeline sync-adr step.
 #
 # When the executor recorded a deviation from the ADR, the planner amends
 # adr.md with an "## Amendments" section, the amended ADR is written over the

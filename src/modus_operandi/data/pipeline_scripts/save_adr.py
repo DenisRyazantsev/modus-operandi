@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""save_adr.py - release or sync an ADR for the adr-pipeline workflow.
+"""save_adr.py - release or sync an ADR for the task-pipeline workflow.
 
 Usage:
   save_adr.py save <state_dir> <task_id> <adr_dir> <run_agent>

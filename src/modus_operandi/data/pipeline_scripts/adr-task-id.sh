@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# adr-task-id.sh - adr-pipeline generate-task-id step.
+# adr-task-id.sh - task-pipeline generate-task-id step.
 #
 # Uses the explicit task id when given; otherwise asks the executor for a
 # short English kebab-case slug (name-task.sh, one-shot) and appends a

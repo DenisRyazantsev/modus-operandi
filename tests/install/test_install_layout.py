@@ -28,9 +28,13 @@ class InstallLayoutTest(InstallerTestCase):
             ".config/opencode/scripts/run-agent-cursor.sh",
             ".config/opencode/scripts/prompt_subst.sh",
             ".config/opencode/scripts/run-pipeline.py",
-            # run-pipeline.py is split one class per file: the modules are
+            # run-pipeline.py is split one concern per file: the modules are
             # installed next to it so the wrapper stays importable.
-            ".config/opencode/scripts/_run_pipeline_common.py",
+            ".config/opencode/scripts/engine_output.py",
+            ".config/opencode/scripts/feedback_gate.py",
+            ".config/opencode/scripts/display.py",
+            ".config/opencode/scripts/run_state.py",
+            ".config/opencode/scripts/workflow_info.py",
             ".config/opencode/scripts/run_id_discoverer.py",
             ".config/opencode/scripts/step_result_poller.py",
             ".config/opencode/scripts/agent_log_tailer.py",
@@ -166,11 +170,11 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertNotIn("PYEOF", text)
         self.assertNotIn("#!/usr/bin/env bash", text)
         # The split modules are installed next to the wrapper: the poller
-        # owns the state.json reads and the shared module the timestamp.
+        # owns the state.json reads and the display module the timestamp.
         poller = self.home / ".config/opencode/scripts/step_result_poller.py"
         self.assertIn("state.json", poller.read_text(encoding="utf-8"))
-        common = self.home / ".config/opencode/scripts/_run_pipeline_common.py"
-        self.assertIn('strftime("%H:%M:%S")', common.read_text(encoding="utf-8"))
+        display = self.home / ".config/opencode/scripts/display.py"
+        self.assertIn('strftime("%H:%M:%S")', display.read_text(encoding="utf-8"))
 
     def test_victory_wav_shipped_next_to_wrapper(self) -> None:
         self.assertEqual(self.install(), 0)

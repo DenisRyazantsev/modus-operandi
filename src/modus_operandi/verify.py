@@ -102,7 +102,11 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
     if not os.access(paths["run_pipeline"], os.X_OK):
         errors.append("run-pipeline.py is not executable: {}".format(paths["run_pipeline"]))
     for key in (
-        "run_pipeline_common",
+        "engine_output",
+        "feedback_gate",
+        "display",
+        "run_state",
+        "workflow_info",
         "run_id_discoverer",
         "step_result_poller",
         "agent_log_tailer",

@@ -20,8 +20,8 @@ SOUND_FILE = Path(__file__).resolve().parent / "victory.wav"
 def notify() -> None:
     """Play the single victory.wav signal, for every event.
 
-    Called when a human-gate menu opens (except the ADR revise feedback
-    gate, which the wrapper answers itself and never signals), on a
+    Called when a human-gate menu opens (except the feedback gate, which
+    the wrapper answers itself and never signals), on a
     successful run and on a failed run alike — one sound for all events,
     never different signals. Playback is non-blocking (the player process is
     not waited for) and degrades quietly: no sound file, no system player or

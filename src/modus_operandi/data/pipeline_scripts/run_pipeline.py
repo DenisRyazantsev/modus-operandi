@@ -16,11 +16,11 @@ On a terminal run the wrapper owns specify's stdin through a pty: specify's
 gate step prompts only while its stdin is a TTY, so the slave end is given
 to specify (keeping sys.stdin.isatty() True inside it) and terminal input is
 forwarded into the master end, so interactive gates keep working while the
-wrapper can answer the ADR revise feedback gate itself. When that gate opens
+wrapper can answer the feedback gate itself. When that gate opens
 the wrapper creates <state_dir>/tasks/current/feedback.md (never overwriting
 an existing file), opens it in the terminal editor ($VISUAL, then $EDITOR,
 then nano, then vi), and on editor close answers the gate with `continue` so
-the workflow resumes (adr-revise reads feedback.md). If no editor can run
+the workflow resumes (study-revise reads feedback.md). If no editor can run
 (non-TTY or none found), the file is still created and the gate stays
 interactive for manual input. On a non-TTY run no pty is used and specify
 keeps the inherited stdin, so gates keep going PAUSED exactly as before.
@@ -32,9 +32,8 @@ summed from the per-turn usage fields of the agent logs, cost n/a),
 followed by a per-stage latency table (ADR-0009) built from the run's
 log.jsonl (stage durations, agent-call vs shell-overhead breakdown, and the
 parallel-checks detail for the review fan-out). It also plays a single
-victory.wav signal on gate-open (except the ADR
-revise feedback gate), on success and on failure; the sound and the
-statistics never change the exit code.
+victory.wav signal on gate-open (except the feedback gate), on success and
+on failure; the sound and the statistics never change the exit code.
 
 Agent logs are no longer echoed (ADR-0011): instead each active process —
 a role, or a role+fork for the parallel review forks — shows one live
@@ -74,14 +73,16 @@ them; the opencode branch ignores the models - the agent files carry them).
 
 This file is the entry point of a module split, one concern per file: the
 live-monitor classes live in run_id_discoverer.py / step_result_poller.py /
-agent_log_tailer.py / gate_state.py / buffered_emitter.py / live_monitor.py
-and the shared constants and pure helpers in _run_pipeline_common.py; the
-config-to-invocation mapping in config_invocation.py, the run statistics in
-run_statistics.py, the victory.wav policy in notify.py, the feedback gate's
-editor interaction in feedback_editor.py (with the editor chain in
-editor.py) and the pty plumbing in pty_spawn.py. This module owns the main()
-orchestration flow and re-exports every public name so the wrapper keeps its
-single import surface.
+agent_log_tailer.py / gate_state.py / buffered_emitter.py / live_monitor.py,
+the engine-stdout grammar in engine_output.py, the feedback-gate domain in
+feedback_gate.py, the display/formatting helpers in display.py, the run-state
+observation in run_state.py and the workflow-file introspection in
+workflow_info.py; the config-to-invocation mapping in config_invocation.py,
+the run statistics in run_statistics.py, the victory.wav policy in notify.py,
+the feedback gate's editor interaction in feedback_editor.py (with the editor
+chain in editor.py) and the pty plumbing in pty_spawn.py. This module owns
+the main() orchestration flow and re-exports every public name so the
+wrapper keeps its single import surface.
 """
 
 from __future__ import annotations
@@ -94,27 +95,6 @@ import threading
 import time
 from pathlib import Path
 
-from _run_pipeline_common import (
-    existing_run_ids,
-    extract_numbered_questions,
-    fmt_duration,
-    fmt_minutes,
-    fmt_thousands,
-    is_engine_error,
-    is_engine_header,
-    is_engine_step_start,
-    is_feedback_gate,
-    is_gate_menu_opener,
-    print_log_event,
-    print_step_result,
-    questions_source_file,
-    render_log_event,
-    role_label,
-    run_id_from_text,
-    stamp,
-    step_marker_index,
-    workflow_step_ids,
-)
 from agent_log_tailer import AgentLogTailer
 from buffered_emitter import BufferedEmitter
 from config_invocation import (
@@ -126,14 +106,30 @@ from config_invocation import (
     normalize_config,
     role_model,
 )
+from display import (
+    fmt_duration,
+    fmt_minutes,
+    fmt_thousands,
+    print_step_result,
+    stamp,
+)
 from editor import resolve_editor, resolve_feedback_editor
+from engine_output import (
+    is_engine_error,
+    is_engine_header,
+    is_engine_step_start,
+    is_gate_menu_opener,
+    run_id_from_text,
+)
 from feedback_editor import create_feedback_file, open_feedback_editor
+from feedback_gate import extract_numbered_questions, is_feedback_gate, questions_source_file
 from gate_state import GateState
 from live_lines import LiveLines
 from live_monitor import LiveMonitor
 from notify import SOUND_FILE, notify
 from pty_spawn import _spawn_specify, forward_terminal_input, set_pty_no_echo
 from run_id_discoverer import RunIdDiscoverer
+from run_state import existing_run_ids
 from run_statistics import (
     collect_usage,
     export_session_info,
@@ -141,6 +137,7 @@ from run_statistics import (
     read_session_ids,
 )
 from step_result_poller import StepResultPoller
+from workflow_info import step_marker_index, workflow_step_ids
 
 # Public surface of the wrapper: the classes and the helper functions, so
 # tests and callers keep a single import target (the run_pipeline module).
@@ -175,15 +172,12 @@ __all__ = [
     "normalize_config",
     "notify",
     "open_feedback_editor",
-    "print_log_event",
     "print_run_statistics",
     "print_step_result",
     "questions_source_file",
     "read_session_ids",
-    "render_log_event",
     "resolve_editor",
     "resolve_feedback_editor",
-    "role_label",
     "role_model",
     "run_id_from_text",
     "set_pty_no_echo",
@@ -203,9 +197,9 @@ def _handle_gate_menu(
 
     The gate's step id is captured synchronously from the state read right
     now — not on a later monitor tick, when a fast answer could already have
-    moved current_step_id. The ADR revise feedback gate is answered by the
-    wrapper through the terminal editor (and never signals); every other
-    gate plays the victory.wav signal for the human.
+    moved current_step_id. The feedback gate (motivation-feedback-gate) is
+    answered by the wrapper through the terminal editor (and never signals);
+    every other gate plays the victory.wav signal for the human.
     """
     state = monitor.read_current_state()
     monitor.gate.open(state)
@@ -214,7 +208,7 @@ def _handle_gate_menu(
         # The feedback gate: the wrapper owns the answer. feedback.md is
         # created in the current task dir (never overwritten; a NEW file is
         # seeded with the numbered open questions of the gate's document —
-        # study.md for a motivation gate, adr.md for an ADR gate) and opened
+        # study.md for a motivation gate — and opened
         # in the terminal editor; on editor close the gate is answered with
         # `continue` so the workflow continues (the revise step reads
         # feedback.md). If no editor can run, the gate stays interactive for
@@ -282,6 +276,53 @@ def _consume_output(
     return run_id
 
 
+def _stop_forwarding(
+    master_fd: int | None,
+    forward_stop: threading.Event,
+    forward_thread: threading.Thread | None,
+) -> None:
+    """Stop stdin forwarding and release the pty before reaping the child.
+
+    The forward thread would otherwise keep writing into the pty while the
+    wrapper exits, so it is stopped and joined first; the master fd is
+    closed best-effort (a pty-less non-TTY run passes None for both).
+    """
+    forward_stop.set()
+    if master_fd is not None:
+        assert forward_thread is not None
+        forward_thread.join(timeout=1)
+        with contextlib.suppress(OSError):
+            os.close(master_fd)
+
+
+def _report_failure(rc: int, run_id: str) -> None:
+    """Print the failure line and the resume hint (the run's failure UX)."""
+    print()
+    print(f"[{stamp()}] run failed (exit {rc})")
+    if run_id:
+        print(f"[{stamp()}] resume with: specify workflow resume {run_id}")
+
+
+def _report_statistics(state_dir: str, t0: float, t1: float, run_id: str, backend: str) -> None:
+    """Print the statistics block and play the victory signal on every path.
+
+    The statistics block prints on every completion path and never fails:
+    missing session data or a failed `opencode export` degrade to zeros
+    (cursor runs aggregate their usage from the agent logs instead). The
+    run directory feeds the per-stage latency table (ADR-0009); a missing
+    run dir degrades to an empty table.
+    """
+    run_dir = None
+    if run_id:
+        run_dir = Path.cwd() / ".specify" / "workflows" / "runs" / run_id
+    print_run_statistics(Path.cwd() / state_dir, t1 - t0, run_dir, backend)
+    # The completion signal: one victory.wav for a finished run, success or
+    # failure alike. (The gate-open signal is played in _handle_gate_menu;
+    # the "one signal for every event" policy is stated in the module
+    # docstring, where the whole signal surface is visible.)
+    notify()
+
+
 def _finalize_run(
     proc: subprocess.Popen[str],
     monitor: LiveMonitor,
@@ -300,17 +341,11 @@ def _finalize_run(
     message never prints "exit None". Returns the run's exit code after
     printing the failure message, the resume command, the statistics block
     and the victory signal — none of the reporting ever changes the exit
-    code.
+    code. The four steps are delegated: stop forwarding, reap and stop the
+    monitor (with a late drain), report the failure if any, report the
+    statistics and the sound.
     """
-    # Stop stdin forwarding and release the pty before reaping the child:
-    # the forward thread would otherwise keep writing into the pty while the
-    # wrapper exits.
-    forward_stop.set()
-    if master_fd is not None:
-        assert forward_thread is not None
-        forward_thread.join(timeout=1)
-        with contextlib.suppress(OSError):
-            os.close(master_fd)
+    _stop_forwarding(master_fd, forward_stop, forward_thread)
     # Reap the child even when the read loop above raised (OSError,
     # KeyboardInterrupt) before reaching proc.wait(): otherwise
     # proc.returncode would be None and the failure message would print
@@ -326,34 +361,29 @@ def _finalize_run(
     # The stdout "Run ID:" line may never appear (e.g. the workflow failed
     # before the final status block), but the run directory was already
     # discovered; drain late results and logs either way.
-    if run_id or monitor.run_id:
+    rid = run_id or monitor.run_id
+    if rid:
         time.sleep(0.2)
         monitor.finish()
     rc = proc.returncode
     if rc is None:
         rc = 1
     if rc != 0:
-        print()
-        print(f"[{stamp()}] run failed (exit {rc})")
-        if run_id or monitor.run_id:
-            print(f"[{stamp()}] resume with: specify workflow resume {run_id or monitor.run_id}")
-    # The statistics block prints on every completion path and never fails:
-    # missing session data or a failed `opencode export` degrade to zeros
-    # (cursor runs aggregate their usage from the agent logs instead). The
-    # run directory feeds the per-stage latency table (ADR-0009); a missing
-    # run dir degrades to an empty table.
-    run_dir = None
-    rid = run_id or monitor.run_id
-    if rid:
-        run_dir = Path.cwd() / ".specify" / "workflows" / "runs" / rid
-    print_run_statistics(Path.cwd() / state_dir, t1 - t0, run_dir, backend)
-    # One victory.wav signal for every event: gate open, success, failure.
-    notify()
+        _report_failure(rc, rid)
+    _report_statistics(state_dir, t0, t1, rid, backend)
     return rc
 
 
-def main() -> int:
-    argv = sys.argv[1:]
+def _parse_cli(argv: list[str]) -> tuple[str | None, str, list[str]] | int:
+    """Parse the wrapper's argv into (cli_backend, source, extra), or an exit code.
+
+    The optional leading `--backend <opencode|cursor>` flag is validated
+    and consumed before the workflow source; the remaining argv is the
+    source plus the extra specify args. An unusable invocation prints its
+    message here and returns the exit code: empty argv and -h/--help print
+    the usage (0), a bad --backend prints the error (1). CLI surface
+    changes stay in this one function, away from the orchestration body.
+    """
     cli_backend: str | None = None
     if argv and argv[0] == "--backend":
         # A leading global flag (modus-operandi puts it in front of the workflow
@@ -372,8 +402,14 @@ def main() -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
         return 0
-    source = argv[0]
-    extra = argv[1:]
+    return cli_backend, argv[0], argv[1:]
+
+
+def main() -> int:
+    parsed = _parse_cli(sys.argv[1:])
+    if isinstance(parsed, int):
+        return parsed
+    cli_backend, source, extra = parsed
 
     # Map the installed config + argv to the specify invocation; main() only
     # orchestrates the live run from the result. CONFIG_PATH is passed
@@ -403,7 +439,16 @@ def main() -> int:
     # covers every completion path (success, failure, abort).
     t0 = time.monotonic()
 
-    proc, master_fd, forward_pause, forward_stop, forward_thread = _spawn_specify(specify_cmd, env)
+    try:
+        proc, master_fd, forward_pause, forward_stop, forward_thread = _spawn_specify(
+            specify_cmd, env
+        )
+    except OSError as exc:
+        # The prerequisites check does not verify `specify` (only the dev
+        # install flow's syntax probe does): a missing binary must surface
+        # as a one-line error, not a Python traceback.
+        print(f"error: cannot run specify: {exc}", file=sys.stderr)
+        return 1
     monitor.start()
     run_id = ""
     try:
