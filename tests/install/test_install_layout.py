@@ -68,11 +68,13 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertTrue(os.access(self.home / ".config/opencode/scripts/run-agent.sh", os.X_OK))
         self.assertTrue(os.access(self.home / ".config/opencode/scripts/name-task.sh", os.X_OK))
         self.assertTrue(os.access(self.home / ".config/opencode/scripts/prompt_subst.sh", os.X_OK))
-        # The adr pipeline is gone and no launcher is rendered into
-        # ~/.local/bin anymore (the console script comes from pip).
+        # The adr pipeline is gone; the dev flow renders the checkout-based
+        # launcher into ~/.local/bin so the command works in new terminals.
         self.assertFalse((self.home / ".config/modus-operandi/adr-pipeline.yml").exists())
         self.assertFalse((self.home / ".config/modus-operandi/install-path.txt").exists())
-        self.assertFalse((self.home / ".local/bin/modus-operandi").exists())
+        launcher = self.home / ".local/bin/modus-operandi"
+        self.assertTrue(launcher.exists())
+        self.assertTrue(os.access(launcher, os.X_OK))
 
     def test_reinstall_preserves_user_config(self) -> None:
         self.assertEqual(self.install(), 0)
@@ -102,7 +104,7 @@ class InstallLayoutTest(InstallerTestCase):
     def test_rendered_executor_has_model_and_permissions(self) -> None:
         self.assertEqual(self.install(), 0)
         executor = (self.home / ".config/opencode/agent/executor.md").read_text(encoding="utf-8")
-        self.assertIn("opencode-go/deepseek-v4-flash", executor)
+        self.assertIn("opencode/deepseek-v4-flash-free", executor)
         self.assertIn("reasoningEffort: max", executor)
         self.assertIn("permission", executor)
 

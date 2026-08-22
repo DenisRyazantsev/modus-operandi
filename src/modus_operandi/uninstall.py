@@ -3,9 +3,9 @@
 ``modus-operandi uninstall`` is the explicit full-cleanup command (``pip uninstall
 modus-operandi`` cannot touch the rendered files under the config base): it removes
 ``~/.config/modus-operandi`` (including the user's config.yml), the modus-operandi-owned
-files under ``~/.config/opencode`` and the legacy launcher leftovers from the
-pre-pip install model in ``~/.local/bin``, then prints the hint to remove the
-wheel itself.
+files under ``~/.config/opencode`` and the launcher binaries in ``~/.local/bin``
+(the dev-flow launcher from install.py and the legacy pre-pip leftovers), then
+prints the hint to remove the wheel itself.
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ _SCRIPTS_KEYS = (
 _LEGACY_BIN_NAMES = ("modus-operandi", "editor.py", "edit_command.py")
 
 
-def _pip_installed_bin(paths: Paths) -> set[Path]:
+def pip_installed_bin(paths: Paths) -> set[Path]:
     """The ~/.local/bin files owned by the installed modus-operandi distribution.
 
     ``pip install --user modus-operandi`` puts the console script into
@@ -112,7 +112,7 @@ def do_uninstall(paths: Paths, yes: bool) -> int:
         if not ok:
             print("aborted")
             return 1
-    pip_owned = _pip_installed_bin(paths)
+    pip_owned = pip_installed_bin(paths)
     removed: list[str] = []
     for path in (
         paths["agents"] / "planner.md",

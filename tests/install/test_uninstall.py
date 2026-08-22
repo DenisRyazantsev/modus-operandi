@@ -66,7 +66,7 @@ class UninstallTest(InstallerTestCase):
         # The step scripts (one per shell step) and the legacy launcher
         # leftovers from the pre-pip model are cleaned up too.
         self.assertEqual(self.install(), 0)
-        (self.home / ".local/bin").mkdir(parents=True)
+        (self.home / ".local/bin").mkdir(parents=True, exist_ok=True)
         for name in ("modus-operandi", "editor.py", "edit_command.py"):
             (self.home / ".local/bin" / name).write_text("legacy", encoding="utf-8")
         (self.home / ".local/bin" / "exceptions").mkdir()
@@ -99,7 +99,7 @@ class UninstallTest(InstallerTestCase):
         # while legacy non-pip leftovers are still cleaned up.
         self.assertEqual(self.install(), 0)
         bin_dir = self.home / ".local" / "bin"
-        bin_dir.mkdir(parents=True)
+        bin_dir.mkdir(parents=True, exist_ok=True)
         launcher = bin_dir / "modus-operandi"
         launcher.write_text("pip console script", encoding="utf-8")
         (bin_dir / "editor.py").write_text("legacy", encoding="utf-8")

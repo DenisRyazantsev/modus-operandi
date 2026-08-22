@@ -4,8 +4,10 @@ Two entry points share one layout: ``build_paths(home)`` derives the config
 base as ``<home>/.config`` (the dev flow and the installer tests, which pass
 ``--home``), and ``build_paths_from_config_base(base)`` takes an existing
 config base directly (the launcher, which resolves XDG_CONFIG_HOME at
-runtime). ``user_bin`` (``<base-parent>/.local/bin``) holds only the legacy
-launcher leftovers that ``modus-operandi uninstall`` cleans up.
+runtime). ``user_bin`` (``<base-parent>/.local/bin``) holds the dev-flow
+launcher (written by install.py) and the legacy launcher leftovers that
+``modus-operandi uninstall`` cleans up; the pip console script lives there
+too when installed with ``pip install --user``.
 """
 
 from __future__ import annotations
