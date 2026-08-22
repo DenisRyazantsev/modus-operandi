@@ -77,15 +77,31 @@ class EditCommandTest(unittest.TestCase):
     def test_edit_editor_start_failure_returns_nonzero(self) -> None:
         # A script whose interpreter does not exist makes exec fail with
         # OSError: the flow reports it and never applies.
-        self._write_editor("#!/nonexistent/interp\n")
+        editor_path = self._write_editor("#!/nonexistent/interp\n")
+        diag: list[str] = []
+        diag.append(f"script={editor_path}")
+        diag.append(f"mode={oct(editor_path.stat().st_mode & 0o777)}")
+        diag.append(f"access_X_OK={os.access(editor_path, os.X_OK)}")
         with (
             env(self._env()),
             stderr(io.StringIO()) as err,
         ):
+            diag.append(f"PATH={os.environ.get('PATH')}")
+            import shutil
+            import modus_operandi.editor as editor_module
+
+            diag.append(f"which('editor')={shutil.which('editor')!r}")
+            diag.append(f"which('nano')={shutil.which('nano')!r}")
+            diag.append(f"which('vi')={shutil.which('vi')!r}")
+            resolved = editor_module.resolve_editor()
+            diag.append(f"resolve_editor()={resolved!r}")
             rc = edit_command._run_edit(self.config, self.layout)
-        self.assertEqual(rc, 1)
-        self.assertIn("cannot start editor", err.getvalue())
-        self.assertFalse(self.layout["install_version"].exists())
+            diag.append(f"rc={rc}")
+            diag.append(f"stderr={err.getvalue()!r}")
+        print("DIAG test_edit_editor_start_failure_returns_nonzero:", "; ".join(diag))
+        self.assertEqual(rc, 1, "; ".join(diag))
+        self.assertIn("cannot start editor", err.getvalue(), "; ".join(diag))
+        self.assertFalse(self.layout["install_version"].exists(), "; ".join(diag))
 
     def test_edit_invalid_config_fails_with_error(self) -> None:
         # apply() re-validates the config: an invalid edit surfaces as an
