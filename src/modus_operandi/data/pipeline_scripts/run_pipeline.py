@@ -35,20 +35,26 @@ parallel-checks detail for the review fan-out). It also plays a single
 victory.wav signal on gate-open (except the feedback gate), on success and
 on failure; the sound and the statistics never change the exit code.
 
-Agent logs are no longer echoed (ADR-0011): instead each active process —
-a role, or a role+fork for the parallel review forks — shows one live
-status line with the cumulative token/cost sums from the agent-log events
-(ADR-0012/0013: opencode `step_finish`, cursor result events with usage), and
-while a step has no agent events yet a synthesized `[harness]` line with a
-0.25 s-cadence spinner is shown, so the status is visible on every step
-from the moment it starts. The block is redrawn in place on a TTY; on a
-non-TTY one plain line per step change announces the step, agent usage
-events print one plain line each, and no heartbeat lines ever go into a
-log. The lines are fixed (kept as history) when a step completes; only
-lines appended during the current run are counted (pre-existing log files
-are baselined at startup). Step markers carry the progress N/M when the
-workflow file is readable. A step's final agent events accumulate before
-the step's "--- step X (completed)" marker.
+Every log line is one aligned table row (ADR-0016):
+`[hh:mm:ss] [<role>] <spin> [<step> N/M] <tokens>`. Agent logs are no
+longer echoed (ADR-0011): instead each active process — a role, or a
+role+fork for the parallel review forks — shows one row with the
+cumulative token/cost sums from the agent-log events (ADR-0012/0013:
+opencode `step_finish`, cursor result events with usage), and while a step
+has no agent events yet a synthesized `[harness]` row with a 0.25
+s-cadence spinner is shown, so the status is visible on every step from
+the moment it starts. The role and step columns are aligned to their
+widest labels, computed from the workflow file before the run (every step
+id, nested included, sizes the step column); the token sub-columns
+right-align and grow with the widest value seen during the run, and
+already-printed rows are never re-rendered. The block is redrawn in place
+on a TTY; on a non-TTY the same aligned rows print without the spinner,
+and no heartbeat lines ever go into a log. The rows are fixed (kept as
+history) when a step completes; only rows appended during the current run
+are counted (pre-existing log files are baselined at startup). A step's
+final agent events accumulate before the step's captured output rows:
+captured stdout/stderr of finished steps and engine diagnostics print as
+`[harness]` rows with an empty step column (`SESSION:` lines are dropped).
 
 Usage: run-pipeline.py <workflow-id-or-path> [extra specify args...]
   run-pipeline.py review-pipeline
@@ -110,8 +116,8 @@ from display import (
     fmt_duration,
     fmt_minutes,
     fmt_thousands,
-    print_step_result,
     stamp,
+    step_output_rows,
 )
 from editor import resolve_editor, resolve_feedback_editor
 from engine_output import (
@@ -137,7 +143,8 @@ from run_statistics import (
     read_session_ids,
 )
 from step_result_poller import StepResultPoller
-from workflow_info import step_marker_index, workflow_step_ids
+from table_format import step_width_for
+from workflow_info import workflow_all_step_ids, workflow_step_ids
 
 # Public surface of the wrapper: the classes and the helper functions, so
 # tests and callers keep a single import target (the run_pipeline module).
@@ -173,7 +180,6 @@ __all__ = [
     "notify",
     "open_feedback_editor",
     "print_run_statistics",
-    "print_step_result",
     "questions_source_file",
     "read_session_ids",
     "resolve_editor",
@@ -182,7 +188,9 @@ __all__ = [
     "run_id_from_text",
     "set_pty_no_echo",
     "stamp",
-    "step_marker_index",
+    "step_output_rows",
+    "step_width_for",
+    "workflow_all_step_ids",
     "workflow_step_ids",
 ]
 
@@ -239,12 +247,12 @@ def _consume_output(
     engine's step-start lines (`▸ ...`) and one-time headers
     (`Running workflow:`/`Version:`/`Status:`/`Run ID:`) are not printed;
     engine errors and diagnostics (`Error:`/`Workflow failed:`/`Warning:`)
-    are re-printed as `[hh:mm:ss] [harness] <line as-is>`; the interactive
-    gate menu and any unknown line echo unchanged (fail-open). The run id is
-    parsed BEFORE the filtering, so the resume message still works. Returns
-    the run id parsed from specify's final "Run ID:" line ("" if the line
-    never appeared); the run id is also stored on the monitor so late state
-    reads can locate the run directory.
+    are re-printed as aligned `[hh:mm:ss] [harness]` table rows (ADR-0016);
+    the interactive gate menu and any unknown line echo unchanged
+    (fail-open). The run id is parsed BEFORE the filtering, so the resume
+    message still works. Returns the run id parsed from specify's final
+    "Run ID:" line ("" if the line never appeared); the run id is also
+    stored on the monitor so late state reads can locate the run directory.
     """
     run_id = ""
     assert proc.stdout is not None
@@ -269,8 +277,8 @@ def _consume_output(
             continue
         if is_engine_error(line):
             # Engine errors/diagnostics are not dropped: re-emitted in the
-            # wrapper's own [harness] format (ADR-0013).
-            monitor.emit_stdout(f"[{stamp()}] [harness] {line}")
+            # wrapper's own [harness] table format (ADR-0013, ADR-0016).
+            monitor.emit_stdout(monitor.harness_row(line))
         else:
             monitor.emit_stdout(f"[{stamp()}] {line}")
     return run_id
@@ -295,12 +303,12 @@ def _stop_forwarding(
             os.close(master_fd)
 
 
-def _report_failure(rc: int, run_id: str) -> None:
-    """Print the failure line and the resume hint (the run's failure UX)."""
+def _report_failure(rc: int, run_id: str, monitor: LiveMonitor) -> None:
+    """Print the failure row and the resume hint (the run's failure UX)."""
     print()
-    print(f"[{stamp()}] run failed (exit {rc})")
+    print(monitor.harness_row(f"run failed (exit {rc})"))
     if run_id:
-        print(f"[{stamp()}] resume with: specify workflow resume {run_id}")
+        print(monitor.harness_row(f"resume with: specify workflow resume {run_id}"))
 
 
 def _report_statistics(state_dir: str, t0: float, t1: float, run_id: str, backend: str) -> None:
@@ -369,7 +377,7 @@ def _finalize_run(
     if rc is None:
         rc = 1
     if rc != 0:
-        _report_failure(rc, rid)
+        _report_failure(rc, rid, monitor)
     _report_statistics(state_dir, t0, t1, rid, backend)
     return rc
 
@@ -427,14 +435,26 @@ def main() -> int:
     # monitor recognizes the current run as the run dir that appears now.
     prior_runs = existing_run_ids(run_state_dir)
     # The ordered top-level step ids of the workflow file drive the N/M
-    # progress markers (M and the completed step's own position); a
-    # missing/unreadable file degrades to None and the progress is omitted
-    # (ADR-0011).
+    # progress; a missing/unreadable file degrades to None and the progress
+    # is omitted (ADR-0011). The aligned step column of the log rows is
+    # sized from every step id of the workflow file (nested included), so
+    # the widest loop/fan-out bracket fits from the start; a runtime step
+    # id wider than the static width widens the column for the rest of the
+    # run (ADR-0016).
     step_ids = workflow_step_ids(source)
+    all_step_ids = workflow_all_step_ids(source)
+    step_width = step_width_for(all_step_ids, len(step_ids) if step_ids else 0)
     # The backend reaches the live lines through the monitor: on cursor the
     # price is omitted (no cost reported), on opencode it is shown
     # (ADR-0012).
-    monitor = LiveMonitor(run_state_dir, prior_runs, logs_dir, step_ids=step_ids, backend=backend)
+    monitor = LiveMonitor(
+        run_state_dir,
+        prior_runs,
+        logs_dir,
+        step_ids=step_ids,
+        backend=backend,
+        step_width=step_width,
+    )
     # Wall-clock run time is measured directly around the child process; it
     # covers every completion path (success, failure, abort).
     t0 = time.monotonic()

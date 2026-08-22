@@ -40,7 +40,7 @@ class LiveLinesTest(unittest.TestCase):
         mod = load_run_pipeline()
         live = mod.LiveLines(total_steps=15, tty=True)
         live.set_step("study", 3)
-        with mock.patch.object(sys.modules["live_lines"], "stamp", return_value="07:51:37"):
+        with mock.patch.object(sys.modules["table_format"], "stamp", return_value="07:51:37"):
             line = live.add_event("planner", "", _step_finish())
             # TTY: the event only updates the block.
             self.assertIsNone(line)
@@ -48,7 +48,7 @@ class LiveLinesTest(unittest.TestCase):
         self.assertEqual(len(block), 1)
         self.assertEqual(
             block[0],
-            "[07:51:37] [planner] \u280b [study 4/15] cache 40 · reasoning 30 · "
+            "[07:51:37] [planner]         \u280b [study 4/15] cache 40 · reasoning 30 · "
             "input 10 · output 20 · price $0.50",
         )
 
@@ -201,12 +201,12 @@ class LiveLinesTest(unittest.TestCase):
         mod = load_run_pipeline()
         live = mod.LiveLines(total_steps=15, tty=False)
         live.set_step("study", 3)
-        with mock.patch.object(sys.modules["live_lines"], "stamp", return_value="07:51:37"):
+        with mock.patch.object(sys.modules["table_format"], "stamp", return_value="07:51:37"):
             line = live.add_event("planner", "", _step_finish())
         self.assertIsNotNone(line)
         self.assertEqual(
             line,
-            "[07:51:37] [planner] [study 4/15] cache 40 · reasoning 30 · "
+            "[07:51:37] [planner]         [study 4/15] cache 40 · reasoning 30 · "
             "input 10 · output 20 · price $0.50",
         )
         # No block and no fixed lines in non-TTY mode: every event already
@@ -275,7 +275,7 @@ class SpinnerTest(unittest.TestCase):
         live = mod.LiveLines(total_steps=15, tty=True)
         live.set_step("study", 3)
         line = live.block()[0]
-        m = re.search(r"\[harness\] (.) \[study 4/15\]", line)
+        m = re.search(r"\[harness\] +(\S) \[study 4/15\]", line)
         assert m is not None
         self.assertIn(m.group(1), sys.modules["live_lines"].SPINNER_FRAMES)
 
@@ -284,7 +284,7 @@ class SpinnerTest(unittest.TestCase):
         live = mod.LiveLines(total_steps=15, tty=True)
         live.set_step("study", 3)
         live.add_event("planner", "", _step_finish())
-        m = re.search(r"\[planner\] (.) \[study 4/15\]", live.block()[0])
+        m = re.search(r"\[planner\] +(\S) \[study 4/15\]", live.block()[0])
         assert m is not None
         self.assertIn(m.group(1), sys.modules["live_lines"].SPINNER_FRAMES)
 
@@ -306,7 +306,7 @@ class SpinnerTest(unittest.TestCase):
             live.set_step("study", 3)
             shown = []
             for _ in range(6):
-                m = re.search(r"\[harness\] (.) \[study", live.block()[0])
+                m = re.search(r"\[harness\] +(\S) \[study", live.block()[0])
                 assert m is not None
                 shown.append(spinner.index(m.group(1)))
         # < 0.25 s: same frame; each 0.25 s boundary advances exactly one.
@@ -324,7 +324,7 @@ class SpinnerTest(unittest.TestCase):
         ):
             live = mod.LiveLines(tty=True)
             live.set_step("study", 3)
-            m = re.search(r"\[harness\] (.) \[study", live.block()[0])
+            m = re.search(r"\[harness\] +(\S) \[study", live.block()[0])
             assert m is not None
             self.assertEqual(m.group(1), spinner[4])
 
@@ -339,7 +339,7 @@ class SpinnerTest(unittest.TestCase):
         ):
             live = mod.LiveLines(tty=True)
             live.set_step("study", 3)
-            m = re.search(r"\[harness\] (.) \[study", live.block()[0])
+            m = re.search(r"\[harness\] +(\S) \[study", live.block()[0])
             assert m is not None
             self.assertEqual(m.group(1), spinner[0])
 
@@ -352,11 +352,12 @@ class HarnessLineTest(unittest.TestCase):
         mod = load_run_pipeline()
         live = mod.LiveLines(total_steps=15, tty=True)
         live.set_step("study", 3)
-        with mock.patch.object(sys.modules["live_lines"], "stamp", return_value="07:51:37"):
+        with mock.patch.object(sys.modules["table_format"], "stamp", return_value="07:51:37"):
             block = live.block()
         self.assertEqual(len(block), 1)
-        # No token section on the harness line.
-        self.assertEqual(block[0], "[07:51:37] [harness] \u280b [study 4/15]")
+        # No token section on the harness line; the role column is padded to
+        # 17 and the spinner column is drawn on a TTY (ADR-0016).
+        self.assertEqual(block[0], "[07:51:37] [harness]         \u280b [study 4/15]")
 
     def test_harness_line_without_step_omitted(self) -> None:
         # No known step yet (run id not discovered): nothing to draw.
@@ -468,13 +469,15 @@ class HarnessLineTest(unittest.TestCase):
     def test_non_tty_step_line_once_per_step_change(self) -> None:
         mod = load_run_pipeline()
         live = mod.LiveLines(total_steps=15, tty=False)
-        with mock.patch.object(sys.modules["live_lines"], "stamp", return_value="07:51:37"):
+        with mock.patch.object(sys.modules["table_format"], "stamp", return_value="07:51:37"):
             self.assertTrue(live.set_step("study", 3))
-            self.assertEqual(live.harness_step_line(), "[07:51:37] [harness] [study 4/15]")
+            self.assertEqual(live.harness_step_line(), "[07:51:37] [harness]         [study 4/15]")
             # Same step: no new line; the next step gets its own.
             self.assertFalse(live.set_step("study", 3))
             self.assertTrue(live.set_step("research", 4))
-            self.assertEqual(live.harness_step_line(), "[07:51:37] [harness] [research 5/15]")
+            self.assertEqual(
+                live.harness_step_line(), "[07:51:37] [harness]         [research 5/15]"
+            )
 
     def test_set_step_reports_only_non_empty_changes(self) -> None:
         mod = load_run_pipeline()

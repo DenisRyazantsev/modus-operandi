@@ -1,12 +1,12 @@
-"""Unit tests for the workflow step ids and the N/M markers (ADR-0011)."""
+"""Unit tests for the workflow step-id lists (ADR-0011, ADR-0016): the
+top-level ids and the full collection (nested steps included) that sizes
+the aligned step column."""
 
-import io
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
-from tests.env_sandbox import cwd, stdout
+from tests.env_sandbox import cwd
 
 from .helpers import load_run_pipeline
 
@@ -14,7 +14,7 @@ from .helpers import load_run_pipeline
 class WorkflowStepIdsTest(unittest.TestCase):
     """workflow_step_ids resolves the workflow file (path or bare id) and
     returns the ordered top-level step ids; missing/unparseable input
-    degrades to None and the markers then omit the N/M part."""
+    degrades to None."""
 
     def test_returns_top_level_step_ids_from_source_path(self) -> None:
         mod = load_run_pipeline()
@@ -59,58 +59,72 @@ class WorkflowStepIdsTest(unittest.TestCase):
             self.assertIsNone(mod.workflow_step_ids(str(path)))
 
 
-class StepMarkerIndexTest(unittest.TestCase):
-    """step_marker_index: the completed step's own position among the
-    top-level steps (bug fix: the engine's current_step_index has usually
-    already advanced to the next step when the result is polled)."""
+class WorkflowAllStepIdsTest(unittest.TestCase):
+    """workflow_all_step_ids collects every step id of the workflow file —
+    nested steps included (do-while `steps:`, if `then:`/`else:`, fan-out
+    `step:`) — for the aligned step column (ADR-0016); missing/unparseable
+    input degrades to None."""
 
-    def test_finds_the_step_position(self) -> None:
+    def test_collects_nested_ids(self) -> None:
         mod = load_run_pipeline()
-        ids = ["study", "research", "write-adr", "save-adr"]
-        self.assertEqual(mod.step_marker_index("study", ids), 0)
-        self.assertEqual(mod.step_marker_index("write-adr", ids), 2)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "wf.yml"
+            path.write_text(
+                "schema_version: '1.0'\n"
+                "steps:\n"
+                "  - id: study\n"
+                "  - id: motivation-loop\n"
+                "    steps:\n"
+                "      - id: motivation-gate\n"
+                "        then:\n"
+                "          - id: motivation-revise\n"
+                "        else:\n"
+                "          - id: motivation-else\n"
+                "      - id: motivation-check\n"
+                "  - id: write-adr\n"
+                "    step:\n"
+                "      id: executor-questions\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                mod.workflow_all_step_ids(str(path)),
+                [
+                    "study",
+                    "motivation-loop",
+                    "motivation-gate",
+                    "motivation-revise",
+                    "motivation-else",
+                    "motivation-check",
+                    "write-adr",
+                    "executor-questions",
+                ],
+            )
 
-    def test_loop_iteration_suffix_uses_the_parent_step(self) -> None:
-        # The engine writes loop-iteration results with a suffixed id: the
-        # marker shows the position of the parent top-level step.
+    def test_missing_file_degrades_to_none(self) -> None:
         mod = load_run_pipeline()
-        ids = ["study", "motivation-loop", "research"]
-        self.assertEqual(mod.step_marker_index("motivation-loop:motivation-gate:2", ids), 1)
+        with tempfile.TemporaryDirectory() as tmp, cwd(tmp):
+            self.assertIsNone(mod.workflow_all_step_ids("no-such-pipeline"))
 
-    def test_unknown_step_degrades_to_none(self) -> None:
+    def test_unparseable_yaml_degrades_to_none(self) -> None:
         mod = load_run_pipeline()
-        ids = ["study", "research"]
-        self.assertIsNone(mod.step_marker_index("no-such-step", ids))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "wf.yml"
+            path.write_text("steps: [\n", encoding="utf-8")
+            self.assertIsNone(mod.workflow_all_step_ids(str(path)))
 
-    def test_no_workflow_ids_degrades_to_none(self) -> None:
+    def test_resolves_bare_id_from_installed_config_dir(self) -> None:
+        # The same resolution as workflow_step_ids: a bare id is looked up
+        # in the installed config dir (the module copy's CONFIG_DIR in
+        # tests), nested ids included.
         mod = load_run_pipeline()
-        self.assertIsNone(mod.step_marker_index("study", None))
-        self.assertIsNone(mod.step_marker_index("study", []))
-
-
-class StepMarkerTest(unittest.TestCase):
-    """print_step_result renders the N/M part from the completed step's own
-    0-based index (1-based for humans)."""
-
-    def test_step_marker_includes_nm(self) -> None:
-        mod = load_run_pipeline()
-        captured = io.StringIO()
-        with (
-            stdout(captured),
-            # print_step_result lives in display.py, so the timestamp patch
-            # must target that module (not the entry module).
-            mock.patch.object(mod.display, "stamp", return_value="07:51:37"),
-        ):
-            mod.print_step_result("study", {"status": "completed", "output": {"stdout": ""}}, 3, 15)
-        self.assertIn("[07:51:37] --- step study (completed) [4/15]", captured.getvalue())
-
-    def test_step_marker_without_progress(self) -> None:
-        mod = load_run_pipeline()
-        captured = io.StringIO()
-        with stdout(captured):
-            mod.print_step_result("study", {"status": "completed", "output": {"stdout": ""}})
-        self.assertIn("--- step study (completed)", captured.getvalue())
-        self.assertNotIn("]", captured.getvalue().split("(completed)")[1])
+        assert mod.__file__ is not None
+        config_dir = Path(mod.__file__).resolve().parent.parent.parent / "modus-operandi"
+        config_dir.mkdir(parents=True)
+        (config_dir / "task-pipeline.yml").write_text(
+            "steps:\n  - id: a\n    steps:\n      - id: a1\n  - id: b\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(mod.workflow_all_step_ids("task-pipeline"), ["a", "a1", "b"])
 
 
 class FmtMinutesTest(unittest.TestCase):

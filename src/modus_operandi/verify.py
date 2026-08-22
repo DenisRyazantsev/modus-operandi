@@ -114,6 +114,7 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
         "buffered_emitter",
         "live_monitor",
         "live_lines",
+        "table_format",
         "usage_parser",
         "config_invocation",
         "run_statistics",

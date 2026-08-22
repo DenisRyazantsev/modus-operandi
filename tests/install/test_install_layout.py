@@ -42,6 +42,7 @@ class InstallLayoutTest(InstallerTestCase):
             ".config/opencode/scripts/buffered_emitter.py",
             ".config/opencode/scripts/live_monitor.py",
             ".config/opencode/scripts/live_lines.py",
+            ".config/opencode/scripts/table_format.py",
             ".config/opencode/scripts/config_invocation.py",
             ".config/opencode/scripts/run_statistics.py",
             ".config/opencode/scripts/latency_table.py",

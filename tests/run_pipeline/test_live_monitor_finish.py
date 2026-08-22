@@ -90,5 +90,8 @@ class LiveMonitorFinishTest(unittest.TestCase):
                 captured = io.StringIO()
                 with stdout(captured):
                     monitor.finish()
-            self.assertIn("final-step", captured.getvalue())
+            # The late step result's captured stdout prints as a `[harness]`
+            # row (no step-marker line and no step name in the row,
+            # ADR-0016).
+            self.assertIn("[harness]", captured.getvalue())
             self.assertIn("done", captured.getvalue())

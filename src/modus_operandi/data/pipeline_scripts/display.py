@@ -1,54 +1,26 @@
-"""Display formatting: timestamps, step markers and number/format helpers.
+"""Display formatting: timestamps, the captured step output as `[harness]`
+table rows, and number/format helpers.
 
 One responsibility: the wrapper's console formatting — the `[hh:mm:ss]`
-timestamp primitive, the finished-step marker with its captured output,
-and the number/format helpers (thousands separators, HH:MM:SS durations,
-compact minutes). Consumed by run_pipeline.py, run_statistics.py,
-latency_table.py and buffered_emitter.py; nothing here reads or writes
-state.
+timestamp primitive, the captured stdout/stderr of finished steps
+re-emitted as `[harness]` rows of the aligned log table (ADR-0016), and
+the number/format helpers (thousands separators, HH:MM:SS durations,
+compact minutes). Consumed by run_pipeline.py, live_monitor.py,
+live_lines.py, table_format.py, run_statistics.py and latency_table.py;
+nothing here reads or writes state.
 """
 
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from table_format import TableLayout
 
 
 def stamp() -> str:
     return time.strftime("%H:%M:%S")
-
-
-def print_ts(text: str, prefix: str = "") -> None:
-    text = text.rstrip()
-    if not text:
-        return
-    for line in text.splitlines():
-        print(f"[{stamp()}] {prefix}{line}", flush=True)
-
-
-def print_step_result(
-    step_id: str,
-    result: dict[str, Any],
-    step_index: int | None = None,
-    total_steps: int | None = None,
-) -> None:
-    """Print the finished-step marker and its captured output.
-
-    `step_index` is the completed step's 0-based position among the
-    workflow's top-level steps (resolved from the workflow file, ADR-0011);
-    the marker is 1-based for humans, hence the `+1` at this only display
-    site. Without a known index or a workflow file the marker omits the N/M
-    part.
-    """
-    marker = "--- step {} ({})".format(step_id, result.get("status"))
-    if step_index is not None and total_steps is not None:
-        marker += f" [{step_index + 1}/{total_steps}]"
-    print_ts(marker)
-    out = result.get("output") or {}
-    print_ts(out.get("stdout") or "", "    ")
-    stderr = out.get("stderr") or ""
-    if stderr:
-        print_ts(stderr, "    [err] ")
 
 
 def fmt_thousands(n: int | float) -> str:
@@ -77,3 +49,33 @@ def fmt_minutes(seconds: float) -> str:
     if minutes == 0 and total > 0:
         minutes = 1
     return f"{minutes}m"
+
+
+# Captured step output whose id is recoverable from files: not printed.
+SESSION_PREFIX = "SESSION:"
+
+
+def step_output_rows(result: dict[str, Any], layout: TableLayout) -> list[str]:
+    """The captured stdout/stderr of a finished step as `[harness]` table rows.
+
+    No step-marker line (ADR-0016): the pinned live line above already
+    names the step, so the step column stays empty. `SESSION:` lines and
+    empty lines are dropped; stderr lines keep the `[err] ` prefix. A
+    malformed step result (a non-dict `output`, e.g. a torn state.json
+    write) degrades to no rows: one broken step must not raise inside the
+    monitor thread and silently kill the live status.
+    """
+    rows: list[str] = []
+    out = result.get("output")
+    out = out if isinstance(out, dict) else {}
+    for line in (out.get("stdout") or "").splitlines():
+        line = line.rstrip()
+        if not line or line.startswith(SESSION_PREFIX):
+            continue
+        rows.append(layout.row("harness", " ", layout.empty_step(), line))
+    for line in (out.get("stderr") or "").splitlines():
+        line = line.rstrip()
+        if not line:
+            continue
+        rows.append(layout.row("harness", " ", layout.empty_step(), f"[err] {line}"))
+    return rows

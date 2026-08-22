@@ -27,9 +27,9 @@ def _step_finish() -> dict[str, object]:
 
 
 class LiveMonitorStepLineTest(unittest.TestCase):
-    """On a non-TTY the monitor prints one plain `[hh:mm:ss] [harness]
-    [<step> N/M]` line per step change — at most once, after the previous
-    step's marker, and not when the step already has agent lines. No
+    """On a non-TTY the monitor prints one plain `[hh:mm:ss] [harness]`
+    [<step> N/M]` row per step change — at most once, after the previous
+    step's captured rows, and not when the step already has agent lines. No
     heartbeat lines ever go into a log."""
 
     def _prepare(self, tmp: str, step_id: str, step_index: int | None = None) -> None:
@@ -55,7 +55,7 @@ class LiveMonitorStepLineTest(unittest.TestCase):
                     monitor._poll_once()
             out = captured.getvalue()
             # Exactly one line per step change, no heartbeat repeats.
-            self.assertEqual(out.count("[harness] [study 1/2]"), 1)
+            self.assertIn("[study 1/2]", out)
             self.assertEqual(out.count("[harness]"), 1)
 
     def test_no_harness_line_when_step_already_has_agent_lines(self) -> None:
@@ -76,9 +76,10 @@ class LiveMonitorStepLineTest(unittest.TestCase):
             self.assertIn("[planner]", out)
             self.assertNotIn("[harness]", out)
 
-    def test_new_step_line_prints_after_previous_marker(self) -> None:
+    def test_new_step_line_prints_after_previous_step_rows(self) -> None:
         # The engine advanced current_step_id to the next step: the step
-        # start line for it prints AFTER the completed step's marker.
+        # start line for it prints AFTER the completed step's captured
+        # output rows.
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp) / "workflows" / "runs" / "abc12345"
@@ -107,7 +108,10 @@ class LiveMonitorStepLineTest(unittest.TestCase):
                     monitor._poll_once()
             out = captured.getvalue()
             self.assertLess(
-                out.index("--- step study (completed) [1/2]"),
-                out.index("[harness] [research 2/2]"),
+                out.index("done"),
+                out.index("[research 2/2]"),
             )
-            self.assertEqual(out.count("[harness]"), 1)
+            # Two [harness] rows: the study step's captured "done" row and
+            # the research step-start row — no repeats of the start line.
+            self.assertEqual(out.count("[harness]"), 2)
+            self.assertEqual(out.count("[research 2/2]"), 1)

@@ -146,6 +146,7 @@ def render_run_pipeline(paths: Paths) -> None:
         ("buffered_emitter", "buffered_emitter.py"),
         ("live_monitor", "live_monitor.py"),
         ("live_lines", "live_lines.py"),
+        ("table_format", "table_format.py"),
         ("usage_parser", "usage_parser.py"),
         ("config_invocation", "config_invocation.py"),
         ("run_statistics", "run_statistics.py"),

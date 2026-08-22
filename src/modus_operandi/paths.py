@@ -55,6 +55,8 @@ def _layout(base: Path) -> Paths:
         "buffered_emitter": base / "opencode" / "scripts" / "buffered_emitter.py",
         "live_monitor": base / "opencode" / "scripts" / "live_monitor.py",
         "live_lines": base / "opencode" / "scripts" / "live_lines.py",
+        # The aligned column layout of the log rows (ADR-0016).
+        "table_format": base / "opencode" / "scripts" / "table_format.py",
         # The agent-log usage schema (opencode step_finish, cursor usage
         # shapes) is a separate concern used by both the live lines and the
         # run statistics: copied next to them so the installed modules stay

@@ -2,15 +2,16 @@
 
 One responsibility: read the workflow files the wrapper is running — the
 installed config dir derived from this module's location, the ordered
-top-level step ids of a workflow source (path or bare id) and the
-completed step's own position among them. The N/M progress markers of the
-wrapper depend on this; any missing/unreadable input degrades to None so
-the run never fails here.
+top-level step ids of a workflow source (path or bare id) and every step
+id of the workflow file (nested included) for the aligned step column of
+the log rows. Any missing/unreadable input degrades to None so the run
+never fails here.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 # The installed config dir, derived from this module's location (scripts/ ->
 # opencode/ -> .config/, like CONFIG_PATH in config_invocation.py): used to
@@ -18,18 +19,8 @@ from pathlib import Path
 CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "modus-operandi"
 
 
-def workflow_step_ids(source: str) -> list[str] | None:
-    """The ordered top-level step ids of the workflow file, or None.
-
-    The wrapper's argv[0] is either a path to the workflow file (also a
-    relative path from cwd) or a bare id; a bare id is resolved against the
-    installed config dir and the cwd. Any missing file or unparseable YAML
-    degrades to None — the N/M progress is then omitted without failing the
-    run (ADR-0011). The id list (not just the count) lets the step markers
-    show the completed step's own position instead of the engine's
-    `current_step_index`, which has usually already advanced to the next
-    step when the result is polled.
-    """
+def _workflow_document(source: str) -> dict[str, Any] | None:
+    """The parsed workflow document, or None when unreadable/unparseable."""
     candidates: list[Path] = []
     if Path(source).is_file():
         candidates.append(Path(source))
@@ -42,35 +33,57 @@ def workflow_step_ids(source: str) -> list[str] | None:
         except OSError:
             continue
         try:
-            import yaml  # pyproject.toml declares pyyaml as a package dependency
+            import yaml
 
             data = yaml.safe_load(text)
         except Exception:
             continue
         if isinstance(data, dict) and isinstance(data.get("steps"), list):
-            ids = [
-                step["id"]
-                for step in data["steps"]
-                if isinstance(step, dict) and isinstance(step.get("id"), str)
-            ]
-            if ids:
-                return ids
+            return data
     return None
 
 
-def step_marker_index(step_id: str, step_ids: list[str] | None) -> int | None:
-    """The 0-based index of a completed step among the top-level steps.
+def _collect_step_ids(node: object) -> list[str]:
+    """Every step id under a workflow node, nested steps included."""
+    if not isinstance(node, dict):
+        return []
+    ids: list[str] = []
+    if isinstance(node.get("id"), str):
+        ids.append(node["id"])
+    for key in ("steps", "then", "else"):
+        children = node.get(key)
+        if isinstance(children, list):
+            for child in children:
+                ids.extend(_collect_step_ids(child))
+    inner = node.get("step")  # fan-out: the step template
+    if isinstance(inner, dict):
+        ids.extend(_collect_step_ids(inner))
+    return ids
 
-    The engine writes loop-iteration results with a suffixed id
-    (e.g. `motivation-loop:motivation-gate:1` in task-pipeline.yml): the
-    marker shows the position of the parent top-level step, so the suffix
-    is stripped before the lookup. None when the step is unknown or no
-    workflow file was read — the marker then omits the N/M part.
+
+def workflow_step_ids(source: str) -> list[str] | None:
+    """The ordered top-level step ids of the workflow file, or None.
+
+    The wrapper's argv[0] is either a path to the workflow file (also a
+    relative path from cwd) or a bare id; a bare id is resolved against the
+    installed config dir and the cwd. Any missing file or unparseable YAML
+    degrades to None — the run never fails here.
     """
-    if not step_ids:
+    doc = _workflow_document(source)
+    if doc is None:
         return None
-    base = step_id.split(":", 1)[0]
-    try:
-        return step_ids.index(base)
-    except ValueError:
+    ids = [
+        step["id"]
+        for step in doc["steps"]
+        if isinstance(step, dict) and isinstance(step.get("id"), str)
+    ]
+    return ids or None
+
+
+def workflow_all_step_ids(source: str) -> list[str] | None:
+    """Every step id of the workflow file (nested included), or None."""
+    doc = _workflow_document(source)
+    if doc is None:
         return None
+    ids = _collect_step_ids(doc)
+    return ids or None

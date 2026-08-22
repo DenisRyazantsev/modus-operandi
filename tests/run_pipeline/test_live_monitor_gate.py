@@ -78,13 +78,14 @@ class LiveMonitorGateTest(unittest.TestCase):
                 captured = io.StringIO()
                 with stdout(captured):
                     monitor._poll_once()
-            # Nothing printed while the gate is open; the step result, the
-            # gate step id, the live line and the step-start harness line
-            # are all captured instead (ADR-0012).
+            # Nothing printed while the gate is open; the step's captured
+            # output arrives as a `[harness]` row in the fixed buffer (no
+            # separate step-result category anymore), together with the
+            # live line and the step-start harness line (ADR-0012,
+            # ADR-0016).
             self.assertEqual(captured.getvalue(), "")
             self.assertEqual(monitor.gate._gate_step_id, "adr-gate")
-            self.assertEqual(len(monitor._emitter.buffered_steps), 1)
-            self.assertEqual(len(monitor._emitter.buffered_fixed), 2)
+            self.assertEqual(len(monitor._emitter.buffered_fixed), 3)
             self.assertIn("cache 4", monitor._emitter.buffered_fixed[0])
             self.assertIn("[harness]", monitor._emitter.buffered_fixed[1])
 
@@ -108,7 +109,6 @@ class LiveMonitorGateTest(unittest.TestCase):
                 with stdout(captured):
                     monitor._poll_once()
             self.assertFalse(monitor.gate.is_open)
-            self.assertEqual(monitor._emitter.buffered_steps, [])
             self.assertEqual(monitor._emitter.buffered_fixed, [])
             self.assertIn("done", captured.getvalue())
             self.assertIn("cache 4", captured.getvalue())
@@ -153,7 +153,6 @@ class LiveMonitorGateTest(unittest.TestCase):
                     monitor.stop()
                     monitor.join()
             self.assertFalse(monitor.gate.is_open)
-            self.assertEqual(monitor._emitter.buffered_steps, [])
             self.assertEqual(monitor._emitter.buffered_fixed, [])
             self.assertIn("done", captured.getvalue())
             self.assertIn("cache 4", captured.getvalue())

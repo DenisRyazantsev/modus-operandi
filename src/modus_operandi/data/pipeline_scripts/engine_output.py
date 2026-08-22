@@ -43,7 +43,7 @@ def run_id_from_text(text: str) -> str:
 # specify-cli v0.16.x prints a `  ▸ [<step-id>] <type> ...` line at the start
 # of every step (engine.on_step_start) and one-time headers at the beginning
 # (`Running workflow:`/`Version:`) and end (`Status:`/`Run ID:`) of a run.
-# The wrapper's own markers and live lines already show all of that, so under
+# The wrapper's own aligned step rows already show all of that, so under
 # the strict "our format only" rule (ADR-0013) these lines are NOT echoed.
 ENGINE_STEP_START_PREFIX = "▸ "
 ENGINE_HEADER_PREFIXES = (
@@ -66,8 +66,8 @@ def is_engine_step_start(line: str) -> bool:
     """True when line is specify's step-start line (`  ▸ [<step-id>] ...`).
 
     Pure string predicate (ADR-0013): the line announces a step that the
-    wrapper's own `--- step ... (completed) [N/M]` markers and live status
-    lines already show, so it is filtered out of the echo.
+    wrapper's own aligned step rows (the pinned live lines and `[harness]`
+    rows) already show, so it is filtered out of the echo.
     """
     return line.strip().startswith(ENGINE_STEP_START_PREFIX)
 

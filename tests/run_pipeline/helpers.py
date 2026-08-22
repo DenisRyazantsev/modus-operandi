@@ -36,6 +36,7 @@ _MODULES = (
     "buffered_emitter",
     "live_monitor",
     "live_lines",
+    "table_format",
     "usage_parser",
     "config_invocation",
     "run_statistics",
