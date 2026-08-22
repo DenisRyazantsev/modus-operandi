@@ -11,7 +11,7 @@ resolution.
 
 from __future__ import annotations
 
-import subprocess as subprocess
+import subprocess
 import sys
 from pathlib import Path
 

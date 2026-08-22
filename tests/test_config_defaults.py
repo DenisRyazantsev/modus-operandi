@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from modus_operandi import config
+from modus_operandi import InstallError, config
 
 
 class ApplyDefaultsTest(unittest.TestCase):
@@ -96,34 +96,34 @@ class ApplyDefaultsTest(unittest.TestCase):
         self.assertEqual(cfg["workflow"]["state_dir"], ".workflow")
 
     def test_non_mapping_workflow_raises_install_error(self) -> None:
-        with self.assertRaises(config.InstallError) as cm:
+        with self.assertRaises(InstallError) as cm:
             config.apply_defaults({"workflow": "some-string"})
         self.assertIn("workflow must be a mapping", str(cm.exception))
 
     def test_non_mapping_opencode_raises_install_error(self) -> None:
-        with self.assertRaises(config.InstallError) as cm:
+        with self.assertRaises(InstallError) as cm:
             config.apply_defaults({"opencode": "some-string"})
         self.assertIn("opencode must be a mapping", str(cm.exception))
 
     def test_non_mapping_opencode_models_raises_install_error(self) -> None:
         for raw in ({"opencode": {"models": 123}}, {"models": 123}):
-            with self.assertRaises(config.InstallError) as cm:
+            with self.assertRaises(InstallError) as cm:
                 config.apply_defaults(raw)
             self.assertIn("opencode.models must be a mapping", str(cm.exception))
 
     def test_non_mapping_opencode_models_role_raises_install_error(self) -> None:
         for role in ("planner", "executor"):
-            with self.assertRaises(config.InstallError) as cm:
+            with self.assertRaises(InstallError) as cm:
                 config.apply_defaults({"opencode": {"models": {role: 123}}})
             self.assertIn(f"opencode.models.{role} must be a mapping", str(cm.exception))
 
     def test_non_mapping_cursor_raises_install_error(self) -> None:
-        with self.assertRaises(config.InstallError) as cm:
+        with self.assertRaises(InstallError) as cm:
             config.apply_defaults({"cursor": "some-string"})
         self.assertIn("cursor must be a mapping", str(cm.exception))
 
     def test_non_mapping_cursor_models_role_raises_install_error(self) -> None:
-        with self.assertRaises(config.InstallError) as cm:
+        with self.assertRaises(InstallError) as cm:
             config.apply_defaults({"cursor": {"models": {"planner": 123}}})
         self.assertIn("cursor.models.planner must be a mapping", str(cm.exception))
 
@@ -132,7 +132,7 @@ class ApplyDefaultsTest(unittest.TestCase):
         # scalar or a list) must fail with a clean InstallError, not an
         # unhandled TypeError from dict(raw).
         for raw in (42, [1, 2, 3]):
-            with self.assertRaises(config.InstallError) as cm:
+            with self.assertRaises(InstallError) as cm:
                 config.apply_defaults(raw)
             self.assertIn("top-level must be a mapping", str(cm.exception))
 
@@ -141,7 +141,7 @@ class ApplyDefaultsTest(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp) / "config.yml"
                 path.write_text(content, encoding="utf-8")
-                with self.assertRaises(config.InstallError) as cm:
+                with self.assertRaises(InstallError) as cm:
                     config.load_config(path)
                 self.assertIn("top-level must be a mapping", str(cm.exception))
 

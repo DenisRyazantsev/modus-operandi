@@ -7,7 +7,13 @@ victory sound) and renders them into the user config base on first run
 ``pyproject.toml``; both are bumped together on release.
 """
 
-from .paths import Paths as Paths
+from .paths import Paths
+
+# The package's public surface: the install layout type and the
+# user-facing install failure. (The explicit __all__ marks Paths as a
+# re-export of the paths.py alias; InstallError and __version__ are
+# defined in this module.)
+__all__ = ["InstallError", "Paths", "__version__"]
 
 __version__ = "0.1.0"
 

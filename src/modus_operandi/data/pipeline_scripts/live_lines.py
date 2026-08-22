@@ -84,7 +84,7 @@ class LiveLines:
         # True once a result-style cursor event was seen: the step_finish
         # fallback is then disabled so a transitional build emitting both
         # shapes cannot double-count (bug fix).
-        self._prefer_result = False
+        self._disable_step_finish_fallback = False
         # The spinner's time origin: the frame is a function of the elapsed
         # time, so the 4 fps cadence (ADR-0013) never drifts even when a
         # monitor tick is skipped.
@@ -145,7 +145,7 @@ class LiveLines:
         if not isinstance(event, dict):
             return None
         try:
-            usage = event_usage(event, self._prefer_result)
+            usage = event_usage(event, self._disable_step_finish_fallback)
         except (AttributeError, TypeError, ValueError):
             return None
         if usage is not None and is_result_style(event):
@@ -155,7 +155,7 @@ class LiveLines:
             # A malformed or unrecognized-shape result-style event is
             # skipped WITHOUT the flip — one broken event must not
             # permanently suppress all later token display (bug fix).
-            self._prefer_result = True
+            self._disable_step_finish_fallback = True
         key = (role, fork_id)
         newly_active = key not in self._active
         self._active.add(key)

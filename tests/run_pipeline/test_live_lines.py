@@ -616,9 +616,9 @@ class CursorUsageTest(unittest.TestCase):
 
     def test_malformed_result_event_does_not_disable_step_finish_fallback(self) -> None:
         # Regression (bug fix): a malformed result-style event is skipped
-        # WITHOUT flipping prefer_result — the step_finish fallback of a
-        # later event must keep counting. One broken event must not
-        # silently suppress all later token display.
+        # WITHOUT flipping disable_step_finish_fallback — the step_finish
+        # fallback of a later event must keep counting. One broken event
+        # must not silently suppress all later token display.
         mod = load_run_pipeline()
         live = mod.LiveLines(tty=True, backend="cursor")
         live.add_event("planner", "", {"type": "result", "usage": {"inputTokens": "abc"}})

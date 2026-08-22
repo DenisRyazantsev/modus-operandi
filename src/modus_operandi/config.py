@@ -8,7 +8,7 @@ from typing import Any
 
 import yaml
 
-from . import InstallError as InstallError
+from . import InstallError
 
 DEFAULT_STATE_DIR = ".workflow"
 DEFAULT_MAX_FIX_ITERATIONS = 5

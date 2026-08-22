@@ -114,7 +114,8 @@ ATTACH_FLAG="${MO_ATTACH_FLAG:-}"
 BACKEND="${MO_BACKEND:-opencode}"
 
 # Raise opencode's per-response output cap (default 32k) so an agent reply
-# cannot be truncated mid-reasoning before it acts (ADR-0007). 1000000 is
+# cannot be truncated mid-reasoning before it acts (ADR-0006: executor
+# output limit). 1000000 is
 # effectively unlimited: the provider's own ceiling still applies. Opencode
 # only: cursor has its own cap, and the env var is harmless there.
 export OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=1000000
