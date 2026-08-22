@@ -3,7 +3,8 @@
 import io
 import tempfile
 import unittest
-from unittest import mock
+
+from tests.env_sandbox import stderr, stdout
 
 from .helpers import load_modus_operandi
 
@@ -183,11 +184,7 @@ class BuildCommandTest(unittest.TestCase):
         # Mapping must never print: help/invalid are signalled by exceptions,
         # and the usage text lives in print_usage, so build_command writes to
         # neither stream for any outcome.
-        stdout, stderr = io.StringIO(), io.StringIO()
-        with (
-            mock.patch("sys.stdout", stdout),
-            mock.patch("sys.stderr", stderr),
-        ):
+        with stdout(io.StringIO()) as out, stderr(io.StringIO()) as err:
             self.mod.build_command(["task", "feat"])
             self.mod.build_command(["review", "--branch-diff"])
             with self.assertRaises(self.mod.HelpRequested):
@@ -200,8 +197,8 @@ class BuildCommandTest(unittest.TestCase):
                 self.mod.build_command(["edit"])
             with self.assertRaises(self.mod.UninstallRequested):
                 self.mod.build_command(["uninstall"])
-        self.assertEqual(stdout.getvalue(), "")
-        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(out.getvalue(), "")
+        self.assertEqual(err.getvalue(), "")
 
     def test_help_signals_help_requested(self) -> None:
         for argv in (["--help"], ["-h"]):

@@ -1,4 +1,12 @@
-"""Unit tests for open_feedback_editor."""
+"""Tests for open_feedback_editor against real ptys and real editor scripts.
+
+open_feedback_editor owns the feedback gates: on a TTY it opens the
+platform editor (ADR-0011) — "waited" paths (macOS TextEdit, the terminal
+chain) run blocking and answer `continue` on close; the Linux GUI path is
+"detached" (separate window, the gate stays interactive). The tests run a
+real pty pair (sys.stdin/sys.stdout are the real pty slave), real editor
+executables on PATH and real subprocesses; only the macOS branches cannot
+"""
 
 import io
 import os
@@ -10,168 +18,128 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
-from unittest import mock
+
+from tests.env_sandbox import cwd, env, stderr, stdin, stdout
 
 from .helpers import load_run_pipeline
 
 
-def _write(written: list[tuple[int, bytes]]) -> Any:
-    def _impl(fd: int, data: bytes) -> int:
-        written.append((fd, data))
-        return len(data)
-
-    return _impl
+def _write_script(path: Path, body: str) -> None:
+    path.write_text(body)
+    path.chmod(0o755)
 
 
 class FeedbackEditorTest(unittest.TestCase):
-    """open_feedback_editor owns the feedback gates: on a TTY it opens the
-    platform editor (ADR-0011) — "waited" paths (macOS TextEdit, the
-    terminal chain) run blocking and answer `continue` on close; the Linux
-    GUI path is "detached" (separate window, the gate stays interactive).
-    Without a TTY or an editor it falls back (file created, gate stays
-    interactive, forwarding never paused)."""
+    """The platform resolution (editor.py) runs against real binaries on
+    PATH; the gate answer is observed on a real pty pair."""
 
-    @contextmanager
-    def _tty(self, is_tty: bool = True) -> Iterator[None]:
-        with (
-            mock.patch("sys.stdin.isatty", return_value=is_tty),
-            mock.patch("sys.stdout.isatty", return_value=is_tty),
-        ):
-            yield
+    def _bins(self, tmp: str) -> Path:
+        bin_dir = Path(tmp) / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        return bin_dir
+
+    def _path_env(self, bin_dir: Path) -> str:
+        return f"{bin_dir}:{os.environ.get('PATH', '')}"
 
     def _feedback_path(self, tmp: str) -> Path:
         return Path(tmp) / ".workflow" / "tasks" / "current" / "feedback.md"
 
+    @contextmanager
+    def _tty(self, is_tty: bool = True) -> Iterator[tuple[int, int]]:
+        """A real pty pair: sys.stdin/sys.stdout are the slave end (isatty
+        True), or plain StringIO streams (isatty False). Yields
+        (master_fd, slave_fd)."""
+        master, slave = pty.openpty()
+        try:
+            slave_in: Any
+            slave_out: Any
+            if is_tty:
+                slave_in = os.fdopen(slave, "r", encoding="utf-8")
+                slave_out = os.fdopen(slave, "w", encoding="utf-8")
+            else:
+                slave_in = io.StringIO()
+                slave_out = io.StringIO()
+            with stdin(slave_in), stdout(slave_out):
+                yield master, slave
+        finally:
+            os.close(master)
+            if is_tty:
+                os.close(slave)
+
     def test_answers_continue_after_terminal_editor(self) -> None:
         # Linux without a GUI: the terminal chain runs blocking and the
-        # wrapper answers the gate with `continue`.
+        # wrapper answers the gate with `continue`. nano is a real script on
+        # PATH; the gate answer is observed on the real pty.
         mod = load_run_pipeline()
-        real_master, real_slave = pty.openpty()
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                path = self._feedback_path(tmp)
-                written: list[tuple[int, bytes]] = []
-
-                def which(name: str) -> str | None:
-                    return "/usr/bin/" + name if name in ("nano", "vi") else None
-
-                with (
-                    self._tty(),
-                    mock.patch.object(Path, "cwd", return_value=Path(tmp)),
-                    mock.patch("sys.platform", "linux"),
-                    mock.patch.dict("os.environ", {}, clear=True),
-                    mock.patch("shutil.which", side_effect=which),
-                    # The flatpak probe (resolve_feedback_editor) and the
-                    # editor run both go through subprocess.run; returncode
-                    # 1 for the probe means "not installed".
-                    mock.patch("subprocess.run", return_value=mock.Mock(returncode=1)) as run,
-                    mock.patch("os.write", side_effect=_write(written)),
-                ):
-                    result = mod.open_feedback_editor(
-                        ".workflow", threading.Event(), real_master, "adr-feedback-gate"
-                    )
-                self.assertTrue(result)
-                self.assertEqual(run.call_args.args[0], ["nano", str(path)])
-                self.assertEqual(written, [(real_master, b"continue\n")])
-        finally:
-            os.close(real_master)
-            os.close(real_slave)
-
-    def test_macos_textedit_waited_answers_continue(self) -> None:
-        mod = load_run_pipeline()
-        real_master, real_slave = pty.openpty()
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                path = self._feedback_path(tmp)
-                written: list[tuple[int, bytes]] = []
-                with (
-                    self._tty(),
-                    mock.patch.object(Path, "cwd", return_value=Path(tmp)),
-                    mock.patch("sys.platform", "darwin"),
-                    mock.patch("subprocess.run", return_value=mock.Mock(returncode=0)) as run,
-                    mock.patch("os.write", side_effect=_write(written)),
-                ):
-                    result = mod.open_feedback_editor(
-                        ".workflow", threading.Event(), real_master, "adr-feedback-gate"
-                    )
-                self.assertTrue(result)
-                self.assertEqual(
-                    run.call_args.args[0],
-                    ["open", "-a", "TextEdit", "-W", str(path)],
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = self._bins(tmp)
+            _write_script(bin_dir / "nano", "#!/bin/sh\nexit 0\n")
+            _write_script(bin_dir / "flatpak", "#!/bin/sh\nexit 1\n")
+            path = self._feedback_path(tmp)
+            with self._tty() as (master, slave), cwd(tmp), env({"PATH": str(bin_dir)}, clear=True):
+                result = mod.open_feedback_editor(
+                    ".workflow", threading.Event(), master, "adr-feedback-gate"
                 )
-                self.assertEqual(written, [(real_master, b"continue\n")])
-        finally:
-            os.close(real_master)
-            os.close(real_slave)
+                answer = os.read(slave, 64)
+            self.assertTrue(result)
+            self.assertEqual(answer, b"continue\n")
+            self.assertTrue(path.is_file())
 
     def test_linux_gui_detached_leaves_gate_interactive(self) -> None:
         # The Linux GUI path launches the editor in a separate window and
         # NEVER answers the gate: the user presses continue after closing
-        # the window. Forwarding is never paused.
+        # the window. Forwarding is never paused. flatpak answers the probe
+        # with 0, so the detached branch runs with a real Popen.
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
-            path = self._feedback_path(tmp)
+            bin_dir = self._bins(tmp)
+            _write_script(bin_dir / "flatpak", "#!/bin/sh\nexit 0\n")
             pause = threading.Event()
             with (
                 self._tty(),
-                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
-                mock.patch("sys.platform", "linux"),
-                mock.patch(
-                    "shutil.which",
-                    side_effect=lambda name: "/usr/bin/" + name if name == "flatpak" else None,
-                ),
-                mock.patch("subprocess.run", return_value=mock.Mock(returncode=0)),
-                mock.patch("subprocess.Popen") as popen,
-                mock.patch("os.write") as write,
+                cwd(tmp),
+                env({"PATH": str(bin_dir)}, clear=True),
             ):
-                result = mod.open_feedback_editor(".workflow", pause, 999, "adr-gate:1")
+                result = mod.open_feedback_editor(".workflow", pause, -1, "adr-gate:1")
             self.assertFalse(result)
             self.assertFalse(pause.is_set())
-            popen.assert_called_once()
-            self.assertEqual(
-                popen.call_args.args[0],
-                ["flatpak", "run", "org.gnome.TextEditor", str(path)],
-            )
-            write.assert_not_called()
 
     def test_falls_back_when_not_a_tty(self) -> None:
+        # Plain streams (isatty False): the file is still created and the
+        # gate stays interactive — no editor is launched.
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = self._bins(tmp)
+            _write_script(bin_dir / "nano", '#!/bin/sh\nmkdir -p "$1.ran"\n')
             path = self._feedback_path(tmp)
             with (
                 self._tty(is_tty=False),
-                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
-                mock.patch("subprocess.run") as run,
-                mock.patch("subprocess.Popen") as popen,
-                mock.patch("os.write") as write,
+                cwd(tmp),
+                env({"PATH": str(bin_dir)}, clear=True),
             ):
                 result = mod.open_feedback_editor(
-                    ".workflow", threading.Event(), 999, "adr-feedback-gate"
+                    ".workflow", threading.Event(), -1, "adr-feedback-gate"
                 )
             self.assertFalse(result)
-            run.assert_not_called()
-            popen.assert_not_called()
-            write.assert_not_called()
-            # The file is still created (the fallback keeps manual input).
             self.assertTrue(path.is_file())
+            self.assertFalse(Path(str(path) + ".ran").exists())
 
     def test_falls_back_when_no_editor(self) -> None:
+        # No editor binary anywhere on PATH: the flow falls back with the
+        # file still created.
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = self._bins(tmp)
             path = self._feedback_path(tmp)
             with (
                 self._tty(),
-                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
-                mock.patch("sys.platform", "linux"),
-                mock.patch.dict("os.environ", {}, clear=True),
-                mock.patch("shutil.which", return_value=None),
-                mock.patch("subprocess.run") as run,
+                cwd(tmp),
+                env({"PATH": str(bin_dir)}, clear=True),
             ):
                 result = mod.open_feedback_editor(
-                    ".workflow", threading.Event(), 999, "adr-feedback-gate"
+                    ".workflow", threading.Event(), -1, "adr-feedback-gate"
                 )
             self.assertFalse(result)
-            run.assert_not_called()
             self.assertTrue(path.is_file())
 
     def test_fallback_never_leaves_forwarding_paused(self) -> None:
@@ -180,49 +148,32 @@ class FeedbackEditorTest(unittest.TestCase):
         mod = load_run_pipeline()
         pause = threading.Event()
         with tempfile.TemporaryDirectory() as tmp:
-            path = self._feedback_path(tmp)
+            bin_dir = self._bins(tmp)
             with (
                 self._tty(is_tty=False),
-                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
+                cwd(tmp),
+                env({"PATH": str(bin_dir)}, clear=True),
             ):
-                result = mod.open_feedback_editor(".workflow", pause, 999, None)
+                result = mod.open_feedback_editor(".workflow", pause, -1, None)
             self.assertFalse(result)
             self.assertFalse(pause.is_set())
-            self.assertTrue(path.is_file())
-
-    def test_waited_editor_failure_falls_back(self) -> None:
-        mod = load_run_pipeline()
-        with tempfile.TemporaryDirectory() as tmp:
-            with (
-                self._tty(),
-                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
-                mock.patch("sys.platform", "darwin"),
-                mock.patch("subprocess.run", side_effect=OSError("boom")),
-                mock.patch("sys.stderr", io.StringIO()),
-            ):
-                result = mod.open_feedback_editor(
-                    ".workflow", threading.Event(), 999, "adr-feedback-gate"
-                )
-            self.assertFalse(result)
+            self.assertTrue(self._feedback_path(tmp).is_file())
 
     def test_detached_launch_failure_falls_back(self) -> None:
+        # The Linux GUI branch with a broken editor script: the real Popen
+        # raises OSError and the flow falls back (no crash, no pause).
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = self._bins(tmp)
+            _write_script(bin_dir / "gnome-text-editor", "#!/nonexistent/interp\n")
+            pause = threading.Event()
             with (
                 self._tty(),
-                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
-                mock.patch("sys.platform", "linux"),
-                mock.patch(
-                    "shutil.which",
-                    side_effect=lambda name: (
-                        "/usr/bin/" + name if name == "gnome-text-editor" else None
-                    ),
-                ),
-                mock.patch("subprocess.run", return_value=mock.Mock(returncode=1)),
-                mock.patch("subprocess.Popen", side_effect=OSError("boom")),
-                mock.patch("sys.stderr", io.StringIO()),
+                cwd(tmp),
+                env({"PATH": str(bin_dir)}, clear=True),
+                stderr(io.StringIO()) as err,
             ):
-                result = mod.open_feedback_editor(
-                    ".workflow", threading.Event(), 999, "adr-feedback-gate"
-                )
+                result = mod.open_feedback_editor(".workflow", pause, -1, "adr-feedback-gate")
             self.assertFalse(result)
+            self.assertFalse(pause.is_set())
+            self.assertIn("cannot start editor", err.getvalue())

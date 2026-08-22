@@ -72,7 +72,13 @@ class FakeProc:
 
 
 def load_run_pipeline() -> types.ModuleType:
-    tmpdir = Path(tempfile.mkdtemp(prefix="run_pipeline_test_"))
+    base = Path(tempfile.mkdtemp(prefix="run_pipeline_test_"))
+    # The modules are copied into a NESTED subdir: the wrapper derives its
+    # installed config dir from __file__ (../../.. + config name), and with
+    # the copy nested three levels deep that dir lands inside the temp base
+    # where tests can write real workflow files for it.
+    tmpdir = base / "modules" / "deep"
+    tmpdir.mkdir(parents=True)
     for name in _MODULES:
         (tmpdir / f"{name}.py").write_bytes((_SRC_DIR / f"{name}.py").read_bytes())
     sys.path.insert(0, str(tmpdir))
@@ -109,3 +115,22 @@ def point_config_at(mod: types.ModuleType, tmp: str, **workflow_overrides: objec
     path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
     cast(Any, mod).CONFIG_PATH = path
     return path
+
+
+def export_env(
+    bin_dir: Path, body: str = "#!/bin/sh\nexit 1\n", *, host: bool = True
+) -> dict[str, str]:
+    """PATH with a real executable `opencode` script (the export backends).
+
+    run_statistics runs `opencode export <session_id>` through a real
+    subprocess; the tests control the outcome with a real script on PATH
+    (default: exit 1, i.e. the export degrades). host=False limits PATH to
+    the bin dir alone, so `opencode` is genuinely not found.
+    """
+    import os
+
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    path = bin_dir / "opencode"
+    path.write_text(body)
+    path.chmod(0o755)
+    return {"PATH": str(bin_dir) + (f":{os.environ.get('PATH', '')}" if host else "")}

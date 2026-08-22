@@ -5,21 +5,22 @@ from __future__ import annotations
 import io
 import tempfile
 import unittest
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
 from modus_operandi import installer_cli as install
-from modus_operandi import proc, tool_discovery, yaml_loader
+from modus_operandi import proc, yaml_loader
+from tests.env_sandbox import env, stderr
 
-from .install_helpers import make_run, which_fake
+from .install_helpers import make_run
 
 
 class InstallerTestCase(unittest.TestCase):
-    """Shared fixture for every install test: a fresh --home temp dir and a
-    faked external-command layer, plus the helpers the focused test classes
-    use to drive the installer."""
+    """Shared fixture for every install test: a fresh --home temp dir, real
+    tool binaries on PATH and the faked external-command layer (proc.run —
+    the installer's real subprocesses would run the engine; see
+    workspace.md)."""
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -28,6 +29,15 @@ class InstallerTestCase(unittest.TestCase):
         patcher = mock.patch.object(proc, "run", side_effect=make_run(self.records))
         patcher.start()
         self.addCleanup(patcher.stop)
+        self.bin = self.home / "bin"
+        self.bin.mkdir()
+        self._make_bins("opencode", "python3", "specify", "cursor-agent", "agent")
+
+    def _make_bins(self, *names: str) -> None:
+        for name in names:
+            path = self.bin / name
+            path.write_text("#!/bin/sh\nexit 0\n")
+            path.chmod(0o755)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -51,15 +61,17 @@ class InstallerTestCase(unittest.TestCase):
     def run_main(
         self,
         argv: list[str],
-        which: Callable[[str], str | None] = which_fake,
+        missing: tuple[str, ...] = (),
     ) -> tuple[int, str]:
-        stderr = io.StringIO()
-        with (
-            mock.patch.object(tool_discovery, "find_in_path", side_effect=which),
-            mock.patch("sys.stderr", stderr),
-        ):
+        # The tool lookup is real: PATH is the temp bin dir (the host's
+        # binaries are deliberately excluded), with the given tools removed
+        # to simulate "not installed".
+        for name in missing:
+            (self.bin / name).unlink()
+        err_sink = io.StringIO()
+        with env({"PATH": str(self.bin)}, clear=True), stderr(err_sink):
             rc = install.main(argv)
-        return rc, stderr.getvalue()
+        return rc, err_sink.getvalue()
 
     def install(self, *extra: str) -> int:
         return self.run_main(["--home", str(self.home), *extra])[0]

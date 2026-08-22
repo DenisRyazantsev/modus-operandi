@@ -5,7 +5,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
+
+from tests.env_sandbox import cwd, stdout
 
 from .helpers import load_run_pipeline
 
@@ -45,11 +46,11 @@ class LiveMonitorStepLineTest(unittest.TestCase):
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             self._prepare(tmp, "study", 0)
-            with mock.patch.object(Path, "cwd", return_value=Path(tmp)):
+            with cwd(tmp):
                 monitor = mod.LiveMonitor(Path(tmp), set(), step_ids=["study", "research"])
                 monitor.run_id = "abc12345"
                 captured = io.StringIO()
-                with mock.patch("sys.stdout", captured):
+                with stdout(captured):
                     monitor._poll_once()
                     monitor._poll_once()
             out = captured.getvalue()
@@ -63,13 +64,13 @@ class LiveMonitorStepLineTest(unittest.TestCase):
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             self._prepare(tmp, "study", 0)
-            with mock.patch.object(Path, "cwd", return_value=Path(tmp)):
+            with cwd(tmp):
                 monitor = mod.LiveMonitor(Path(tmp), set(), step_ids=["study", "research"])
                 monitor.run_id = "abc12345"
                 log = Path(tmp) / ".workflow" / "logs" / "sessions-planner.jsonl"
                 log.write_text(json.dumps(_step_finish()) + "\n", encoding="utf-8")
                 captured = io.StringIO()
-                with mock.patch("sys.stdout", captured):
+                with stdout(captured):
                     monitor._poll_once()
             out = captured.getvalue()
             self.assertIn("[planner]", out)
@@ -98,11 +99,11 @@ class LiveMonitorStepLineTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (Path(tmp) / ".workflow" / "logs").mkdir(parents=True)
-            with mock.patch.object(Path, "cwd", return_value=Path(tmp)):
+            with cwd(tmp):
                 monitor = mod.LiveMonitor(Path(tmp), set(), step_ids=["study", "research"])
                 monitor.run_id = "abc12345"
                 captured = io.StringIO()
-                with mock.patch("sys.stdout", captured):
+                with stdout(captured):
                     monitor._poll_once()
             out = captured.getvalue()
             self.assertLess(

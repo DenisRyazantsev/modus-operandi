@@ -5,13 +5,14 @@ import io
 import json
 import os
 import pty
-import sys
 import tempfile
 import threading
 import unittest
 from pathlib import Path
 from typing import Any
 from unittest import mock
+
+from tests.env_sandbox import argv, cwd, stdout
 
 from .helpers import FakeProc, load_run_pipeline, point_config_at
 
@@ -44,15 +45,15 @@ class FeedbackGateFlowTest(unittest.TestCase):
 
         try:
             with (
-                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
+                cwd(tmp),
                 mock.patch("sys.stdin", mock.Mock(isatty=lambda: True)),
                 mock.patch("pty.openpty", return_value=(real_master, real_slave)),
                 mock.patch(
                     "subprocess.Popen",
                     return_value=FakeProc(["┌─ Gate ─────────", "Run ID: abc12345"], 0, env={}),
                 ),
-                mock.patch.object(sys, "argv", ["run-pipeline.py", "adr-pipeline"]),
-                mock.patch("sys.stdout", io.StringIO()),
+                argv(["run-pipeline.py", "adr-pipeline"]),
+                stdout(io.StringIO()),
                 mock.patch.object(mod, "notify") as notify,
                 mock.patch.object(
                     mod, "open_feedback_editor", return_value=editor_result

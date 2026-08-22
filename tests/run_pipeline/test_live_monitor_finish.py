@@ -5,7 +5,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
+
+from tests.env_sandbox import cwd, stdout
 
 from .helpers import load_run_pipeline
 
@@ -48,7 +49,7 @@ class LiveMonitorFinishTest(unittest.TestCase):
             logs_dir = Path(tmp) / ".workflow" / "logs"
             logs_dir.mkdir(parents=True)
             log = logs_dir / "sessions-executor.jsonl"
-            with mock.patch.object(Path, "cwd", return_value=Path(tmp)):
+            with cwd(tmp):
                 monitor = mod.LiveMonitor(Path(tmp), set())
                 # The "late reply" is appended AFTER the tailer's baseline:
                 # only lines written during the run are counted.
@@ -57,7 +58,7 @@ class LiveMonitorFinishTest(unittest.TestCase):
                     encoding="utf-8",
                 )
                 captured = io.StringIO()
-                with mock.patch("sys.stdout", captured):
+                with stdout(captured):
                     monitor.finish()
             # Non-TTY (StringIO): one plain line per step_finish event.
             out = captured.getvalue()
@@ -83,11 +84,11 @@ class LiveMonitorFinishTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            with mock.patch.object(Path, "cwd", return_value=Path(tmp)):
+            with cwd(tmp):
                 monitor = mod.LiveMonitor(Path(tmp), set())
                 monitor.run_id = "abc12345"
                 captured = io.StringIO()
-                with mock.patch("sys.stdout", captured):
+                with stdout(captured):
                     monitor.finish()
             self.assertIn("final-step", captured.getvalue())
             self.assertIn("done", captured.getvalue())

@@ -9,10 +9,10 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any
-from unittest import mock
 
-from .helpers import load_run_pipeline
+from tests.env_sandbox import env, stdout
+
+from .helpers import export_env, load_run_pipeline
 
 
 class RunStatisticsTest(unittest.TestCase):
@@ -51,69 +51,60 @@ class RunStatisticsTest(unittest.TestCase):
 
     def test_export_session_info_failures_return_none(self) -> None:
         mod = load_run_pipeline()
-        with mock.patch("subprocess.run", side_effect=OSError("boom")):
+        # opencode not on PATH at all: the real exec fails with OSError.
+        with env(export_env(Path(tempfile.mkdtemp()) / "bin", host=False)):
             self.assertIsNone(mod.export_session_info("p1"))
-        with mock.patch("subprocess.run", return_value=mock.Mock(returncode=1, stdout="")):
+        # A real opencode that exits non-zero: the export degrades to None.
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            env(export_env(Path(tmp) / "bin", "#!/bin/sh\nexit 1\n")),
+        ):
             self.assertIsNone(mod.export_session_info("p1"))
-
         # The export writes only garbage (unparseable both attempts).
-        def garbage_run(cmd: list[str], stdout: Any = None, **kwargs: object) -> mock.Mock:
-            stdout.write(b"not json")
-            return mock.Mock(returncode=0)
-
-        with mock.patch("subprocess.run", side_effect=garbage_run):
+        with tempfile.TemporaryDirectory() as tmp, env(
+            export_env(Path(tmp) / "bin", "#!/bin/sh\necho 'not json'\n")
+        ):
             self.assertIsNone(mod.export_session_info("p1"))
 
     def test_export_retries_once_on_truncated_json(self) -> None:
         # opencode (<= 1.18.x) can exit before its piped stdout is fully
-        # flushed; the export is retried once before degrading to zeros.
+        # flushed; the export is retried once before degrading to zeros. The
+        # script is stateful: the first call writes a truncated payload, the
+        # second (after the marker file appears) the full one.
         mod = load_run_pipeline()
-        attempts: list[int] = []
-
-        def fake_run(cmd: list[str], stdout: Any = None, **kwargs: object) -> mock.Mock:
-            attempts.append(1)
-            if len(attempts) == 1:
-                stdout.write(b'{"info": {"tokens": {"input": 1')
-            else:
-                payload = {"info": {"tokens": {"input": 5}}}
-                stdout.write(json.dumps(payload).encode())
-            return mock.Mock(returncode=0)
-
-        with mock.patch("subprocess.run", side_effect=fake_run):
-            info = mod.export_session_info("p1")
-        self.assertEqual(len(attempts), 2)
+        with tempfile.TemporaryDirectory() as tmp:
+            attempts = Path(tmp) / "attempts"
+            script = (
+                "#!/bin/sh\n"
+                'if [ -f "$OPCODE_ATTEMPTS_FILE" ]; then\n'
+                '  echo \'{"info": {"tokens": {"input": 5}}}\'\n'
+                "else\n"
+                '  echo \'{"info": {"tokens": {"input": 1\'\n'
+                '  touch "$OPCODE_ATTEMPTS_FILE"\n'
+                "fi\n"
+            )
+            env_overrides = export_env(Path(tmp) / "bin", script)
+            env_overrides["OPCODE_ATTEMPTS_FILE"] = str(attempts)
+            with env(env_overrides):
+                info = mod.export_session_info("p1")
+            self.assertTrue(attempts.exists())
         self.assertEqual(info["tokens"]["input"], 5)
 
     def test_usage_sums_both_roles(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             state = self._state(tmp, {"planner": "p1", "executor": "e1"})
-
-            def fake_run(cmd: list[str], stdout: Any = None, **kwargs: object) -> mock.Mock:
-                payloads = {
-                    "p1": {
-                        "tokens": {
-                            "input": 321213,
-                            "output": 12345,
-                            "reasoning": 5678,
-                            "cache": {"read": 9032013, "write": 0},
-                        },
-                        "cost": 0.02,
-                    },
-                    "e1": {
-                        "tokens": {
-                            "input": 5000,
-                            "output": 100,
-                            "reasoning": 50,
-                            "cache": {"read": 100, "write": 5},
-                        },
-                        "cost": 0.01,
-                    },
-                }[cmd[-1]]
-                stdout.write(json.dumps({"info": payloads}).encode())
-                return mock.Mock(returncode=0)
-
-            with mock.patch("subprocess.run", side_effect=fake_run):
+            script = (
+                "#!/bin/sh\n"
+                'case "$2" in\n'
+                '  p1) echo \'{"info": {"tokens": {"input": 321213, "output": 12345,'
+                ' "reasoning": 5678, "cache": {"read": 9032013, "write": 0}},'
+                ' "cost": 0.02}}\' ;;\n'
+                '  e1) echo \'{"info": {"tokens": {"input": 5000, "output": 100,'
+                ' "reasoning": 50, "cache": {"read": 100, "write": 5}}, "cost": 0.01}}\' ;;\n'
+                "esac\n"
+            )
+            with env(export_env(Path(tmp) / "bin", script)):
                 usage = mod.collect_usage(state)
         self.assertEqual(usage["input"], 326213)
         self.assertEqual(usage["output"], 12445)
@@ -126,27 +117,14 @@ class RunStatisticsTest(unittest.TestCase):
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             state = self._state(tmp, {"planner": "p1"})
-
-            def fake_run(cmd: list[str], stdout: Any = None, **kwargs: object) -> mock.Mock:
-                payload = {
-                    "info": {
-                        "tokens": {
-                            "input": 321213,
-                            "output": 12345,
-                            "reasoning": 5678,
-                            "cache": {"read": 9032013, "write": 0},
-                        },
-                        "cost": 0.03,
-                    }
-                }
-                stdout.write(json.dumps(payload).encode())
-                return mock.Mock(returncode=0)
-
+            script = (
+                "#!/bin/sh\n"
+                'echo \'{"info": {"tokens": {"input": 321213, "output": 12345,'
+                ' "reasoning": 5678, "cache": {"read": 9032013, "write": 0}},'
+                ' "cost": 0.03}}\'\n'
+            )
             captured = io.StringIO()
-            with (
-                mock.patch("subprocess.run", side_effect=fake_run),
-                mock.patch("sys.stdout", captured),
-            ):
+            with env(export_env(Path(tmp) / "bin", script)), stdout(captured):
                 mod.print_run_statistics(state, 6301.0)
         out = captured.getvalue()
         self.assertIn("=== run statistics ===", out)
@@ -310,11 +288,12 @@ class RunStatisticsTest(unittest.TestCase):
 
     def test_print_run_statistics_degrades_to_zeros(self) -> None:
         # No sessions file / no opencode: the block still prints with zeros
-        # and the wrapper must not crash.
+        # and the wrapper must not crash. PATH is limited to a bin dir
+        # without opencode, so the real exec fails and everything degrades.
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             captured = io.StringIO()
-            with mock.patch("sys.stdout", captured):
+            with env(export_env(Path(tmp) / "bin", host=False)), stdout(captured):
                 mod.print_run_statistics(Path(tmp), 0.0)
         out = captured.getvalue()
         self.assertIn("=== run statistics ===", out)

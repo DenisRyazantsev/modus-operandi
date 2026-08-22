@@ -1,12 +1,12 @@
 """Unit tests for the timing of the victory sound across the run lifecycle."""
 
 import io
-import sys
 import tempfile
 import unittest
-from pathlib import Path
 from typing import Any
 from unittest import mock
+
+from tests.env_sandbox import argv, cwd, stdin, stdout
 
 from .helpers import FakeProc, load_run_pipeline, point_config_at
 
@@ -23,11 +23,11 @@ class SoundTimingTest(unittest.TestCase):
         # forwarding thread): these tests are about notify() timing, not the
         # pty plumbing (covered by FeedbackGateFlowTest).
         with (
-            mock.patch.object(Path, "cwd", return_value=Path(tmp)),
+            cwd(tmp),
             mock.patch("subprocess.Popen", return_value=FakeProc(lines, returncode)),
-            mock.patch.object(sys, "argv", ["run-pipeline.py", "adr-pipeline"]),
-            mock.patch("sys.stdout", io.StringIO()),
-            mock.patch("sys.stdin.isatty", return_value=False),
+            argv(["run-pipeline.py", "adr-pipeline"]),
+            stdout(io.StringIO()),
+            stdin(io.StringIO()),
             mock.patch.object(mod, "notify") as notify,
         ):
             rc = mod.main()

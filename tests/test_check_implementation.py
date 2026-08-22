@@ -1,15 +1,25 @@
-"""Unit tests for pipeline_scripts/check_implementation.py (implement guard)."""
+"""Tests for pipeline_scripts/check_implementation.py (implement guard).
+
+The guard is exercised against a real git repository built in a temp
+directory: real commits, real working-tree changes and real git errors.
+No run_git call is stubbed — only the working directory and the git
+identity are controlled.
+"""
 
 import importlib.util
+import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
-from typing import Any
-from unittest import mock
+
+from tests.env_sandbox import cwd
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 _PS_DIR = REPO_ROOT / "src" / "modus_operandi" / "data" / "pipeline_scripts"
+_SCRIPT = _PS_DIR / "check_implementation.py"
 
 _SPEC = importlib.util.spec_from_file_location(
     "check_implementation", _PS_DIR / "check_implementation.py"
@@ -19,87 +29,122 @@ check_implementation = importlib.util.module_from_spec(_SPEC)
 sys.modules["check_implementation"] = check_implementation
 _SPEC.loader.exec_module(check_implementation)
 
-
-class FakeResult:
-    def __init__(self, returncode: int = 0, stdout: str = "", stderr: str = "") -> None:
-        self.returncode = returncode
-        self.stdout = stdout
-        self.stderr = stderr
-
-
-def run_with_side_effect(side_effect: Any) -> mock._patch[Any]:
-    return mock.patch.object(check_implementation, "run_git", side_effect=side_effect)
+_GIT_ENV = {
+    "GIT_AUTHOR_NAME": "test",
+    "GIT_AUTHOR_EMAIL": "test@example.com",
+    "GIT_COMMITTER_NAME": "test",
+    "GIT_COMMITTER_EMAIL": "test@example.com",
+}
 
 
-class HasChangesTest(unittest.TestCase):
+class RealGitCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = Path(self.tmp.name) / "repo"
+        self.repo.mkdir()
+        self.assertEqual(self._git("init", "-q").returncode, 0)
+
+    def _git(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args],
+            cwd=self.repo,
+            capture_output=True,
+            text=True,
+            env={**os.environ, **_GIT_ENV},
+            check=False,
+        )
+
+    def _commit(self, filename: str, content: str = "x\n") -> None:
+        path = self.repo / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        self._git("add", filename)
+        self.assertEqual(self._git("commit", "-m", f"add {filename}").returncode, 0)
+
+
+class HasChangesTest(RealGitCase):
     def test_no_changes(self) -> None:
-        with run_with_side_effect([FakeResult(0), FakeResult(0, "")]):
-            result = check_implementation.has_changes("architecture")
-            self.assertEqual(result, (False, "no changes"))
+        self._commit("a.txt")
+        with cwd(self.repo):
+            self.assertEqual(
+                check_implementation.has_changes("architecture"), (False, "no changes")
+            )
 
     def test_tracked_changes(self) -> None:
         # git diff --quiet exits 1 when tracked files differ.
-        with run_with_side_effect([FakeResult(1), FakeResult(0, "")]):
-            self.assertTrue(check_implementation.has_changes("architecture")[0])
+        self._commit("a.txt")
+        (self.repo / "a.txt").write_text("modified\n", encoding="utf-8")
+        with cwd(self.repo):
+            self.assertEqual(
+                check_implementation.has_changes("architecture"),
+                (True, "tracked files modified"),
+            )
 
     def test_untracked_new_file(self) -> None:
-        with run_with_side_effect([FakeResult(0), FakeResult(0, "templates/new.py\n")]):
+        self._commit("a.txt")
+        (self.repo / "new.py").write_text("x\n", encoding="utf-8")
+        with cwd(self.repo):
             changes, summary = check_implementation.has_changes("architecture")
-            self.assertTrue(changes)
-            self.assertIn("new file(s)", summary)
+        self.assertTrue(changes)
+        self.assertIn("new file(s)", summary)
 
     def test_only_saved_adr_is_not_a_change(self) -> None:
         # The pipeline's own saved ADR (architecture/ADR-*.md) is untracked
         # but is not executor work; without the exclusion an empty implement
         # would always "pass".
-        with run_with_side_effect(
-            [FakeResult(0), FakeResult(0, "architecture/ADR-0007-executor-guard.md\n")]
-        ):
-            result = check_implementation.has_changes("architecture")
-            self.assertEqual(result, (False, "no changes"))
+        self._commit("a.txt")
+        adr = self.repo / "architecture" / "ADR-0007-executor-guard.md"
+        adr.parent.mkdir(parents=True, exist_ok=True)
+        adr.write_text("x\n", encoding="utf-8")
+        with cwd(self.repo):
+            self.assertEqual(
+                check_implementation.has_changes("architecture"), (False, "no changes")
+            )
 
     def test_saved_adr_plus_code_file_counts(self) -> None:
-        with run_with_side_effect(
-            [FakeResult(0), FakeResult(0, "architecture/ADR-0007-x.md\ntemplates/new.py\n")]
-        ):
+        self._commit("a.txt")
+        adr = self.repo / "architecture" / "ADR-0007-x.md"
+        adr.parent.mkdir(parents=True, exist_ok=True)
+        adr.write_text("x\n", encoding="utf-8")
+        (self.repo / "new.py").write_text("x\n", encoding="utf-8")
+        with cwd(self.repo):
             self.assertTrue(check_implementation.has_changes("architecture")[0])
 
     def test_diff_error_is_reported(self) -> None:
-        with run_with_side_effect([FakeResult(128, stderr="fatal: not a git repo")]):
+        # No git repository at all: the real git diff fails with 128.
+        with cwd(self.repo):
             changes, summary = check_implementation.has_changes("architecture")
-            self.assertFalse(changes)
-            self.assertIn("git diff failed", summary)
-
-    def test_ls_files_error_is_reported(self) -> None:
-        with run_with_side_effect([FakeResult(0), FakeResult(128, stderr="fatal: git error")]):
-            changes, summary = check_implementation.has_changes("architecture")
-            self.assertFalse(changes)
-            self.assertIn("git ls-files failed", summary)
+        self.assertFalse(changes)
+        self.assertIn("git diff failed", summary)
 
     def test_custom_adr_dir_exclusion(self) -> None:
-        with run_with_side_effect([FakeResult(0), FakeResult(0, "docs/ADR-0001-x.md\n")]):
+        self._commit("a.txt")
+        adr = self.repo / "docs" / "ADR-0001-x.md"
+        adr.parent.mkdir(parents=True, exist_ok=True)
+        adr.write_text("x\n", encoding="utf-8")
+        with cwd(self.repo):
             self.assertEqual(check_implementation.has_changes("docs"), (False, "no changes"))
 
 
-class ExitCodeTest(unittest.TestCase):
+class ExitCodeTest(RealGitCase):
     def test_changes_exit_zero_no_changes_exit_one(self) -> None:
-        codes = []
-        with (
-            mock.patch.object(
-                check_implementation.sys,
-                "exit",
-                side_effect=lambda code: codes.append(code),
-            ),
-            mock.patch.object(
-                check_implementation,
-                "has_changes",
-                side_effect=[(True, "tracked files modified"), (False, "no changes")],
-            ),
-        ):
-            check_implementation.cmd_check(mock.Mock(adr_dir="architecture"))
-            check_implementation.cmd_check(mock.Mock(adr_dir="architecture"))
-        self.assertEqual(codes, [0, 1])
-
-
-if __name__ == "__main__":
-    unittest.main()
+        # The script runs as a real subprocess; the exit code is real.
+        self._commit("a.txt")
+        (self.repo / "new.py").write_text("x\n", encoding="utf-8")
+        with cwd(self.repo):
+            changed = subprocess.run(
+                [sys.executable, str(_SCRIPT), "check", "architecture"],
+                capture_output=True,
+                text=True,
+            )
+        (self.repo / "new.py").unlink()
+        with cwd(self.repo):
+            unchanged = subprocess.run(
+                [sys.executable, str(_SCRIPT), "check", "architecture"],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(changed.returncode, 0)
+        self.assertIn("implementation check:", changed.stdout)
+        self.assertEqual(unchanged.returncode, 1)

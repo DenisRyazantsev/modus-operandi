@@ -1,6 +1,5 @@
-"""Tests for install-time prerequisite checks."""
+"""Tests for install-time prerequisite checks (real tool lookup on PATH)."""
 
-from .install_helpers import which_fake
 from .installer_test_case import InstallerTestCase
 
 
@@ -8,12 +7,7 @@ class PrerequisitesTest(InstallerTestCase):
     """Install-time prerequisite checks: missing tools."""
 
     def test_missing_opencode_fails_with_message(self) -> None:
-        def which(name: str) -> str | None:
-            if name == "opencode":
-                return None
-            return which_fake(name)
-
-        rc, err = self.run_main(["--home", str(self.home)], which=which)
+        rc, err = self.run_main(["--home", str(self.home)], missing=("opencode",))
         self.assertEqual(rc, 1)
         self.assertIn("opencode not found", err)
 
@@ -32,12 +26,7 @@ class PrerequisitesTest(InstallerTestCase):
             "workflow: {}\n"
         )
 
-        def which_no_cursor(name: str) -> str | None:
-            if name in ("cursor-agent", "agent"):
-                return None
-            return which_fake(name)
-
-        rc, err = self.run_main(["--home", str(self.home)], which=which_no_cursor)
+        rc, err = self.run_main(["--home", str(self.home)], missing=("cursor-agent", "agent"))
         self.assertEqual(rc, 1)
         self.assertIn("cursor-agent (or agent) not found", err)
 
@@ -56,10 +45,5 @@ class PrerequisitesTest(InstallerTestCase):
             "workflow: {}\n"
         )
 
-        def which_no_opencode(name: str) -> str | None:
-            if name == "opencode":
-                return None
-            return which_fake(name)
-
-        rc, err = self.run_main(["--home", str(self.home)], which=which_no_opencode)
+        rc, err = self.run_main(["--home", str(self.home)], missing=("opencode",))
         self.assertEqual(rc, 0, err)

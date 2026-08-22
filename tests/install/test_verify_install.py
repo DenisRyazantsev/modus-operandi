@@ -4,10 +4,10 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from modus_operandi import InstallError, config, paths, proc, tool_discovery, verify
+from modus_operandi import InstallError, config, paths, proc, verify
+from tests.env_sandbox import env
 
 from .fake_result import FakeResult
-from .install_helpers import which_fake
 from .installer_test_case import InstallerTestCase
 
 
@@ -97,15 +97,11 @@ class VerifyInstallTest(InstallerTestCase):
         layout = paths.build_paths(str(self.home))
         cfg = config.validate_config(config.apply_defaults(config.load_config(layout["config"])))
 
-        def which_off_specify(name: str) -> str | None:
-            if name == "specify":
-                return None
-            return which_fake(name)
-
-        with (
-            mock.patch.object(tool_discovery, "find_in_path", side_effect=which_off_specify),
-            self.assertRaises(InstallError) as cm,
-        ):
-            verify.verify_install(layout, cfg)
+        # The real tool lookup on PATH: specify is removed from the temp
+        # bin dir, so verify_install reports it as missing.
+        with env({"PATH": str(self.bin)}, clear=True):
+            (self.bin / "specify").unlink()
+            with self.assertRaises(InstallError) as cm:
+                verify.verify_install(layout, cfg)
         err = str(cm.exception)
         self.assertIn("'specify' not found on PATH", err)

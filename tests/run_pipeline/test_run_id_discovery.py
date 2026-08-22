@@ -5,7 +5,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
+
+from tests.env_sandbox import cwd, stdout
 
 from .helpers import load_run_pipeline
 
@@ -26,8 +27,8 @@ class RunIdDiscoveryTest(unittest.TestCase):
             state = self._state(tmp)
             captured = io.StringIO()
             with (
-                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
-                mock.patch("sys.stdout", captured),
+                cwd(tmp),
+                stdout(captured),
             ):
                 monitor = mod.LiveMonitor(state, mod.existing_run_ids(state))
                 run_dir = state / "workflows" / "runs" / "abc12345"
@@ -59,8 +60,8 @@ class RunIdDiscoveryTest(unittest.TestCase):
             (state / "workflows" / "runs" / "oldrun01").mkdir()
             captured = io.StringIO()
             with (
-                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
-                mock.patch("sys.stdout", captured),
+                cwd(tmp),
+                stdout(captured),
             ):
                 monitor = mod.LiveMonitor(state, mod.existing_run_ids(state))
                 monitor._poll_once()
@@ -75,8 +76,8 @@ class RunIdDiscoveryTest(unittest.TestCase):
             state = self._state(tmp)
             captured = io.StringIO()
             with (
-                mock.patch.object(Path, "cwd", return_value=Path(tmp)),
-                mock.patch("sys.stdout", captured),
+                cwd(tmp),
+                stdout(captured),
             ):
                 monitor = mod.LiveMonitor(state, mod.existing_run_ids(state))
                 monitor.run_id = "def45678"
