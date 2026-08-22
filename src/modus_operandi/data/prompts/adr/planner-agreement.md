@@ -1,0 +1,1 @@
+Read @STATE_DIR@/tasks/current/plan-deviation.md. Resolve it: append an amendments section to @STATE_DIR@/tasks/current/plan.md recording the agreed clarifications (do not rewrite the original plan); if the deviation means the decision itself changed, rewrite @STATE_DIR@/tasks/current/adr.md accordingly; then delete @STATE_DIR@/tasks/current/plan-deviation.md.

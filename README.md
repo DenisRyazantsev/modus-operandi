@@ -40,15 +40,20 @@ If you have a workflow like this
 ```
 1. Studying the motivation of the task with a planner-agent
 2. Creating an ADR
-3. The executor-agent asking clarifying questions about the task
-4. The planner-agent answering these questions
-5. Implementing the task
-6. Reviewing for SRP violations
-7. Reviewing for bugs
-8. General review (correctness and quality)
-9. Comment review (readability)
-10. Fixing the issues found
+3. Writing an implementation plan for the executor
+4. The executor-agent asking clarifying questions about the task
+5. The planner-agent answering these questions
+6. Implementing the task
+7. Reviewing for SRP violations
+8. Reviewing for bugs
+9. General review (correctness and quality)
+10. Comment review (readability)
+11. Fixing the issues found
 ```
+
+The ADR records the decision (what and why) and is published to the
+`architecture/` directory at the end of the run in its final version; the
+implementation plan stays internal to the executor.
 
 then you can use this command
 

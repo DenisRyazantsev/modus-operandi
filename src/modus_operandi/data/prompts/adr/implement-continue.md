@@ -1,0 +1,1 @@
+The planner resolved your plan amendments. Read the amendments section appended to @STATE_DIR@/tasks/current/plan.md (and the rewritten @STATE_DIR@/tasks/current/adr.md if the decision changed) and continue implementing. Do not re-read plan.md from scratch — your session already has it.
