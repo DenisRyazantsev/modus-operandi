@@ -51,7 +51,7 @@ class EditCommandTest(unittest.TestCase):
         # real (marker recorded).
         self._write_editor(
             '#!/bin/sh\nprintf \'%s\' "$1" > "$1.invoked"\n'
-            'printf \'\\n# edited via test\\n\' >> "$1"\nexit 0\n'
+            "printf '\\n# edited via test\\n' >> \"$1\"\nexit 0\n"
         )
         with (
             env(self._env()),
