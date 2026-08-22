@@ -7,9 +7,13 @@ and cursor): task planning, task implementing and code review.
 
 ```shell
 pip install modus-operandi
-modus-operandi edit   # pick your models and backend
 modus-operandi task "<task-description>"
 ```
+
+No configuration needed: the defaults use the free OpenCode Zen models
+(`opencode/big-pickle` for planning and review, `opencode/deepseek-v4-flash-free`
+for implementation), which work out of the box. To switch models or backends,
+run `modus-operandi edit`.
 
 ## Install
 
@@ -21,6 +25,11 @@ is re-applied automatically on the next run.
 
 Requirements: Python >= 3.12, and one backend CLI on PATH — `opencode`
 (default) or `cursor-agent` (see `--backend cursor` below).
+
+The dev flow (`python3 install.py` from a checkout) additionally installs a
+checkout-based `modus-operandi` command into `~/.local/bin` and keeps that
+directory on PATH in your existing shell rc files (`~/.bashrc`, `~/.zshrc`,
+`~/.profile`), so the command is available in every newly opened terminal.
 
 ## Usage
 
@@ -87,7 +96,8 @@ modus-operandi edit
 
 opens `~/.config/modus-operandi/config.yml` in your terminal editor. On save and
 close it validates the file: a valid config is applied, an invalid one is
-rolled back and the error is reported with its line number.
+rolled back and the error is reported with its line number; a config left
+unchanged is not re-applied.
 
 ## Uninstall
 
