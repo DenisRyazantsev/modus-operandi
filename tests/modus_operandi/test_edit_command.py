@@ -132,6 +132,22 @@ class EditCommandTest(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertEqual(Path(self.config).read_bytes(), _EXAMPLE)
 
+    def test_edit_deleted_config_is_restored_from_backup(self) -> None:
+        # An editor that REMOVES the file must not silently recreate it from
+        # the example config (installer.ensure_config would, and the user's
+        # previous config would be lost): the pre-edit snapshot is restored
+        # and the flow aborts with an error.
+        self._write_editor('#!/bin/sh\nrm -f "$1"\n')
+        with (
+            env(self._env()),
+            stderr(io.StringIO()) as err,
+        ):
+            rc = edit_command._run_edit(self.config, self.layout)
+        self.assertEqual(rc, 1)
+        self.assertEqual(Path(self.config).read_bytes(), _EXAMPLE)
+        self.assertIn("the previous config was restored", err.getvalue())
+        self.assertFalse(self.layout["install_version"].exists())
+
     def test_edit_without_editor_fails_cleanly(self) -> None:
         # An empty PATH and no $VISUAL/$EDITOR: no editor can be resolved and
         # the flow aborts before touching anything.

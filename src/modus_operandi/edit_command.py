@@ -96,10 +96,18 @@ def _run_edit(config: str, layout: Paths) -> int:
     try:
         current = Path(config).read_bytes()
     except OSError:
-        # The editor removed the file: treat it as a change so apply() runs
-        # and its validation error restores the snapshot.
-        current = None
-    if current is not None and current == backup:
+        # The editor removed the file. Falling through to apply() would
+        # recreate it from the example config (installer.ensure_config) and
+        # silently discard the user's previous config — validation could
+        # never fail and the backup would never be restored. Restore the
+        # pre-edit snapshot and abort instead.
+        _restore_config(config, backup)
+        print(
+            f"error: the editor removed {config}; the previous config was restored",
+            file=sys.stderr,
+        )
+        return 1
+    if current == backup:
         print("config unchanged - nothing to apply")
         return 0
     return _apply_config(config, layout, backup)

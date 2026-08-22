@@ -158,3 +158,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (InstallError, OSError, ValueError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        # Ctrl+C at a prompt (e.g. the uninstall confirmation) is a normal
+        # way to bail out: a quiet exit 130, not a traceback.
+        print("interrupted", file=sys.stderr)
+        return 130
