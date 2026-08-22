@@ -88,6 +88,7 @@ class EditCommandTest(unittest.TestCase):
         ):
             diag.append(f"PATH={os.environ.get('PATH')}")
             import shutil
+
             import modus_operandi.editor as editor_module
 
             diag.append(f"which('editor')={shutil.which('editor')!r}")
