@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# name-task.sh - one-shot task-slug generator for the adr-pipeline workflow.
+# name-task.sh - one-shot task-slug generator for the task-pipeline workflow.
 #
 # Usage: name-task.sh "<feature>"
 #

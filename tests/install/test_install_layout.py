@@ -28,9 +28,13 @@ class InstallLayoutTest(InstallerTestCase):
             ".config/opencode/scripts/run-agent-cursor.sh",
             ".config/opencode/scripts/prompt_subst.sh",
             ".config/opencode/scripts/run-pipeline.py",
-            # run-pipeline.py is split one class per file: the modules are
+            # run-pipeline.py is split one concern per file: the modules are
             # installed next to it so the wrapper stays importable.
-            ".config/opencode/scripts/_run_pipeline_common.py",
+            ".config/opencode/scripts/engine_output.py",
+            ".config/opencode/scripts/feedback_gate.py",
+            ".config/opencode/scripts/display.py",
+            ".config/opencode/scripts/run_state.py",
+            ".config/opencode/scripts/workflow_info.py",
             ".config/opencode/scripts/run_id_discoverer.py",
             ".config/opencode/scripts/step_result_poller.py",
             ".config/opencode/scripts/agent_log_tailer.py",
@@ -38,12 +42,16 @@ class InstallLayoutTest(InstallerTestCase):
             ".config/opencode/scripts/buffered_emitter.py",
             ".config/opencode/scripts/live_monitor.py",
             ".config/opencode/scripts/live_lines.py",
+            ".config/opencode/scripts/table_format.py",
             ".config/opencode/scripts/config_invocation.py",
             ".config/opencode/scripts/run_statistics.py",
             ".config/opencode/scripts/latency_table.py",
             ".config/opencode/scripts/notify.py",
             ".config/opencode/scripts/feedback_editor.py",
             ".config/opencode/scripts/pty_spawn.py",
+            ".config/opencode/scripts/wrapper_cli.py",
+            ".config/opencode/scripts/stdout_reader.py",
+            ".config/opencode/scripts/run_finish.py",
             ".config/opencode/scripts/editor.py",
             ".config/opencode/scripts/victory.wav",
             ".config/opencode/scripts/save_adr.py",
@@ -68,11 +76,13 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertTrue(os.access(self.home / ".config/opencode/scripts/run-agent.sh", os.X_OK))
         self.assertTrue(os.access(self.home / ".config/opencode/scripts/name-task.sh", os.X_OK))
         self.assertTrue(os.access(self.home / ".config/opencode/scripts/prompt_subst.sh", os.X_OK))
-        # The adr pipeline is gone and no launcher is rendered into
-        # ~/.local/bin anymore (the console script comes from pip).
+        # The adr pipeline is gone; the dev flow renders the checkout-based
+        # launcher into ~/.local/bin so the command works in new terminals.
         self.assertFalse((self.home / ".config/modus-operandi/adr-pipeline.yml").exists())
         self.assertFalse((self.home / ".config/modus-operandi/install-path.txt").exists())
-        self.assertFalse((self.home / ".local/bin/modus-operandi").exists())
+        launcher = self.home / ".local/bin/modus-operandi"
+        self.assertTrue(launcher.exists())
+        self.assertTrue(os.access(launcher, os.X_OK))
 
     def test_reinstall_preserves_user_config(self) -> None:
         self.assertEqual(self.install(), 0)
@@ -102,7 +112,7 @@ class InstallLayoutTest(InstallerTestCase):
     def test_rendered_executor_has_model_and_permissions(self) -> None:
         self.assertEqual(self.install(), 0)
         executor = (self.home / ".config/opencode/agent/executor.md").read_text(encoding="utf-8")
-        self.assertIn("opencode-go/deepseek-v4-flash", executor)
+        self.assertIn("opencode/big-pickle", executor)
         self.assertIn("reasoningEffort: max", executor)
         self.assertIn("permission", executor)
 
@@ -150,7 +160,6 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertTrue(os.access(wrapper, os.X_OK))
         text = wrapper.read_text(encoding="utf-8")
         self.assertIn("specify", text)
-        self.assertIn("resume with: specify workflow resume", text)
         self.assertIn("LiveMonitor", text)
         self.assertIn("=== run statistics ===", text)
         self.assertIn("opencode", text)
@@ -164,11 +173,16 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertNotIn("PYEOF", text)
         self.assertNotIn("#!/usr/bin/env bash", text)
         # The split modules are installed next to the wrapper: the poller
-        # owns the state.json reads and the shared module the timestamp.
+        # owns the state.json reads, the display module the timestamp, and
+        # run_finish.py the failure UX (the resume hint) and teardown.
         poller = self.home / ".config/opencode/scripts/step_result_poller.py"
         self.assertIn("state.json", poller.read_text(encoding="utf-8"))
-        common = self.home / ".config/opencode/scripts/_run_pipeline_common.py"
-        self.assertIn('strftime("%H:%M:%S")', common.read_text(encoding="utf-8"))
+        display = self.home / ".config/opencode/scripts/display.py"
+        self.assertIn('strftime("%H:%M:%S")', display.read_text(encoding="utf-8"))
+        run_finish = self.home / ".config/opencode/scripts/run_finish.py"
+        self.assertIn(
+            "resume with: specify workflow resume", run_finish.read_text(encoding="utf-8")
+        )
 
     def test_victory_wav_shipped_next_to_wrapper(self) -> None:
         self.assertEqual(self.install(), 0)
@@ -277,7 +291,7 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertIn("w[:60]", adr_utils)
 
     def test_run_agent_sets_output_token_limit(self) -> None:
-        # ADR-0007: opencode's default 32k per-response cap must be raised so
+        # ADR-0006: opencode's default 32k per-response cap must be raised so
         # an agent cannot burn the whole budget on reasoning before acting.
         self.assertEqual(self.install(), 0)
         run_agent = (self.home / ".config/opencode/scripts/run-agent.sh").read_text(

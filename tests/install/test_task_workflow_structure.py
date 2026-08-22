@@ -35,6 +35,7 @@ class TaskPipelineStructureTest(InstallerTestCase):
             ("study-revise", "task/study-revise.md"),
             ("research", "task/research.md"),
             ("write-adr", "task/write-adr.md"),
+            ("write-plan", "task/write-plan.md"),
         ):
             step = self.find_step(parsed["steps"], step_id)
             self.assertIsNotNone(step, step_id)
@@ -115,7 +116,8 @@ class TaskPipelineStructureTest(InstallerTestCase):
 
     def test_task_workflow_has_no_adr_gate(self) -> None:
         # The proposal was already agreed before write-adr, so there is no
-        # adr-loop/adr-gate: write-adr is followed directly by save-adr.
+        # adr-loop/adr-gate: write-adr is followed directly by write-plan,
+        # and the ADR is saved only at the end of the pipeline (ADR-0015).
         self.assertEqual(self.install(), 0)
         workflow = (self.home / ".config/modus-operandi/task-pipeline.yml").read_text(
             encoding="utf-8"
@@ -124,8 +126,8 @@ class TaskPipelineStructureTest(InstallerTestCase):
         self.assertNotIn("- id: adr-gate", workflow)
         self.assertNotIn("adr_verdict", workflow)
         write_index = workflow.index("- id: write-adr")
-        save_index = workflow.index("- id: save-adr")
-        self.assertLess(write_index, save_index)
+        plan_index = workflow.index("- id: write-plan")
+        self.assertLess(write_index, plan_index)
 
     def test_task_workflow_executor_questions_loop(self) -> None:
         self.assertEqual(self.install(), 0)
@@ -161,25 +163,26 @@ class TaskPipelineStructureTest(InstallerTestCase):
         self.assertEqual(self.install(), 0)
         workflow = self._task_workflow_text()
         for step in (
-            "save-adr",
+            "write-plan",
             "implement",
+            "plan-deviation-loop",
             "implement-loop",
             "implement-pass-check",
             "review-fix-loop",
-            "sync-adr",
+            "save-adr",
             "pass-check",
         ):
             self.assertIn(f"- id: {step}", workflow, step)
         order = [
             workflow.index(f"- id: {s}")
             for s in (
-                "save-adr",
                 "executor-questions-loop",
                 "implement",
+                "plan-deviation-loop",
                 "implement-loop",
                 "implement-pass-check",
                 "review-fix-loop",
-                "sync-adr",
+                "save-adr",
                 "pass-check",
             )
         ]
@@ -189,6 +192,51 @@ class TaskPipelineStructureTest(InstallerTestCase):
         parsed = self.parsed_workflow(".config/modus-operandi/task-pipeline.yml")
         check = self.find_step(parsed["steps"], "review-fan")["step"]
         self.assertIn("adr", check["run"])
+        # The sync-adr step is gone (ADR-0015): the ADR is saved once, at
+        # the end of the pipeline, with no amendments sync.
+        self.assertNotIn("- id: sync-adr", workflow)
+
+    def test_task_workflow_plan_deviation_loop(self) -> None:
+        # ADR-0015: a deviation from plan.md is resolved by the planner
+        # (planner-agreement), then the executor continues from its warm
+        # session (implement-continue); the loop repeats while
+        # plan-deviation.md exists (the planner deletes it after agreeing).
+        self.assertEqual(self.install(), 0)
+        workflow = self._task_workflow_text()
+        parsed = self.parsed_workflow(".config/modus-operandi/task-pipeline.yml")
+        loop = self.find_step(parsed["steps"], "plan-deviation-loop")
+        self.assertIsNotNone(loop)
+        self.assertEqual(loop["type"], "do-while")
+        # The ceiling is a literal: the loop is deliberately absent from
+        # render.py's _LOOP_ITERATION_KEYS (like motivation-loop), so
+        # _patch_workflow_numbers does not overwrite it.
+        self.assertEqual(loop["max_iterations"], 3)
+        self.assertIn("steps.deviation-check.output.exit_code", loop["condition"])
+        check = self.find_step(parsed["steps"], "deviation-check")
+        self.assertEqual(check.get("continue_on_error"), True)
+        self.assertIn("check_plan_deviation.py", check["run"])
+        self.assertIn('check "{{ inputs.state_dir }}" "{{ inputs.task_id }}"', check["run"])
+        branch = self.find_step(parsed["steps"], "deviation-branch")
+        self.assertIn("steps.deviation-check.output.exit_code != 0", branch["condition"])
+        agreement = self.find_step(parsed["steps"], "planner-agreement")
+        self.assertIn("agent-step.sh", agreement["run"])
+        self.assertIn("planner", agreement["run"])
+        self.assertIn("adr/planner-agreement.md", agreement["run"])
+        continue_step = self.find_step(parsed["steps"], "implement-continue")
+        self.assertIn("agent-step.sh", continue_step["run"])
+        self.assertIn("executor", continue_step["run"])
+        self.assertIn("adr/implement-continue.md", continue_step["run"])
+        # The loop sits between implement and implement-loop.
+        self.assertLess(
+            workflow.index("- id: implement"), workflow.index("- id: plan-deviation-loop")
+        )
+        self.assertLess(
+            workflow.index("- id: plan-deviation-loop"), workflow.index("- id: implement-loop")
+        )
+        # The nested steps exist only inside the loop, never as top-level.
+        top_level_ids = [s["id"] for s in parsed["steps"]]
+        self.assertNotIn("planner-agreement", top_level_ids)
+        self.assertNotIn("implement-continue", top_level_ids)
 
     def test_task_workflow_loop_ceilings_are_configurable(self) -> None:
         self.assertEqual(self.install(), 0)
@@ -240,13 +288,15 @@ class TaskPipelineStructureTest(InstallerTestCase):
             "study-revise",
             "research",
             "write-adr",
+            "write-plan",
             "save-adr",
             "executor-questions",
             "planner-answers",
             "implement",
             "implement-retry",
+            "planner-agreement",
+            "implement-continue",
             "fix-all",
-            "sync-adr",
         ):
             found = self.find_step(parsed["steps"], step)
             self.assertIsNotNone(found, step)
@@ -260,6 +310,9 @@ class TaskPipelineStructureTest(InstallerTestCase):
             "executor-questions-loop",
             "questions-check",
             "questions-branch",
+            "plan-deviation-loop",
+            "deviation-check",
+            "deviation-branch",
             "implement-loop",
             "implement-verify",
             "implement-pass-check",
@@ -278,7 +331,7 @@ class TaskPipelineStructureTest(InstallerTestCase):
     def test_task_workflow_prompts_ship(self) -> None:
         self.assertEqual(self.install(), 0)
         prompts = self.home / ".config/modus-operandi/prompts/task"
-        for name in ("study", "study-revise", "research", "write-adr"):
+        for name in ("study", "study-revise", "research", "write-adr", "write-plan"):
             self.assertTrue((prompts / f"{name}.md").is_file(), name)
         # The proposal-revise prompt is gone with the proposal gate (ADR-0011).
         self.assertFalse((prompts / "proposal-revise.md").exists())
@@ -286,13 +339,24 @@ class TaskPipelineStructureTest(InstallerTestCase):
         self.assertIn("study.md", study)
         self.assertIn("@TASK@", study)
         research = (prompts / "research.md").read_text(encoding="utf-8")
-        self.assertIn("proposal.md", research)
+        self.assertIn("research.md", research)
         self.assertIn("web search", research)
         self.assertNotIn("shown to the human for approval", research)
+        # The research prompt no longer writes a proposal document (ADR-0015):
+        # the implementation plan moved to plan.md, so the proposal sections
+        # are gone from research.md.
+        self.assertNotIn("proposal.md", research)
+        self.assertNotIn("Implementation plan", research)
         write_adr = (prompts / "write-adr.md").read_text(encoding="utf-8")
         self.assertIn("study.md", write_adr)
-        self.assertIn("proposal.md", write_adr)
+        self.assertIn("research.md", write_adr)
+        self.assertNotIn("proposal.md", write_adr)
         self.assertIn("slug", write_adr)
+        self.assertIn("plan.md", write_adr)
+        write_plan = (prompts / "write-plan.md").read_text(encoding="utf-8")
+        self.assertIn("plan.md", write_plan)
+        self.assertIn("adr.md", write_plan)
+        self.assertIn("research.md", write_plan)
         # The updated executor-questions prompt re-reads answers.md.
         executor_questions = (
             self.home / ".config/modus-operandi/prompts/adr/executor-questions.md"

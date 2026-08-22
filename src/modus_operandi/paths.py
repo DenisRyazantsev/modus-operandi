@@ -4,8 +4,10 @@ Two entry points share one layout: ``build_paths(home)`` derives the config
 base as ``<home>/.config`` (the dev flow and the installer tests, which pass
 ``--home``), and ``build_paths_from_config_base(base)`` takes an existing
 config base directly (the launcher, which resolves XDG_CONFIG_HOME at
-runtime). ``user_bin`` (``<base-parent>/.local/bin``) holds only the legacy
-launcher leftovers that ``modus-operandi uninstall`` cleans up.
+runtime). ``user_bin`` (``<base-parent>/.local/bin``) holds the dev-flow
+launcher (written by install.py) and the legacy launcher leftovers that
+``modus-operandi uninstall`` cleans up; the pip console script lives there
+too when installed with ``pip install --user``.
 """
 
 from __future__ import annotations
@@ -39,9 +41,13 @@ def _layout(base: Path) -> Paths:
         "planner_body": base / "opencode" / "scripts" / "planner-body.txt",
         "executor_body": base / "opencode" / "scripts" / "executor-body.txt",
         "run_pipeline": base / "opencode" / "scripts" / "run-pipeline.py",
-        # run-pipeline.py is split one class per file; the modules below are
-        # copied next to it so the installed wrapper stays importable.
-        "run_pipeline_common": (base / "opencode" / "scripts" / "_run_pipeline_common.py"),
+        # run-pipeline.py is split one concern per file; the modules below
+        # are copied next to it so the installed wrapper stays importable.
+        "engine_output": base / "opencode" / "scripts" / "engine_output.py",
+        "feedback_gate": base / "opencode" / "scripts" / "feedback_gate.py",
+        "display": base / "opencode" / "scripts" / "display.py",
+        "run_state": base / "opencode" / "scripts" / "run_state.py",
+        "workflow_info": base / "opencode" / "scripts" / "workflow_info.py",
         "run_id_discoverer": base / "opencode" / "scripts" / "run_id_discoverer.py",
         "step_result_poller": base / "opencode" / "scripts" / "step_result_poller.py",
         "agent_log_tailer": base / "opencode" / "scripts" / "agent_log_tailer.py",
@@ -49,6 +55,8 @@ def _layout(base: Path) -> Paths:
         "buffered_emitter": base / "opencode" / "scripts" / "buffered_emitter.py",
         "live_monitor": base / "opencode" / "scripts" / "live_monitor.py",
         "live_lines": base / "opencode" / "scripts" / "live_lines.py",
+        # The aligned column layout of the log rows (ADR-0016).
+        "table_format": base / "opencode" / "scripts" / "table_format.py",
         # The agent-log usage schema (opencode step_finish, cursor usage
         # shapes) is a separate concern used by both the live lines and the
         # run statistics: copied next to them so the installed modules stay
@@ -56,13 +64,18 @@ def _layout(base: Path) -> Paths:
         "usage_parser": base / "opencode" / "scripts" / "usage_parser.py",
         # run-pipeline.py is further split one concern per file: the
         # config-to-invocation mapping, the statistics, the victory sound,
-        # the feedback gate's editor interaction and the pty plumbing.
+        # the feedback gate's editor interaction, the pty plumbing, the
+        # CLI surface, the engine-stdout consumption policy and the run
+        # teardown/outcome reporting.
         "config_invocation": (base / "opencode" / "scripts" / "config_invocation.py"),
         "run_statistics": (base / "opencode" / "scripts" / "run_statistics.py"),
         "latency_table": (base / "opencode" / "scripts" / "latency_table.py"),
         "notify": base / "opencode" / "scripts" / "notify.py",
         "feedback_editor": (base / "opencode" / "scripts" / "feedback_editor.py"),
         "pty_spawn": base / "opencode" / "scripts" / "pty_spawn.py",
+        "wrapper_cli": base / "opencode" / "scripts" / "wrapper_cli.py",
+        "stdout_reader": base / "opencode" / "scripts" / "stdout_reader.py",
+        "run_finish": base / "opencode" / "scripts" / "run_finish.py",
         # The shared editor resolution, copied next to the run-pipeline
         # wrapper for its feedback gates.
         "editor": base / "opencode" / "scripts" / "editor.py",
@@ -71,6 +84,7 @@ def _layout(base: Path) -> Paths:
         "check_review": base / "opencode" / "scripts" / "check_review.py",
         "check_implementation": (base / "opencode" / "scripts" / "check_implementation.py"),
         "check_questions": base / "opencode" / "scripts" / "check_questions.py",
+        "check_plan_deviation": (base / "opencode" / "scripts" / "check_plan_deviation.py"),
         "task_utils": base / "opencode" / "scripts" / "task_utils.py",
         "adr_utils": base / "opencode" / "scripts" / "adr_utils.py",
         "agent_call": base / "opencode" / "scripts" / "agent_call.py",
@@ -84,7 +98,6 @@ def _layout(base: Path) -> Paths:
         "review_task_id": base / "opencode" / "scripts" / "review-task-id.sh",
         "adr_task_id": base / "opencode" / "scripts" / "adr-task-id.sh",
         "implement_retry": base / "opencode" / "scripts" / "implement-retry.sh",
-        "sync_adr_step": base / "opencode" / "scripts" / "sync-adr.sh",
         "clear_feedback": base / "opencode" / "scripts" / "clear-feedback.sh",
         "implement_pass_check": (base / "opencode" / "scripts" / "implement-pass-check.sh"),
         "pass_check": base / "opencode" / "scripts" / "pass-check.sh",

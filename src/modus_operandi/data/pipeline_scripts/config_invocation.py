@@ -61,9 +61,18 @@ def role_model(cfg: dict[str, Any], backend: str, role: str) -> str:
     only consumed by the cursor branch of run-agent.sh/name-task.sh.
     """
     section = cfg.get("cursor") if backend == "cursor" else cfg.get("opencode")
-    models = (section or {}).get("models") or {}
-    model = (models.get(role) or {}).get("model")
-    return model if isinstance(model, str) else ""
+    if not isinstance(section, dict):
+        # A non-mapping section in a hand-edited config.yml (e.g.
+        # `opencode: oops`) must degrade to the defaults, not crash: the
+        # wrapper reads the raw YAML without validate_config, and its
+        # contract is that a malformed config still runs.
+        section = {}
+    models = section.get("models")
+    models = models if isinstance(models, dict) else {}
+    model = models.get(role)
+    model = model if isinstance(model, dict) else {}
+    value = model.get("model")
+    return value if isinstance(value, str) else ""
 
 
 def load_config(config_path: Path | None = None) -> dict[str, Any]:
@@ -81,7 +90,7 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     except OSError:
         return {}
     try:
-        import yaml  # installed by the installer (deps.ensure_pyyaml)
+        import yaml  # pyproject.toml declares pyyaml as a package dependency
 
         data = yaml.safe_load(text) or {}
     except Exception:
@@ -102,24 +111,42 @@ def build_specify_invocation(
       {{ inputs.state_dir }} / {{ inputs.adr_dir }});
     - use_serve becomes the MO_ATTACH_FLAG env var for
       run-agent.sh/name-task.sh;
+    - the prompts dir (derived from the same config base as the scripts
+      dir) is exported as MO_PROMPTS_DIR, so the agent steps resolve the
+      prompt files under any XDG_CONFIG_HOME;
     - the effective backend (cli_backend > config `backend:` > opencode) is
       exported as MO_BACKEND together with the role models of the active
       backend (MO_PLANNER_MODEL/MO_EXECUTOR_MODEL) for
       run-agent.sh/name-task.sh;
     - human_gates decides whether the gate verdict inputs are passed as
       empty (interactive) or left to their defaults (auto-approve): the
-      adr-pipeline's ADR gate binds adr_verdict, the task-pipeline's
-      motivation gate binds motivation_verdict;
+      review-pipeline tolerates the legacy adr_verdict input as undeclared,
+      the task-pipeline's motivation gate binds motivation_verdict;
     - run-agent.sh keeps its sessions/logs/pids under the same state dir the
       workflow steps write artifacts to, so it must see MO_STATE_DIR.
     """
     cfg = normalize_config(cfg)
     backend = effective_backend(cfg, cli_backend)
-    workflow = cfg.get("workflow") or {}
+    workflow = cfg.get("workflow")
+    if not isinstance(workflow, dict):
+        # A non-mapping `workflow:` section in a hand-edited config.yml
+        # degrades to the documented defaults like load_config's top-level
+        # degradation — never a traceback (the installed wrapper is a
+        # standalone script that must keep running).
+        workflow = {}
     state_dir = workflow.get("state_dir") or ".workflow"
     adr_dir = workflow.get("adr_dir") or "architecture"
-    use_serve = bool(workflow.get("use_serve", False))
-    human_gates = bool(workflow.get("human_gates", True))
+    # Strict booleans only (mirroring the installer's validate_config): the
+    # wrapper reads the raw YAML without validation, and a hand-edited
+    # config.yml with `human_gates: "false"` (a common YAML habit) would
+    # coerce to True under bool(); anything that is not a real bool falls
+    # back to the documented default.
+    use_serve = workflow.get("use_serve", False)
+    human_gates = workflow.get("human_gates", True)
+    if not isinstance(use_serve, bool):
+        use_serve = False
+    if not isinstance(human_gates, bool):
+        human_gates = True
     # `source` is argv[0] — the raw workflow path the user passed (e.g.
     # ~/.config/modus-operandi/task-pipeline.yml) or a bare id in tests,
     # so only a substring test matches both forms; an exact match or an
@@ -129,8 +156,17 @@ def build_specify_invocation(
     is_task_pipeline = "task-pipeline" in str(source)
     attach_flag = "--attach http://localhost:4096" if use_serve else ""
     scripts_dir = str(Path(__file__).resolve().parent)
+    # The prompts dir is derived from the same config base as the scripts
+    # dir (scripts/ -> opencode/ -> <base>/modus-operandi/prompts), so a
+    # custom XDG_CONFIG_HOME (or install.py --home DIR) install still finds
+    # the prompts in every agent step; MO_PROMPTS_DIR overrides the
+    # derivation, mirroring MO_CONFIG.
+    prompts_dir = os.environ.get("MO_PROMPTS_DIR") or str(
+        Path(__file__).resolve().parent.parent.parent / "modus-operandi" / "prompts"
+    )
     env = dict(os.environ)
     env["MO_SCRIPTS_DIR"] = scripts_dir
+    env["MO_PROMPTS_DIR"] = prompts_dir
     env["MO_ATTACH_FLAG"] = attach_flag
     env["MO_STATE_DIR"] = state_dir
     env["MO_BACKEND"] = backend

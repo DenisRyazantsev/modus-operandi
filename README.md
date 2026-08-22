@@ -7,9 +7,13 @@ and cursor): task planning, task implementing and code review.
 
 ```shell
 pip install modus-operandi
-modus-operandi edit   # pick your models and backend
 modus-operandi task "<task-description>"
 ```
+
+No configuration needed: the defaults use the free OpenCode Zen models
+(`opencode/big-pickle` for planning and review, `opencode/deepseek-v4-flash-free`
+for implementation), which work out of the box. To switch models or backends,
+run `modus-operandi edit`.
 
 ## Install
 
@@ -22,6 +26,11 @@ is re-applied automatically on the next run.
 Requirements: Python >= 3.12, and one backend CLI on PATH — `opencode`
 (default) or `cursor-agent` (see `--backend cursor` below).
 
+The dev flow (`python3 install.py` from a checkout) additionally installs a
+checkout-based `modus-operandi` command into `~/.local/bin` and keeps that
+directory on PATH in your existing shell rc files (`~/.bashrc`, `~/.zshrc`,
+`~/.profile`), so the command is available in every newly opened terminal.
+
 ## Usage
 
 ### Task
@@ -31,15 +40,20 @@ If you have a workflow like this
 ```
 1. Studying the motivation of the task with a planner-agent
 2. Creating an ADR
-3. The executor-agent asking clarifying questions about the task
-4. The planner-agent answering these questions
-5. Implementing the task
-6. Reviewing for SRP violations
-7. Reviewing for bugs
-8. General review (correctness and quality)
-9. Comment review (readability)
-10. Fixing the issues found
+3. Writing an implementation plan for the executor
+4. The executor-agent asking clarifying questions about the task
+5. The planner-agent answering these questions
+6. Implementing the task
+7. Reviewing for SRP violations
+8. Reviewing for bugs
+9. General review (correctness and quality)
+10. Comment review (readability)
+11. Fixing the issues found
 ```
+
+The ADR records the decision (what and why) and is published to the
+`architecture/` directory at the end of the run in its final version; the
+implementation plan stays internal to the executor.
 
 then you can use this command
 
@@ -87,7 +101,8 @@ modus-operandi edit
 
 opens `~/.config/modus-operandi/config.yml` in your terminal editor. On save and
 close it validates the file: a valid config is applied, an invalid one is
-rolled back and the error is reported with its line number.
+rolled back and the error is reported with its line number; a config left
+unchanged is not re-applied.
 
 ## Uninstall
 

@@ -6,9 +6,9 @@ project directory, without `specify init` required. It delegates to the
 installed run-pipeline.py wrapper with the absolute workflow path, so runs
 keep the timestamps, live step output, run statistics and the victory sound.
 `modus-operandi edit` opens the installed config.yml in your terminal editor and
-validates it on save and close — a valid config is applied, an invalid one is
-rolled back. `modus-operandi uninstall` removes the rendered pipeline files from
-the machine.
+applies it on save and close — a valid config is applied, an invalid one is
+rolled back, an unchanged one is left as-is. `modus-operandi uninstall` removes
+the rendered pipeline files from the machine.
 
 The launcher resolves every installed path at runtime: run-pipeline.py, both
 workflows and config.yml come from the config base directory derived from
@@ -86,8 +86,8 @@ def _config_dir() -> Path:
     return _config_base() / "modus-operandi"
 
 
-# Paths of the installed pipeline, resolved from the launcher's location
-# (both live under the config base, so no values are baked at install time).
+# Paths of the installed pipeline, derived from the config base at runtime
+# (XDG_CONFIG_HOME or ~/.config), so nothing is baked at install time.
 _LAYOUT = paths.build_paths_from_config_base(_config_base())
 RUN_PIPELINE = str(_scripts_dir() / "run-pipeline.py")
 REVIEW_WORKFLOW = str(_config_dir() / "review-pipeline.yml")
@@ -112,8 +112,9 @@ USAGE = """Usage: modus-operandi <subcommand> [args]
 
   modus-operandi edit
       Open the installed config.yml in your terminal editor (VISUAL, then
-      EDITOR, then nano, then vi). On save and close it validates the file: a
-      valid config is applied, an invalid one is rolled back.
+      EDITOR, then nano, then vi). On save and close it validates the file:
+      a valid config is applied, an invalid one is rolled back, and one that
+      was left unchanged is not re-applied.
 
   modus-operandi uninstall [--yes]
       Remove the rendered pipeline files (~/.config/modus-operandi and the
@@ -185,9 +186,10 @@ def _build_text_input_command(
     """Map the text-input subcommands (task) to a run-pipeline command.
 
     The non-flag arguments are joined into a single text input
-    (`-i <input_key>=<joined text>`), while `-i key=value` pairs (two argv
-    elements) and `-i key=value` single elements are passed through to the
-    workflow unchanged. A dangling `-i` without a value is an invalid
+    (`-i <input_key>=<joined text>`), while `-i key=value` pairs (the two
+    argv elements `-i` and `key=value`) and the combined single element
+    `"-i key=value"` are passed through to the workflow unchanged. A
+    dangling `-i` without a value is an invalid
     invocation, not a flag to forward: specify would fail with a confusing
     parser error, while other bad calls get a clear usage. The space in the
     `-i ` prefix is required so text like `-integration` is not mistaken for
@@ -268,29 +270,43 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
     try:
-        cmd = build_command(argv)
-    except HelpRequested:
-        print_usage()
-        return 0
-    except InvalidInvocation:
-        print_usage(sys.stderr)
-        return 1
-    except EditRequested:
+        try:
+            cmd = build_command(argv)
+        except HelpRequested:
+            print_usage()
+            return 0
+        except InvalidInvocation:
+            print_usage(sys.stderr)
+            return 1
+        except EditRequested:
+            # The edit flow never runs the backend CLI, so the
+            # tool-presence prerequisite check is skipped: a user who
+            # uninstalled the active backend must still be able to edit the
+            # config (e.g. to switch backends). The bootstrap render is
+            # best-effort on this path: a stale install marker with an
+            # INVALID config.yml must not gate the editor either — fixing a
+            # broken config is exactly what `edit` is for, and _run_edit
+            # re-validates when the editor closes (rolling back an invalid
+            # edit), so a failed bootstrap here cannot apply anything.
+            bootstrap.ensure_installed(_LAYOUT, check_prereqs=False)
+            return _run_edit(CONFIG, _LAYOUT)
+        except UninstallRequested as exc:
+            return uninstall.do_uninstall(_LAYOUT, exc.yes)
         if bootstrap.ensure_installed(_LAYOUT) != 0:
             return 1
-        return _run_edit(CONFIG, _LAYOUT)
-    except UninstallRequested as exc:
-        return uninstall.do_uninstall(_LAYOUT, exc.yes)
-    if bootstrap.ensure_installed(_LAYOUT) != 0:
+        try:
+            # os.execv replaces this process with run-pipeline.py, so its live
+            # output, timestamps and exit code pass through unchanged; it returns
+            # only when exec fails, which is why return 1 follows.
+            os.execv(cmd[0], cmd)
+        except OSError as exc:
+            print(f"error: cannot run {cmd[0]}: {exc}", file=sys.stderr)
         return 1
-    try:
-        # os.execv replaces this process with run-pipeline.py, so its live
-        # output, timestamps and exit code pass through unchanged; it returns
-        # only when exec fails, which is why return 1 follows.
-        os.execv(cmd[0], cmd)
-    except OSError as exc:
-        print(f"error: cannot run {cmd[0]}: {exc}", file=sys.stderr)
-    return 1
+    except KeyboardInterrupt:
+        # Ctrl+C at a prompt (e.g. the uninstall confirmation) is a normal
+        # way to bail out: a quiet exit 130, not a traceback.
+        print("interrupted", file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":

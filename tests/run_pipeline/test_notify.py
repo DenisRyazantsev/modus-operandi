@@ -27,7 +27,7 @@ class NotifyTest(unittest.TestCase):
             mock.patch("subprocess.Popen") as popen,
             mock.patch("shutil.which", side_effect=lambda name: f"/usr/bin/{name}"),
         ):
-            mod.notify()
+            mod.play_signal()
         popen.assert_called_once()
         cmd = popen.call_args.args[0]
         self.assertEqual(cmd[-1], str(wav))
@@ -40,7 +40,7 @@ class NotifyTest(unittest.TestCase):
             mock.patch("sys.stdout.isatty", return_value=False),
             mock.patch("subprocess.Popen") as popen,
         ):
-            mod.notify()
+            mod.play_signal()
         popen.assert_not_called()
 
     def test_skips_when_sound_file_missing(self) -> None:
@@ -50,7 +50,7 @@ class NotifyTest(unittest.TestCase):
             mock.patch("sys.stdout.isatty", return_value=True),
             mock.patch("subprocess.Popen") as popen,
         ):
-            mod.notify()
+            mod.play_signal()
         popen.assert_not_called()
 
     def test_skips_when_no_player_available(self) -> None:
@@ -61,5 +61,5 @@ class NotifyTest(unittest.TestCase):
             mock.patch("shutil.which", return_value=None),
             mock.patch("subprocess.Popen") as popen,
         ):
-            mod.notify()
+            mod.play_signal()
         popen.assert_not_called()

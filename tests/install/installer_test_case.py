@@ -9,8 +9,10 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+import yaml
+
 from modus_operandi import installer_cli as install
-from modus_operandi import proc, yaml_loader
+from modus_operandi import proc
 from tests.env_sandbox import env, stderr
 
 from .install_helpers import make_run
@@ -43,7 +45,7 @@ class InstallerTestCase(unittest.TestCase):
         self.tmp.cleanup()
 
     def parsed_workflow(self, rel: str = ".config/modus-operandi/review-pipeline.yml") -> Any:
-        return yaml_loader.yaml.safe_load((self.home / rel).read_text(encoding="utf-8"))
+        return yaml.safe_load((self.home / rel).read_text(encoding="utf-8"))
 
     def find_step(self, steps: Any, step_id: str) -> Any:
         """Recursively find a step by id in the parsed workflow steps."""

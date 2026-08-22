@@ -1,4 +1,4 @@
-Read @STATE_DIR@/tasks/current/study.md and the approved @STATE_DIR@/tasks/current/proposal.md, then write the ADR into @STATE_DIR@/tasks/current/adr.md. The frontmatter MUST include a slug field: a short 2-3 word summary of the ADR in ENGLISH, lowercase kebab-case.
+Read @STATE_DIR@/tasks/current/study.md and @STATE_DIR@/tasks/current/research.md (if present), then write the ADR into @STATE_DIR@/tasks/current/adr.md. The frontmatter MUST include a slug field: a short 2-3 word summary of the ADR in ENGLISH, lowercase kebab-case.
 
 The skill about how to write ADR:
 
@@ -82,6 +82,7 @@ decided. State outcomes, not file-level change lists.>
    - no instructions like "add line Y to file X so class Z can do U";
    - no file-level change lists, step-by-step how-to guides, function/class/line-level descriptions, or code
      snippets that prescribe the implementation.
+   - Implementation details go to the implementation plan (plan.md, written in the next step), never into the ADR.
 3. Do not mention concrete file names, classes, functions, or exact commands — **unless the artifact itself is the
    decision** (e.g., choosing a library, a protocol, a tool, a package name).
 4. Write for a reader who has only this ADR and wants to understand the choice — not for the engineer who will

@@ -3,8 +3,9 @@
 One responsibility: own the feedback.md file and the editor for the
 feedback gates — create the file (never overwriting), resolve the editor,
 open it, and on editor close answer the gate with `continue`. The platform
-resolution itself lives in editor.py. The module is shared with the
-modus-operandi launcher (same file, both install targets), but `modus-operandi edit`
+resolution itself lives in editor.py, which is the file shared with the
+modus-operandi launcher (same file, both install targets);
+feedback_editor.py ships only with the pipeline scripts. `modus-operandi edit`
 deliberately uses the terminal chain (`resolve_editor`) — the platform
 resolution (`resolve_feedback_editor`) is feedback-gate-only.
 """
@@ -18,19 +19,19 @@ import sys
 import threading
 from pathlib import Path
 
-from _run_pipeline_common import extract_numbered_questions, questions_source_file
 from editor import resolve_feedback_editor
+from feedback_gate import extract_numbered_questions, questions_source_file
 
 
 def create_feedback_file(path: Path, source_doc: Path | None = None) -> None:
-    """Create the feedback.md for the revise gate.
+    """Create the feedback.md for the feedback gate.
 
     Never overwrites an existing file: the planner may have written one, or
     the user may have started writing during an earlier fallback. A NEW file
     is seeded (ADR-0012) with the numbered questions of the source
-    document's open-questions section (study.md for the motivation gate,
-    adr.md for the ADR gate); a missing document — or a document without
-    questions — leaves the file empty.
+    document's open-questions section (study.md for the motivation gate);
+    a missing document — or a document without questions — leaves the file
+    empty.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
@@ -41,7 +42,11 @@ def create_feedback_file(path: Path, source_doc: Path | None = None) -> None:
         with contextlib.suppress(OSError, UnicodeDecodeError):
             questions = extract_numbered_questions(source_doc.read_text(encoding="utf-8"))
     if questions:
-        path.write_text("\n".join(questions) + "\n", encoding="utf-8")
+        # A failed seeding write (disk full, permissions) must not abort the
+        # run with a traceback while specify is blocked at the gate: an
+        # unseeded feedback.md is the documented "no questions" state.
+        with contextlib.suppress(OSError):
+            path.write_text("\n".join(questions) + "\n", encoding="utf-8")
 
 
 def open_feedback_editor(
@@ -52,14 +57,15 @@ def open_feedback_editor(
 ) -> bool:
     """Own the feedback gates' editor interaction.
 
-    Any step whose id contains "feedback-gate" routes here (the ADR revise
-    gate, the motivation clarify gate — the wrapper recognizes them by the
-    shared marker, so the handling is identical for all of them). Pauses
+    Any step whose id contains "feedback-gate" routes here — every shipped
+    feedback gate shares that marker substring (currently only the task
+    pipeline's `motivation-feedback-gate`), so the handling is identical
+    for all of them. Pauses
     stdin forwarding, creates feedback.md in the current task dir (never
     overwriting; a NEW file is seeded with the numbered open questions of
-    the gate's document — study.md for a `motivation` gate, adr.md for an
-    `adr` gate — so the questions are in front of the user while writing,
-    ADR-0012), opens it in the platform editor and, on editor close,
+    the gate's document — study.md for a `motivation` gate — so the
+    questions are in front of the user while writing, ADR-0012), opens it
+    in the platform editor and, on editor close,
     answers the gate with `continue` so the workflow continues (the revise
     step reads feedback.md).
     The editor resolution (editor.py) returns a mode: "waited" (macOS

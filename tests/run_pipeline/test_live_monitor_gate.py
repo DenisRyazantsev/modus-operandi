@@ -78,13 +78,14 @@ class LiveMonitorGateTest(unittest.TestCase):
                 captured = io.StringIO()
                 with stdout(captured):
                     monitor._poll_once()
-            # Nothing printed while the gate is open; the step result, the
-            # gate step id, the live line and the step-start harness line
-            # are all captured instead (ADR-0012).
+            # Nothing printed while the gate is open; the step's captured
+            # output arrives as a `[harness]` row in the fixed buffer (no
+            # separate step-result category anymore), together with the
+            # live line and the step-start harness line (ADR-0012,
+            # ADR-0016).
             self.assertEqual(captured.getvalue(), "")
             self.assertEqual(monitor.gate._gate_step_id, "adr-gate")
-            self.assertEqual(len(monitor._emitter.buffered_steps), 1)
-            self.assertEqual(len(monitor._emitter.buffered_fixed), 2)
+            self.assertEqual(len(monitor._emitter.buffered_fixed), 3)
             self.assertIn("cache 4", monitor._emitter.buffered_fixed[0])
             self.assertIn("[harness]", monitor._emitter.buffered_fixed[1])
 
@@ -108,7 +109,6 @@ class LiveMonitorGateTest(unittest.TestCase):
                 with stdout(captured):
                     monitor._poll_once()
             self.assertFalse(monitor.gate.is_open)
-            self.assertEqual(monitor._emitter.buffered_steps, [])
             self.assertEqual(monitor._emitter.buffered_fixed, [])
             self.assertIn("done", captured.getvalue())
             self.assertIn("cache 4", captured.getvalue())
@@ -153,7 +153,6 @@ class LiveMonitorGateTest(unittest.TestCase):
                     monitor.stop()
                     monitor.join()
             self.assertFalse(monitor.gate.is_open)
-            self.assertEqual(monitor._emitter.buffered_steps, [])
             self.assertEqual(monitor._emitter.buffered_fixed, [])
             self.assertIn("done", captured.getvalue())
             self.assertIn("cache 4", captured.getvalue())
@@ -170,22 +169,22 @@ class LiveMonitorGateTest(unittest.TestCase):
         self.assertTrue(gate.is_open)
         self.assertEqual(gate._gate_step_id, "adr-gate")
         # The answer lands: the next readable state closes the gate.
-        self.assertTrue(gate.update({"current_step_id": "next-step"}))
+        self.assertTrue(gate.update_and_closed({"current_step_id": "next-step"}))
         self.assertFalse(gate.is_open)
 
     def test_open_without_readable_state_captures_on_first_readable_tick(self) -> None:
         # The open-moment state read can fail (transiently): the id is then
-        # captured by update() on the first readable tick instead.
+        # captured by update_and_closed() on the first readable tick instead.
         mod = load_run_pipeline()
         gate = mod.GateState()
         gate.open(None)
         self.assertTrue(gate.is_open)
         self.assertIsNone(gate._gate_step_id)
-        self.assertFalse(gate.update({"current_step_id": "adr-gate"}))
+        self.assertFalse(gate.update_and_closed({"current_step_id": "adr-gate"}))
         self.assertEqual(gate._gate_step_id, "adr-gate")
-        self.assertFalse(gate.update({"current_step_id": "adr-gate"}))
+        self.assertFalse(gate.update_and_closed({"current_step_id": "adr-gate"}))
         self.assertTrue(gate.is_open)
-        self.assertTrue(gate.update({"current_step_id": "next-step"}))
+        self.assertTrue(gate.update_and_closed({"current_step_id": "next-step"}))
         self.assertFalse(gate.is_open)
 
     def test_unreadable_state_skips_tick_and_keeps_gate_open(self) -> None:
@@ -195,14 +194,14 @@ class LiveMonitorGateTest(unittest.TestCase):
         mod = load_run_pipeline()
         gate = mod.GateState()
         gate.open({"current_step_id": "adr-gate"})
-        self.assertFalse(gate.update(None))
+        self.assertFalse(gate.update_and_closed(None))
         self.assertTrue(gate.is_open)
         self.assertEqual(gate._gate_step_id, "adr-gate")
         # Once the state is readable again with the same id, still open...
-        self.assertFalse(gate.update({"current_step_id": "adr-gate"}))
+        self.assertFalse(gate.update_and_closed({"current_step_id": "adr-gate"}))
         self.assertTrue(gate.is_open)
         # ...and only a readable, differing id closes the gate.
-        self.assertTrue(gate.update({"current_step_id": "next-step"}))
+        self.assertTrue(gate.update_and_closed({"current_step_id": "next-step"}))
         self.assertFalse(gate.is_open)
 
     def test_readable_empty_current_step_id_closes_gate(self) -> None:
@@ -212,5 +211,5 @@ class LiveMonitorGateTest(unittest.TestCase):
         mod = load_run_pipeline()
         gate = mod.GateState()
         gate.open({"current_step_id": "adr-gate"})
-        self.assertTrue(gate.update({"current_step_id": None}))
+        self.assertTrue(gate.update_and_closed({"current_step_id": None}))
         self.assertFalse(gate.is_open)

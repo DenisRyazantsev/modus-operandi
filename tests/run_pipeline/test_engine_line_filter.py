@@ -61,9 +61,9 @@ class EngineLineClassifierTest(unittest.TestCase):
 class ConsumeOutputEchoPolicyTest(unittest.TestCase):
     """The echo policy through main() (ADR-0013): engine progress lines and
     one-time headers are not printed, errors and diagnostics are re-printed
-    as `[hh:mm:ss] [harness] <line as-is>`, the run id is parsed BEFORE the
-    filtering so the resume message still works, and unknown lines echo
-    unchanged (fail-open)."""
+    as aligned `[hh:mm:ss] [harness]` table rows (ADR-0016), the run id is
+    parsed BEFORE the filtering so the resume message still works, and
+    unknown lines echo unchanged (fail-open)."""
 
     def _run_main(
         self, mod: Any, tmp: str, lines: list[str], returncode: int = 0
@@ -118,12 +118,10 @@ class ConsumeOutputEchoPolicyTest(unittest.TestCase):
             )
         self.assertEqual(rc, 1)
         text = out.getvalue()
-        for needle in (
-            "[harness] Error: boom",
-            "[harness] Workflow failed: nope",
-            "[harness] Warning: careful",
-        ):
-            self.assertIn(needle, text)
+        for needle in ("Error: boom", "Workflow failed: nope", "Warning: careful"):
+            line = next(line for line in text.splitlines() if needle in line)
+            self.assertIn("[harness]", line)
+            self.assertIn(needle, line)
         # The run id was parsed before the filtering: the resume message
         # still works even though the "Run ID:" line was not echoed.
         self.assertIn("resume with: specify workflow resume abc12345", text)

@@ -3,9 +3,9 @@
 ``modus-operandi uninstall`` is the explicit full-cleanup command (``pip uninstall
 modus-operandi`` cannot touch the rendered files under the config base): it removes
 ``~/.config/modus-operandi`` (including the user's config.yml), the modus-operandi-owned
-files under ``~/.config/opencode`` and the legacy launcher leftovers from the
-pre-pip install model in ``~/.local/bin``, then prints the hint to remove the
-wheel itself.
+files under ``~/.config/opencode`` and the launcher binaries in ``~/.local/bin``
+(the dev-flow launcher from install.py and the legacy pre-pip leftovers), then
+prints the hint to remove the wheel itself.
 """
 
 from __future__ import annotations
@@ -28,7 +28,11 @@ _SCRIPTS_KEYS = (
     "run_agent_cursor",
     "prompt_subst",
     "run_pipeline",
-    "run_pipeline_common",
+    "engine_output",
+    "feedback_gate",
+    "display",
+    "run_state",
+    "workflow_info",
     "run_id_discoverer",
     "step_result_poller",
     "agent_log_tailer",
@@ -36,6 +40,7 @@ _SCRIPTS_KEYS = (
     "buffered_emitter",
     "live_monitor",
     "live_lines",
+    "table_format",
     "usage_parser",
     "config_invocation",
     "run_statistics",
@@ -43,12 +48,16 @@ _SCRIPTS_KEYS = (
     "notify",
     "feedback_editor",
     "pty_spawn",
+    "wrapper_cli",
+    "stdout_reader",
+    "run_finish",
     "editor",
     "victory_wav",
     "save_adr",
     "check_review",
     "check_implementation",
     "check_questions",
+    "check_plan_deviation",
     "task_utils",
     "adr_utils",
     "agent_call",
@@ -59,7 +68,6 @@ _SCRIPTS_KEYS = (
     "review_task_id",
     "adr_task_id",
     "implement_retry",
-    "sync_adr_step",
     "clear_feedback",
     "implement_pass_check",
     "pass_check",
@@ -73,8 +81,16 @@ _SCRIPTS_KEYS = (
 # detected and kept — pip uninstall removes it together with the package.
 _LEGACY_BIN_NAMES = ("modus-operandi", "editor.py", "edit_command.py")
 
+# Files that pre-split releases rendered into scripts/ but no current
+# _SCRIPTS_KEYS entry references: the released 0.1.0 package installed
+# _run_pipeline_common.py, which the one-concern module split replaced.
+# Nothing imports these leftovers, but uninstall claims to remove every
+# modus-operandi-owned file, so an upgraded machine must not keep them
+# forever.
+_LEGACY_SCRIPT_NAMES = ("_run_pipeline_common.py",)
 
-def _pip_installed_bin(paths: Paths) -> set[Path]:
+
+def pip_installed_bin(paths: Paths) -> set[Path]:
     """The ~/.local/bin files owned by the installed modus-operandi distribution.
 
     ``pip install --user modus-operandi`` puts the console script into
@@ -89,10 +105,15 @@ def _pip_installed_bin(paths: Paths) -> set[Path]:
         return owned
     for entry in dist.files or []:
         try:
-            located = Path(entry.locate())
+            # RECORD entries are stored relative to the dist-info dir (e.g.
+            # ../../../bin/modus-operandi) and locate() joins them WITHOUT
+            # resolving the .. components, so both sides must be normalized
+            # before the comparison — a lexical parent match would never
+            # equal the real ~/.local/bin.
+            located = Path(entry.locate()).resolve()
         except OSError:
             continue
-        if located.parent == paths["user_bin"]:
+        if located.parent == paths["user_bin"].resolve():
             owned.add(located)
     return owned
 
@@ -107,12 +128,12 @@ def do_uninstall(paths: Paths, yes: bool) -> int:
     if not yes:
         ok = prompt.confirm(
             f"remove {paths['config_dir']} (including your config.yml) and "
-            f"modus-operandi files from {paths['agents'].parent.parent}? [y/N] "
+            f"modus-operandi files from {paths['agents'].parent}? [y/N] "
         )
         if not ok:
             print("aborted")
             return 1
-    pip_owned = _pip_installed_bin(paths)
+    pip_owned = pip_installed_bin(paths)
     removed: list[str] = []
     for path in (
         paths["agents"] / "planner.md",
@@ -122,9 +143,16 @@ def do_uninstall(paths: Paths, yes: bool) -> int:
         if path.exists():
             path.unlink()
             removed.append(str(path))
+    # Scripts of pre-split releases (see _LEGACY_SCRIPT_NAMES): no current
+    # key points at them, so they are removed by name.
+    for name in _LEGACY_SCRIPT_NAMES:
+        legacy = paths["scripts"] / name
+        if legacy.exists():
+            legacy.unlink()
+            removed.append(str(legacy))
     for name in _LEGACY_BIN_NAMES:
         legacy = paths["user_bin"] / name
-        if legacy in pip_owned:
+        if legacy.resolve() in pip_owned:
             # The live console script of the installed package: pip uninstall
             # removes it together with the wheel; deleting it here would
             # leave the pip metadata pointing at a missing file.

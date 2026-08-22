@@ -161,6 +161,31 @@ class AgentLogTailerTest(unittest.TestCase):
         self.assertEqual(role, "planner")
         self.assertEqual(fork_id, "bugs-2")
 
+    def test_task_id_containing_fork_does_not_misattribute_role(self) -> None:
+        # Regression (bug fix): the fork marker is anchored to the role
+        # ("-<role>-fork-<kind>"), not a bare "-fork-" — a task id that
+        # itself contains "-fork-" (branch-derived slugs like
+        # feature-fork-x) must not turn a warm log into a phantom fork with
+        # a garbage fork id and role.
+        tailer = self.mod.AgentLogTailer(self.dir)
+        # The warm planner log of a task whose slug contains "fork".
+        warm = self.dir / "sessions-feature-fork-x-20260822-0900-planner.jsonl"
+        warm.write_text('{"type": "step_finish", "part": {}}\n', encoding="utf-8")
+        # The real per-kind fork log of the same task.
+        fork = self.dir / "sessions-feature-fork-x-20260822-0900-planner-fork-srp.jsonl"
+        fork.write_text('{"type": "step_finish", "part": {}}\n', encoding="utf-8")
+        events = tailer.tail()
+        self.assertEqual(len(events), 2)
+        # The fork log parses first (lexicographic file order): its fork id
+        # is the real kind, not the slug fragments.
+        role, fork_id, text, event = events[0]
+        self.assertEqual(role, "planner")
+        self.assertEqual(fork_id, "srp")
+        # The warm log keeps its real role and no phantom fork id.
+        role, fork_id, text, event = events[1]
+        self.assertEqual(role, "planner")
+        self.assertEqual(fork_id, "")
+
     def test_non_json_line_yields_none_event(self) -> None:
         # A non-JSON line still yields a quadruple (the raw text is
         # suppressed since ADR-0011) with event=None.

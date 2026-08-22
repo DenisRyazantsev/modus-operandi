@@ -47,8 +47,12 @@ class EditCommandTest(unittest.TestCase):
 
     def test_edit_launches_editor_then_applies(self) -> None:
         # The editor is launched with the config path as its single argument;
-        # on close the config is re-applied for real (marker recorded).
-        self._write_editor('#!/bin/sh\nprintf \'%s\' "$1" > "$1.invoked"\nexit 0\n')
+        # it changes the config, and on close the config is re-applied for
+        # real (marker recorded).
+        self._write_editor(
+            '#!/bin/sh\nprintf \'%s\' "$1" > "$1.invoked"\n'
+            "printf '\\n# edited via test\\n' >> \"$1\"\nexit 0\n"
+        )
         with (
             env(self._env()),
             stdout(io.StringIO()) as out,
@@ -58,6 +62,20 @@ class EditCommandTest(unittest.TestCase):
         self.assertEqual(Path(self.config + ".invoked").read_text(encoding="utf-8"), self.config)
         self.assertEqual(self.layout["install_version"].read_text(encoding="utf-8"), __version__)
         self.assertIn("config applied", out.getvalue())
+
+    def test_edit_without_saving_applies_nothing(self) -> None:
+        # The editor runs but the file is left byte-identical: the flow
+        # reports that nothing changed and does not re-apply.
+        self._write_editor("#!/bin/sh\nexit 0\n")
+        with (
+            env(self._env()),
+            stdout(io.StringIO()) as out,
+        ):
+            rc = edit_command._run_edit(self.config, self.layout)
+        self.assertEqual(rc, 0)
+        self.assertIn("config unchanged", out.getvalue())
+        self.assertNotIn("config applied", out.getvalue())
+        self.assertFalse(self.layout["install_version"].exists())
 
     def test_edit_applies_after_nonzero_editor_exit(self) -> None:
         # A user can save a valid edit and still close the editor non-zero
@@ -113,6 +131,22 @@ class EditCommandTest(unittest.TestCase):
             rc = edit_command._run_edit(self.config, self.layout)
         self.assertEqual(rc, 1)
         self.assertEqual(Path(self.config).read_bytes(), _EXAMPLE)
+
+    def test_edit_deleted_config_is_restored_from_backup(self) -> None:
+        # An editor that REMOVES the file must not silently recreate it from
+        # the example config (installer.ensure_config would, and the user's
+        # previous config would be lost): the pre-edit snapshot is restored
+        # and the flow aborts with an error.
+        self._write_editor('#!/bin/sh\nrm -f "$1"\n')
+        with (
+            env(self._env()),
+            stderr(io.StringIO()) as err,
+        ):
+            rc = edit_command._run_edit(self.config, self.layout)
+        self.assertEqual(rc, 1)
+        self.assertEqual(Path(self.config).read_bytes(), _EXAMPLE)
+        self.assertIn("the previous config was restored", err.getvalue())
+        self.assertFalse(self.layout["install_version"].exists())
 
     def test_edit_without_editor_fails_cleanly(self) -> None:
         # An empty PATH and no $VISUAL/$EDITOR: no editor can be resolved and

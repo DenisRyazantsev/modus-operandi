@@ -114,6 +114,33 @@ class RunStatisticsTest(unittest.TestCase):
         self.assertEqual(usage["cache_write"], 5)
         self.assertAlmostEqual(usage["cost"], 0.03)
 
+    def test_malformed_token_fields_degrade_to_zeros(self) -> None:
+        # Regression (bug fix): export_session_info validates only that the
+        # export parses as JSON with a dict `info`; the token fields are
+        # unvalidated. A non-numeric token field must degrade to zero like
+        # every other missing-data path — a ValueError/TypeError here would
+        # crash the wrapper with a traceback AFTER the run finished
+        # (violating "the wrapper never fails here").
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            state = self._state(tmp, {"planner": "p1"})
+            script = (
+                "#!/bin/sh\n"
+                'echo \'{"info": {"tokens": {"input": "many", "output": {"nested": 1},'
+                ' "reasoning": null, "cache": {"read": "x", "write": 3}},'
+                ' "cost": "free"}}\'\n'
+            )
+            with env(export_env(Path(tmp) / "bin", script)):
+                usage = mod.collect_usage(state)
+        # Everything non-numeric degrades to zero; the numeric cache_write
+        # still counts and the non-numeric cost is ignored like before.
+        self.assertEqual(usage["input"], 0)
+        self.assertEqual(usage["output"], 0)
+        self.assertEqual(usage["reasoning"], 0)
+        self.assertEqual(usage["cache_read"], 0)
+        self.assertEqual(usage["cache_write"], 3)
+        self.assertEqual(usage["cost"], 0.0)
+
     def test_print_run_statistics_block(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:

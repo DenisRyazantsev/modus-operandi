@@ -7,13 +7,14 @@ backend: opencode          # active backend: opencode or cursor (per-run overrid
 opencode:                  # models for the opencode backend (legacy top-level `models:` is read as this section)
   models:
     planner:
-      provider: opencode-go          # opencode provider id
-      model: deepseek-v4-pro         # strong model for planning and review
-      reasoning: max                 # reasoning effort passed to the provider (e.g. minimal, low, high, max)
+      provider: opencode              # opencode provider id: `opencode` = OpenCode Zen (free models work with no setup),
+                                      # `opencode-go` = OpenCode Go ($10/month subscription, OPENCODE_API_KEY required)
+      model: big-pickle               # strong model for planning and review (free on Zen; paid: deepseek-v4-pro, gpt-5.x, ...)
+      reasoning: max                  # reasoning effort passed to the provider (e.g. minimal, low, high, max)
     executor:
-      provider: opencode-go
-      model: deepseek-v4-flash       # cheap/fast model for implementation
-      reasoning: max                 # reasoning effort passed to the provider
+      provider: opencode
+      model: big-pickle               # model for implementation (free on Zen; paid: deepseek-v4-flash, ...)
+      reasoning: max                  # reasoning effort passed to the provider
 
 cursor:                    # models for the cursor backend (passed to cursor-agent as --model <slug>)
   models:

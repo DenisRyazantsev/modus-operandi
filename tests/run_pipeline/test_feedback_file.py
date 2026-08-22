@@ -173,7 +173,9 @@ class QuestionsSourceTest(unittest.TestCase):
             mod.questions_source_file("motivation-loop:motivation-feedback-gate:2"),
             "study.md",
         )
-        self.assertEqual(mod.questions_source_file("adr-feedback-gate"), "adr.md")
-        self.assertEqual(mod.questions_source_file("adr-loop:adr-feedback-gate:1"), "adr.md")
+        # The legacy `adr` branch of the removed adr-pipeline is gone
+        # (ADR-0015): only the motivation gate seeds feedback.md.
+        self.assertIsNone(mod.questions_source_file("adr-feedback-gate"))
+        self.assertIsNone(mod.questions_source_file("adr-loop:adr-feedback-gate:1"))
         self.assertIsNone(mod.questions_source_file("feedback-gate"))
         self.assertIsNone(mod.questions_source_file(""))

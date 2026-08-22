@@ -31,9 +31,10 @@ def _step_finish(
 
 class UsageParserTest(unittest.TestCase):
     """The parser's precedence contract (bug fix): the shapes of one event
-    are precedence-ordered, not cumulative, and `prefer_result` disables the
-    step_finish fallback once the task's logs have shown the modern shape —
-    a transitional build emitting both shapes must not double-count."""
+    are precedence-ordered, not cumulative, and `disable_step_finish_fallback`
+    disables the step_finish fallback once the task's logs have shown the
+    modern shape — a transitional build emitting both shapes must not
+    double-count."""
 
     def _parser(self) -> Any:
         load_run_pipeline()
@@ -78,7 +79,7 @@ class UsageParserTest(unittest.TestCase):
         self.assertEqual(parser.event_usage({"type": "result", "inputTokens": 100})["input"], 100)
         self.assertEqual(parser.event_usage(_step_finish(input=100))["input"], 100)
 
-    def test_prefer_result_disables_step_finish_fallback(self) -> None:
+    def test_disable_step_finish_fallback_flag(self) -> None:
         parser = self._parser()
         event = _step_finish(input=100, cost=0.5)
         self.assertEqual(parser.event_usage(event)["input"], 100)
@@ -87,7 +88,7 @@ class UsageParserTest(unittest.TestCase):
             parser.event_usage({"type": "result", "usage": {"inputTokens": 5}}, True)["input"],
             5,
         )
-        self.assertIsNone(parser.event_usage(event, prefer_result=True))
+        self.assertIsNone(parser.event_usage(event, disable_step_finish_fallback=True))
 
     def test_is_result_style_detects_the_modern_shapes(self) -> None:
         parser = self._parser()
@@ -101,6 +102,6 @@ class UsageParserTest(unittest.TestCase):
     def test_unrecognized_usage_shape_parses_to_none(self) -> None:
         # An unrecognized-shape usage dict yields None (no recognized keys),
         # not an exception and not a partial dict — so the callers skip the
-        # event without flipping prefer_result (bug fix).
+        # event without flipping disable_step_finish_fallback (bug fix).
         parser = self._parser()
         self.assertIsNone(parser.event_usage({"type": "result", "usage": {"total": 42}}))

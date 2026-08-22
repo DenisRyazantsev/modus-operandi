@@ -1,1 +1,0 @@
-Read @STATE_DIR@/tasks/current/deviation.md and @STATE_DIR@/tasks/current/adr.md. Update adr.md so it reflects the recorded deviation: append an '## Amendments' section (do not rewrite the Decision) noting what changed and why.

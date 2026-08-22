@@ -48,7 +48,9 @@ class RunIdDiscoveryTest(unittest.TestCase):
                 )
                 monitor._poll_once()
             self.assertEqual(monitor.run_id, "abc12345")
-            self.assertIn("write-adr", captured.getvalue())
+            # The discovered run's step result prints as a `[harness]` row
+            # (no step name in the captured row, ADR-0016).
+            self.assertIn("[harness]", captured.getvalue())
             self.assertIn("done", captured.getvalue())
 
     def test_preexisting_run_is_not_discovered(self) -> None:

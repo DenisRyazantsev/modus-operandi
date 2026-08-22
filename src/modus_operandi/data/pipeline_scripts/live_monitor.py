@@ -7,9 +7,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-from _run_pipeline_common import step_marker_index
 from agent_log_tailer import AgentLogTailer
 from buffered_emitter import BufferedEmitter
+from display import step_output_rows
 from gate_state import GateState
 from live_lines import LiveLines
 from run_id_discoverer import RunIdDiscoverer
@@ -33,6 +33,7 @@ class LiveMonitor:
         logs_dir: Path | None = None,
         step_ids: list[str] | None = None,
         backend: str = "opencode",
+        step_width: int = 0,
     ) -> None:
         self.run_id: str = ""
         self._poller = StepResultPoller(run_state_dir, self.run_id)
@@ -42,12 +43,12 @@ class LiveMonitor:
         self._stop = threading.Event()
         self._discoverer = RunIdDiscoverer(run_state_dir, prior_runs)
         self.gate = GateState()
-        self._step_ids = step_ids
         total_steps = len(step_ids) if step_ids is not None else None
         # The backend (opencode/cursor) reaches the live lines through the
         # monitor: the price is omitted on cursor, which reports no cost
-        # (ADR-0012).
-        self._live = LiveLines(total_steps=total_steps, backend=backend)
+        # (ADR-0012). The step column starts at the static width computed
+        # from the workflow ids by the caller (ADR-0016).
+        self._live = LiveLines(total_steps=total_steps, backend=backend, step_width=step_width)
         self._emitter = BufferedEmitter(self.gate)
 
     def start(self) -> None:
@@ -63,6 +64,10 @@ class LiveMonitor:
     def emit_stdout(self, line: str) -> None:
         """Echo one of specify's own stdout lines (called by main())."""
         self._emitter.emit_stdout(line)
+
+    def harness_row(self, text: str) -> str:
+        """One `[harness]` table row with an empty step column (ADR-0016)."""
+        return self._live.layout.row("harness", " ", self._live.layout.empty_step(), text)
 
     def clear_live(self) -> None:
         """Clear the drawn live block (called by main() before final output)."""
@@ -89,11 +94,12 @@ class LiveMonitor:
 
     def _drain_tailer(self) -> None:
         """Feed the appended agent-log events into the live status lines."""
-        for role, fork_id, text, event in self._tailer.tail():
-            self._emitter.emit_log(role, text)
+        for role, fork_id, _text, event in self._tailer.tail():
             line = self._live.add_event(role, fork_id, event)
             if line is not None:
-                # Non-TTY: one plain line per step_finish event.
+                # Non-TTY: one plain line per event with usage (add_event
+                # returns a line for any event type that carries usage —
+                # cursor result-style events included).
                 self._emitter.emit_live([line], plain=True)
 
     def _poll_once(self, run_id: str | None = None) -> None:
@@ -111,7 +117,7 @@ class LiveMonitor:
             # current_step_id, the poller reuses the same data, and the live
             # lines need the current step for the N/M progress.
             state = self._poller.read_state()
-            if self.gate.update(state):
+            if self.gate.update_and_closed(state):
                 # The engine moved past the gate: flush what was buffered
                 # while the menu was open, then resume live emission.
                 self._emitter.flush()
@@ -127,33 +133,34 @@ class LiveMonitor:
                 (state or {}).get("current_step_id") or "", step_index
             )
         # Agent logs are drained BEFORE the step results: a step's final
-        # agent events must accumulate before its "--- step X (completed)"
-        # marker, not after it.
+        # agent events must accumulate before its captured output rows, not
+        # after them.
         self._drain_tailer()
         if run_id:
             for step_id, result in self._poller.poll(state):
                 # One more tailer drain per finished step: events written
                 # after the drain above (e.g. the agent's final reply before
-                # the step completed) accumulate before this step's marker.
+                # the step completed) accumulate before this step's output
+                # rows.
                 self._drain_tailer()
-                # Fix the live lines before the marker: they stay in the
-                # terminal as history (printed plainly), then the marker
-                # prints. The completed step's id is passed so the fixed
-                # copies keep the completed step's label — the engine has
-                # usually already advanced current_step_id to the next step
-                # by now (bug fix). The next event of the same process opens
-                # a new line with the continued sums.
-                fixed = self._live.fix_all(step_id)
-                if fixed:
-                    self._emitter.emit_live(fixed, plain=True)
-                # The marker shows the completed step's OWN position in the
-                # workflow (the engine's current_step_index has usually
-                # already advanced to the next step by the time the result
-                # is polled); an unknown step degrades to no N/M.
-                marker_index = step_marker_index(step_id, self._step_ids)
-                self._emitter.emit_step(step_id, result, marker_index, self._live.total_steps)
-            # Redraw the live block after any fixed lines / markers (TTY
-            # only; on a non-TTY the block is empty).
+                # Pin the live rows before the step's captured output: they
+                # stay in the terminal as history (printed plainly), then
+                # the step's rows print. The completed step's id is passed
+                # so the pinned copies keep the completed step's label —
+                # the engine has usually already advanced current_step_id
+                # to the next step by now (bug fix). The next event of the
+                # same process opens a new row with the continued sums.
+                pinned = self._live.pin_all(step_id)
+                if pinned:
+                    self._emitter.emit_live(pinned, plain=True)
+                # The step's captured stdout/stderr prints as `[harness]`
+                # rows with an empty step column: the pinned rows above
+                # already name the step (ADR-0016).
+                rows = step_output_rows(result, self._live.layout)
+                if rows:
+                    self._emitter.emit_live(rows, plain=True)
+            # Redraw the live block after any fixed rows (TTY only; on a
+            # non-TTY the block is empty).
             self._emitter.emit_live(self._live.block())
             if step_changed and not self._live.tty and not self._live.step_has_events:
                 # The step-start line is emitted after the drain on purpose:

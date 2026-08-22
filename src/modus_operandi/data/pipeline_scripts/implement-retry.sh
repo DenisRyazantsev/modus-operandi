@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# implement-retry.sh - adr-pipeline implement-retry step (implement-loop).
+# implement-retry.sh - task-pipeline implement-retry step (implement-loop).
 #
 # The first loop iteration asks the executor to redo the work; the marker
 # keeps the loop from asking a second time (a second empty verify must fail

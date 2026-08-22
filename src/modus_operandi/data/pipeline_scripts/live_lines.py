@@ -1,28 +1,30 @@
 """LiveLines: per-process live status lines with cumulative token usage.
 
 One responsibility: own the live status lines shown while the workflow runs
-(ADR-0011, ADR-0012). Each active process — a role, or a role+fork for the
-parallel review forks — has one line with the cumulative token/cost sums
-accumulated from the agent-log events (opencode `step_finish` events; cursor
-result events with a `usage` object, top-level token fields, or the same
-`step_finish` fallback as opencode). While the current step has no agent
-event yet, the block shows the synthesized harness line
-`[hh:mm:ss] [harness] <spin> [<step> N/M]` without a token section; the
-first agent event of the step (any type — the current cursor emits no
-`step_start`) creates the process line and replaces the harness line. The
-spinner frame is chosen from the elapsed time (rich-style time-based
-spinner): it advances every HEARTBEAT_SECONDS (0.25 s, ADR-0013), so the
-block redrawn every 0.25 s monitor tick visibly "breathes" between model
-turns, and a skipped tick advances several frames at once instead of
-drifting the cadence.
+(ADR-0011, ADR-0012, ADR-0016). Each active process — a role, or a role+fork
+for the parallel review forks — has one aligned table row with the
+cumulative token/cost sums accumulated from the agent-log events (opencode
+`step_finish` events; cursor result events with a `usage` object, top-level
+token fields, or the same `step_finish` fallback as opencode). While the
+current step has no agent event yet, the block shows the synthesized
+harness row `[hh:mm:ss] [harness] <spin> [<step> N/M]` without a token
+section; the first agent event of the step (any type — the current cursor
+emits no `step_start`) creates the process row and replaces the harness
+row. The rows are assembled by TableLayout (ADR-0016): the role and step
+columns are aligned, and the token sub-columns right-align and grow with
+the widest value seen during the run. The spinner frame is chosen from the
+elapsed time (rich-style time-based spinner): it advances every
+HEARTBEAT_SECONDS (0.25 s, ADR-0013), so the block redrawn every 0.25 s
+monitor tick visibly "breathes" between model turns, and a skipped tick
+advances several frames at once instead of drifting the cadence.
 
 The block is redrawn in place with ANSI on a TTY (the emitter owns the
-drawing); on a non-TTY no ANSI is drawn — the harness line prints once per
-step change (plain, no spinner, no heartbeat) and one plain line is returned
+drawing); on a non-TTY no ANSI is drawn — the harness row prints once per
+step change (plain, no spinner, no heartbeat) and one plain row is returned
 per event WITH usage (opencode `step_finish`, cursor usage events), which
-the caller prints. When a workflow step completes, every active line is
-fixed: returned as plain history lines and cleared, so the next event of the
-same process opens a new line (the sums continue).
+the caller prints. When a workflow step completes, every active row is
+pinned: returned as plain history rows and cleared, so the next event of
+the same process opens a new row (the sums continue).
 """
 
 from __future__ import annotations
@@ -31,13 +33,21 @@ import sys
 import time
 from typing import Any
 
-from _run_pipeline_common import (
-    HEARTBEAT_SECONDS,
-    SPINNER_FRAMES,
-    fmt_thousands,
-    stamp,
-)
+from display import fmt_thousands
+from table_format import TableLayout
 from usage_parser import event_usage, is_result_style
+
+# The live status line's spinner cadence (ADR-0012, ADR-0013): the frame is
+# chosen from the elapsed time (rich-style time-based spinner), so it
+# advances every heartbeat while the monitor redraws the block every 0.25 s
+# tick — the line visibly "breathes" between model turns without the text
+# after the frame shifting. A fixed constant: no config key.
+HEARTBEAT_SECONDS = 0.25
+
+# Single-column spinner frames (braille, each exactly one terminal column
+# wide): the line is `[hh:mm:ss] [<role>] <frame> [<step> N/M] ...` — the
+# frame never shifts the text that follows it (ADR-0012).
+SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
 class LiveLines:
@@ -48,11 +58,17 @@ class LiveLines:
         total_steps: int | None = None,
         tty: bool | None = None,
         backend: str = "opencode",
+        step_width: int = 0,
+        role_width: int | None = None,
     ) -> None:
         self._totals: dict[tuple[str, str], dict[str, int | float]] = {}
         self._active: set[tuple[str, str]] = set()
         self._total_steps = total_steps
         self._tty = sys.stdout.isatty() if tty is None else tty
+        # The aligned log table columns (ADR-0016): the step column starts
+        # at the static width computed from the workflow ids (0 when the
+        # file is unreadable) and widens when a runtime step id exceeds it.
+        self.layout = TableLayout(step_width=step_width, role_width=role_width, tty=self._tty)
         # The price is shown only when the backend reports a cost: opencode
         # does, cursor does not (ADR-0012, same rule as the statistics).
         self._show_price = backend == "opencode"
@@ -60,7 +76,7 @@ class LiveLines:
         self._step_index: int | None = None
         self._step_has_events = False
         # The step label each active line was opened under and the harness
-        # line was last rendered under: fix_all() renders the fixed copies
+        # line was last rendered under: pin_all() renders the pinned copies
         # with these captured labels, so a completed step's lines keep their
         # own step even after the engine advanced current_step_id (bug fix).
         self._line_steps: dict[tuple[str, str], tuple[str, int | None]] = {}
@@ -68,15 +84,11 @@ class LiveLines:
         # True once a result-style cursor event was seen: the step_finish
         # fallback is then disabled so a transitional build emitting both
         # shapes cannot double-count (bug fix).
-        self._prefer_result = False
+        self._disable_step_finish_fallback = False
         # The spinner's time origin: the frame is a function of the elapsed
         # time, so the 4 fps cadence (ADR-0013) never drifts even when a
         # monitor tick is skipped.
         self._t0 = time.monotonic()
-
-    @property
-    def step_index(self) -> int | None:
-        return self._step_index
 
     @property
     def total_steps(self) -> int | None:
@@ -133,7 +145,7 @@ class LiveLines:
         if not isinstance(event, dict):
             return None
         try:
-            usage = event_usage(event, self._prefer_result)
+            usage = event_usage(event, self._disable_step_finish_fallback)
         except (AttributeError, TypeError, ValueError):
             return None
         if usage is not None and is_result_style(event):
@@ -143,13 +155,13 @@ class LiveLines:
             # A malformed or unrecognized-shape result-style event is
             # skipped WITHOUT the flip — one broken event must not
             # permanently suppress all later token display (bug fix).
-            self._prefer_result = True
+            self._disable_step_finish_fallback = True
         key = (role, fork_id)
         newly_active = key not in self._active
         self._active.add(key)
         self._step_has_events = True
         if newly_active:
-            # The line is opened for the step that is current NOW: fix_all()
+            # The line is opened for the step that is current NOW: pin_all()
             # renders the fixed copy with this captured label, so the
             # completed step's lines keep their own step even after the
             # engine has advanced current_step_id (bug fix, ADR-0012).
@@ -175,14 +187,6 @@ class LiveLines:
             return None
         return self._line(key)
 
-    def _step_part(self, step_id: str, step_index: int | None) -> str:
-        """The ` [<step> N/M]` part of a status line ("" without a step)."""
-        if not step_id:
-            return ""
-        if self._total_steps is not None and step_index is not None:
-            return f" [{step_id} {step_index + 1}/{self._total_steps}]"
-        return f" [{step_id}]"
-
     def _spin(self) -> str:
         """The current spinner frame, one column wide.
 
@@ -196,17 +200,23 @@ class LiveLines:
         return SPINNER_FRAMES[frame % len(SPINNER_FRAMES)]
 
     def _harness_line(self, step_id: str, step_index: int | None) -> str:
-        """The TTY harness line: `[hh:mm:ss] [harness] <spin> [<step> N/M]`
-        — no token section (ADR-0012)."""
-        spin = f" {self._spin()}" if self._tty else ""
-        return f"[{stamp()}] [harness]{spin}{self._step_part(step_id, step_index)}".rstrip()
+        """The TTY harness row: role `harness`, the spinner, the step column
+        and no token section (ADR-0012, ADR-0016)."""
+        spin = self._spin() if self._tty else ""
+        return self.layout.row(
+            "harness",
+            spin,
+            self.layout.step_field(step_id, step_index, self._total_steps),
+        )
 
     def harness_step_line(self) -> str:
-        """The plain non-TTY step-start line (ADR-0012):
-        `[hh:mm:ss] [harness] [<step> N/M]` — printed once per step change,
-        when the step has no agent lines yet; no spinner and no heartbeat in
-        a log."""
-        return (f"[{stamp()}] [harness]{self._step_part(self._step_id, self._step_index)}").rstrip()
+        """The plain non-TTY step-start row (ADR-0012, ADR-0016): the same
+        aligned columns, no spinner."""
+        return self.layout.row(
+            "harness",
+            "",
+            self.layout.step_field(self._step_id, self._step_index, self._total_steps),
+        )
 
     def _tokens_part(self, acc: dict[str, int | float] | None) -> str:
         """The token/cost section of a process line; empty unless the
@@ -235,18 +245,19 @@ class LiveLines:
             has_totals = True
         if not has_totals:
             return ""
-        part = (
-            f"cache {fmt_thousands(acc['cache_read'])} · "
-            f"reasoning {fmt_thousands(acc['reasoning'])} · "
-            f"input {fmt_thousands(acc['input'])} · output {fmt_thousands(acc['output'])}"
-        )
+        pairs = [
+            ("cache", fmt_thousands(acc["cache_read"])),
+            ("reasoning", fmt_thousands(acc["reasoning"])),
+            ("input", fmt_thousands(acc["input"])),
+            ("output", fmt_thousands(acc["output"])),
+        ]
         if self._show_price:
-            part += f" · price ${acc['cost']:.2f}"
-        return " " + part
+            pairs.append(("price", f"${acc['cost']:.2f}"))
+        return self.layout.tokens(pairs)
 
     def _line(self, key: tuple[str, str]) -> str:
-        """One status line: `[hh:mm:ss] [<role>] <spin> [<step> N/M]
-        cache ... · price $P` (no spinner on a non-TTY).
+        """One aligned table row (ADR-0016): `[hh:mm:ss] [<role>] <spin>
+        [<step> N/M] cache ... · price $P` (no spinner on a non-TTY).
 
         The step label is the one captured when the line was opened, not the
         current step: the fixed copy of a completed step's line must keep
@@ -256,12 +267,14 @@ class LiveLines:
         role, fork_id = key
         label = role if not fork_id else f"{role}#{fork_id}"
         acc = self._totals.get(key)
-        spin = f" {self._spin()}" if self._tty else ""
+        spin = self._spin() if self._tty else ""
         step_id, step_index = self._line_steps.get(key, (self._step_id, self._step_index))
-        return (
-            f"[{stamp()}] [{label}]{spin}"
-            f"{self._step_part(step_id, step_index)}{self._tokens_part(acc)}"
-        ).rstrip()
+        return self.layout.row(
+            label,
+            spin,
+            self.layout.step_field(step_id, step_index, self._total_steps),
+            self._tokens_part(acc),
+        )
 
     def block(self) -> list[str]:
         """The current live block lines (TTY only).
@@ -281,23 +294,25 @@ class LiveLines:
             return [self._harness_line(self._step_id, self._step_index)]
         return []
 
-    def fix_all(self, completed_step_id: str | None = None) -> list[str]:
-        """Fix every line on screen — the process lines and the harness line
+    def pin_all(self, completed_step_id: str | None = None) -> list[str]:
+        """Pin every line on screen — the process lines and the harness line
         — as plain history lines and clear the block (TTY only; on a non-TTY
         each event already printed its own line).
 
-        The fixed copies are rendered with the step label each line was
+        The pinned copies are rendered with the step label each line was
         opened/render under, never with the engine's already-advanced
         current_step_id: a completed step's lines keep their own step, and
-        the harness line is fixed only when it belongs to the completed
+        the harness line is pinned only when it belongs to the completed
         step (`completed_step_id`) — otherwise it stays live for the next
-        step, so nothing is duplicated above the step marker (bug fix).
+        step, so nothing is duplicated above the step's captured output
+        rows: the pinned rows are the only history above them, and the
+        harness must not pin twice for the same completed step (bug fix).
         The next event of the same process opens a new line with the
         continued sums; the per-step event window resets, so the next step
         starts with the harness line again (ADR-0012).
         """
         if not self._tty:
-            # fix_all is also the step-boundary hook: the event window
+            # pin_all is also the step-boundary hook: the event window
             # resets so the next step's harness line can print, and _active
             # is cleared so the next event re-opens the process line and
             # re-captures the CURRENT step's label — a stale _active would
@@ -314,9 +329,9 @@ class LiveLines:
             and (completed_step_id is None or self._harness_step[0] == completed_step_id)
         ):
             # In production the monitor always passes the completed step's
-            # id, so None means "no specific step known — fix whatever is
+            # id, so None means "no specific step known — pin whatever is
             # on screen" (a direct-call/test default), not a runtime path;
-            # the id match is what prevents fixing a harness that belongs
+            # the id match is what prevents pinning a harness that belongs
             # to a different step.
             lines.append(self._harness_line(*self._harness_step))
         self._active.clear()

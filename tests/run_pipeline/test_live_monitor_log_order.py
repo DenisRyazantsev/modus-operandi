@@ -1,4 +1,4 @@
-"""Unit tests for the live-line-before-step-marker output order."""
+"""Unit tests for the agent-row-before-step-output-rows order."""
 
 import io
 import json
@@ -12,10 +12,10 @@ from .helpers import load_run_pipeline
 
 
 class LiveMonitorLogOrderTest(unittest.TestCase):
-    """The finishing step's live status line is fixed (printed as history)
-    BEFORE the step's "--- step X (completed)" marker."""
+    """The finishing step's live status row is fixed (printed as history)
+    BEFORE the step's captured output rows (ADR-0016)."""
 
-    def test_step_finish_line_prints_before_step_marker(self) -> None:
+    def test_agent_line_prints_before_step_output_rows(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)
@@ -65,15 +65,17 @@ class LiveMonitorLogOrderTest(unittest.TestCase):
                 with stdout(captured):
                     monitor._poll_once()
             out = captured.getvalue()
+            # The agent row (with the token section) prints before the
+            # step's captured stdout row.
             self.assertLess(
                 out.index("cache 4"),
-                out.index("--- step write-adr (completed)"),
+                out.index("done"),
             )
 
     def test_fixed_line_prints_once_no_stale_block(self) -> None:
         # The fixed line is the block's last state: it prints plainly as
         # history and must not reappear as a (stale) live block after the
-        # marker — the count of its content is exactly one.
+        # step's captured rows — the count of its content is exactly one.
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)
@@ -121,11 +123,10 @@ class LiveMonitorLogOrderTest(unittest.TestCase):
                 with stdout(captured):
                     monitor._poll_once()
             out = captured.getvalue()
-            # The marker shows the completed step's OWN position (index 1 of
-            # two top-level steps), not the engine's current_step_index.
+            # The agent row prints before the step's captured output rows.
             self.assertLess(
                 out.index("cache 4"),
-                out.index("--- step write-adr (completed) [2/2]"),
+                out.index("done"),
             )
             self.assertEqual(out.count("cache 4"), 1)
 
@@ -175,5 +176,6 @@ class LiveMonitorLogOrderTest(unittest.TestCase):
                 with stdout(captured):
                     monitor._poll_once()
             out = captured.getvalue()
-            self.assertIn("[planner] [write-adr]", out)
+            self.assertIn("[planner]", out)
+            self.assertIn("[write-adr]", out)
             self.assertNotIn("1/1", out)

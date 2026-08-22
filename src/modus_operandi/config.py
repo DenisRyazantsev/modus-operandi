@@ -6,8 +6,9 @@ import re
 from pathlib import Path
 from typing import Any
 
-from . import InstallError as InstallError
-from . import yaml_loader
+import yaml
+
+from . import InstallError
 
 DEFAULT_STATE_DIR = ".workflow"
 DEFAULT_MAX_FIX_ITERATIONS = 5
@@ -46,14 +47,14 @@ def load_config(path: str | Path) -> dict[str, Any]:
     # without special-casing yaml types. A root that is valid YAML but not a
     # mapping (a bare scalar or a list) is the same class of user error, and
     # dict(raw) would otherwise raise an unhandled TypeError instead.
+    # PyYAML is a declared wheel dependency (pyproject.toml `dependencies`),
+    # so the import is unconditional.
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
     try:
-        raw = yaml_loader.yaml.safe_load(text) or {}
-    except Exception as exc:
-        if yaml_loader.yaml is not None and isinstance(exc, yaml_loader.yaml.YAMLError):
-            raise InstallError(f"invalid config.yml: {exc}") from exc
-        raise
+        raw = yaml.safe_load(text) or {}
+    except yaml.YAMLError as exc:
+        raise InstallError(f"invalid config.yml: {exc}") from exc
     if not isinstance(raw, dict):
         raise InstallError("invalid config.yml: top-level must be a mapping")
     return dict(raw)

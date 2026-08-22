@@ -56,6 +56,13 @@ class BuildSpecifyInvocationTest(unittest.TestCase):
         )
         self.assertEqual(env["MO_STATE_DIR"], ".workflow")
         self.assertEqual(env["MO_ATTACH_FLAG"], "")
+        # The prompts dir is derived from the same config base as the
+        # scripts dir, so agent steps find the prompts under any
+        # XDG_CONFIG_HOME.
+        prompts = (
+            Path(mod.__file__ or "").resolve().parent.parent.parent / "modus-operandi" / "prompts"
+        )
+        self.assertEqual(env["MO_PROMPTS_DIR"], str(prompts))
         self.assertEqual(logs_dir, Path(tmp) / ".workflow" / "logs")
 
     def test_custom_state_dir_and_adr_dir(self) -> None:
@@ -81,6 +88,34 @@ class BuildSpecifyInvocationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cmd, _, _, _ = self._invoke(mod, tmp, self._cfg(human_gates=False))
         self.assertNotIn("adr_verdict=", cmd)
+
+    def test_quoted_bools_fall_back_to_defaults(self) -> None:
+        # A hand-edited config.yml with `human_gates: "false"` or
+        # `use_serve: "true"` (a common YAML habit) is NOT a bool; the
+        # wrapper falls back to the documented defaults instead of silently
+        # inverting the behavior under bool().
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            cmd, env, _, _ = self._invoke(
+                mod, tmp, self._cfg(human_gates="false", use_serve="true")
+            )
+        self.assertIn("adr_verdict=", cmd)  # human_gates default True
+        self.assertEqual(env["MO_ATTACH_FLAG"], "")  # use_serve default False
+
+    def test_non_mapping_workflow_section_degrades_to_defaults(self) -> None:
+        # Regression (bug fix): a hand-edited config.yml with a scalar
+        # `workflow:` section (e.g. `workflow: oops`) must degrade to the
+        # documented defaults like load_config's top level — the wrapper
+        # reads the raw YAML without validate_config, and a traceback
+        # (AttributeError on .get) would break the installed standalone
+        # script.
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            cmd, env, state_dir, logs_dir = self._invoke(mod, tmp, {"workflow": "oops"})
+        self.assertEqual(state_dir, ".workflow")
+        self.assertIn("state_dir=.workflow", cmd)
+        self.assertIn("adr_dir=architecture", cmd)
+        self.assertEqual(env["MO_STATE_DIR"], ".workflow")
 
     def test_task_pipeline_passes_motivation_verdict(self) -> None:
         # The task-pipeline gate is the motivation gate (the proposal gate

@@ -1,7 +1,8 @@
 """Shared fixtures for the run-pipeline.py tests.
 
-run_pipeline.py is split into modules (one class per file, plus the shared
-helpers in _run_pipeline_common.py). The tests copy the whole module set
+run_pipeline.py is split into modules (one class per file, plus the
+one-concern-per-file helpers: engine_output, feedback_gate, display,
+run_state, workflow_info). The tests copy the whole module set
 into a temp dir and load the entry as a module, so the __file__-derived
 paths (SOUND_FILE, CONFIG_PATH) are isolated per test and both the runtime
 config handling and the wrapper behavior are exercised.
@@ -20,11 +21,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _SRC_DIR = REPO_ROOT / "src/modus_operandi/data/pipeline_scripts"
 
 # The modules that make up the run-pipeline wrapper: the entry plus the
-# one-class-per-file modules, the shared helpers module and the
-# one-concern-per-file modules.
+# one-class-per-file modules and the one-concern-per-file helper modules.
 _MODULES = (
     "run_pipeline",
-    "_run_pipeline_common",
+    "engine_output",
+    "feedback_gate",
+    "display",
+    "run_state",
+    "workflow_info",
     "run_id_discoverer",
     "step_result_poller",
     "agent_log_tailer",
@@ -32,6 +36,7 @@ _MODULES = (
     "buffered_emitter",
     "live_monitor",
     "live_lines",
+    "table_format",
     "usage_parser",
     "config_invocation",
     "run_statistics",
@@ -43,11 +48,14 @@ _MODULES = (
     "notify",
     "feedback_editor",
     "pty_spawn",
+    "wrapper_cli",
+    "stdout_reader",
+    "run_finish",
     "editor",
 )
 
 # Submodules exposed on the loaded entry module so tests can patch their
-# attributes (e.g. mod._run_pipeline_common.stamp) without re-importing.
+# attributes (e.g. mod.display.stamp) without re-importing.
 _SUBMODULE_NAMES = _MODULES[1:]
 
 DEFAULT_CONFIG = {
@@ -94,8 +102,9 @@ def load_run_pipeline() -> types.ModuleType:
     spec.loader.exec_module(module)
     for name in _SUBMODULE_NAMES:
         # Skip names the entry module already defines: the wrapper
-        # re-exports e.g. the `notify` function, which must not be shadowed
-        # by the `notify` submodule when tests patch mod.notify.
+        # re-exports e.g. the `play_signal` function from notify.py, which
+        # must not be shadowed by the `notify` submodule when tests patch
+        # mod.play_signal.
         if not hasattr(module, name):
             setattr(module, name, sys.modules[name])
     return module

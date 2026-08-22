@@ -67,16 +67,17 @@ class BufferedEmitterBlockTest(unittest.TestCase):
             emitter,
             lambda: (
                 emitter.emit_live(["a"], plain=True),
-                emitter.emit_step("write-adr", {"status": "completed", "output": {"stdout": ""}}),
+                emitter.emit_live(["step output row"], plain=True),
             ),
         )
-        # The fixed line prints plainly; the marker after it must NOT redraw
-        # the stale block under it: "a" appears exactly twice — once as the
-        # originally drawn block, once as the fixed history line — and the
-        # output ends with the marker.
-        self.assertIn("--- step write-adr (completed)", out)
-        self.assertEqual(out.count("a"), 2)
-        self.assertTrue(out.rstrip().endswith("(completed)"))
+        # The fixed rows print plainly in emission order; the step's
+        # captured row after them must NOT redraw the stale block under it:
+        # the cleared block is not redrawn ("a" prints once, plainly) and
+        # the output ends with the step's captured row.
+        self.assertIn("step output row", out)
+        self.assertEqual(out.count("\ra\x1b[K\n"), 0)
+        self.assertEqual(out.count("a\n"), 1)
+        self.assertTrue(out.rstrip().endswith("step output row"))
 
     def test_clear_live_leaves_cursor_at_block_start(self) -> None:
         mod = load_run_pipeline()

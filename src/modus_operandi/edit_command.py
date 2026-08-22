@@ -11,7 +11,7 @@ resolution.
 
 from __future__ import annotations
 
-import subprocess as subprocess
+import subprocess
 import sys
 from pathlib import Path
 
@@ -78,7 +78,9 @@ def _run_edit(config: str, layout: Paths) -> int:
     # code does not gate the apply: a user can save a valid edit and still
     # close the editor non-zero (vim :cq, ...), and apply() re-validates the
     # config anyway, rolling back an invalid edit. Only a failure to start
-    # the editor aborts.
+    # the editor aborts. Leaving the editor without changing the file (the
+    # user quit without saving) is detected byte-for-byte against the
+    # pre-edit snapshot and skips the apply entirely.
     editor_cmd = resolve_editor()
     if editor_cmd is None:
         print(
@@ -91,4 +93,21 @@ def _run_edit(config: str, layout: Paths) -> int:
         return 1
     if _launch_editor(editor_cmd + [config]) is None:
         return 1
+    try:
+        current = Path(config).read_bytes()
+    except OSError:
+        # The editor removed the file. Falling through to apply() would
+        # recreate it from the example config (installer.ensure_config) and
+        # silently discard the user's previous config — validation could
+        # never fail and the backup would never be restored. Restore the
+        # pre-edit snapshot and abort instead.
+        _restore_config(config, backup)
+        print(
+            f"error: the editor removed {config}; the previous config was restored",
+            file=sys.stderr,
+        )
+        return 1
+    if current == backup:
+        print("config unchanged - nothing to apply")
+        return 0
     return _apply_config(config, layout, backup)

@@ -40,7 +40,7 @@ class LiveLinesTest(unittest.TestCase):
         mod = load_run_pipeline()
         live = mod.LiveLines(total_steps=15, tty=True)
         live.set_step("study", 3)
-        with mock.patch.object(sys.modules["live_lines"], "stamp", return_value="07:51:37"):
+        with mock.patch.object(sys.modules["table_format"], "stamp", return_value="07:51:37"):
             line = live.add_event("planner", "", _step_finish())
             # TTY: the event only updates the block.
             self.assertIsNone(line)
@@ -48,7 +48,7 @@ class LiveLinesTest(unittest.TestCase):
         self.assertEqual(len(block), 1)
         self.assertEqual(
             block[0],
-            "[07:51:37] [planner] \u280b [study 4/15] cache 40 · reasoning 30 · "
+            "[07:51:37] [planner]         \u280b [study 4/15] cache 40 · reasoning 30 · "
             "input 10 · output 20 · price $0.50",
         )
 
@@ -99,7 +99,7 @@ class LiveLinesTest(unittest.TestCase):
         live.set_step("study", 3)
         live.add_event("planner", "", _step_finish(input=10, cache_read=40, cost=0.5))
         live.add_event("planner", "", _step_finish(input=5, cache_read=60, cost=0.25))
-        fixed = live.fix_all()
+        fixed = live.pin_all()
         self.assertEqual(len(fixed), 1)
         self.assertIn("cache 100", fixed[0])
         self.assertIn("input 15", fixed[0])
@@ -113,13 +113,13 @@ class LiveLinesTest(unittest.TestCase):
         self.assertIn("cache 102", block[0])
         self.assertIn("price $0.76", block[0])
 
-    def test_fix_all_fixes_and_reopens_the_block(self) -> None:
+    def test_pin_all_fixes_and_reopens_the_block(self) -> None:
         mod = load_run_pipeline()
         live = mod.LiveLines(tty=True)
         live.set_step("study", 3)
         live.add_event("planner", "", _step_finish())
         self.assertEqual(len(live.block()), 1)
-        self.assertEqual(len(live.fix_all()), 1)
+        self.assertEqual(len(live.pin_all()), 1)
         # The block reopens with the harness line (the step has no events
         # anymore) — never with a stale process line.
         block = live.block()
@@ -201,18 +201,18 @@ class LiveLinesTest(unittest.TestCase):
         mod = load_run_pipeline()
         live = mod.LiveLines(total_steps=15, tty=False)
         live.set_step("study", 3)
-        with mock.patch.object(sys.modules["live_lines"], "stamp", return_value="07:51:37"):
+        with mock.patch.object(sys.modules["table_format"], "stamp", return_value="07:51:37"):
             line = live.add_event("planner", "", _step_finish())
         self.assertIsNotNone(line)
         self.assertEqual(
             line,
-            "[07:51:37] [planner] [study 4/15] cache 40 · reasoning 30 · "
+            "[07:51:37] [planner]         [study 4/15] cache 40 · reasoning 30 · "
             "input 10 · output 20 · price $0.50",
         )
         # No block and no fixed lines in non-TTY mode: every event already
         # printed its own plain line.
         self.assertEqual(live.block(), [])
-        self.assertEqual(live.fix_all(), [])
+        self.assertEqual(live.pin_all(), [])
 
     def test_non_tty_sums_continue_across_events(self) -> None:
         mod = load_run_pipeline()
@@ -245,7 +245,7 @@ class LiveLinesTest(unittest.TestCase):
         self.assertNotIn("price", line)
 
     def test_non_tty_reopens_line_with_current_step_label_after_fix(self) -> None:
-        # Regression (bug fix): fix_all on a non-TTY must clear _active, so
+        # Regression (bug fix): pin_all on a non-TTY must clear _active, so
         # the next event re-opens the process line and re-captures the step
         # label — a stale _active would keep every later line labelled with
         # the completed step forever.
@@ -253,7 +253,7 @@ class LiveLinesTest(unittest.TestCase):
         live = mod.LiveLines(total_steps=3, tty=False)
         live.set_step("study", 0)
         live.add_event("planner", "", _step_finish())
-        live.fix_all("study")
+        live.pin_all("study")
         live.set_step("research", 1)
         line = live.add_event("planner", "", _step_finish())
         self.assertIsNotNone(line)
@@ -275,7 +275,7 @@ class SpinnerTest(unittest.TestCase):
         live = mod.LiveLines(total_steps=15, tty=True)
         live.set_step("study", 3)
         line = live.block()[0]
-        m = re.search(r"\[harness\] (.) \[study 4/15\]", line)
+        m = re.search(r"\[harness\] +(\S) \[study 4/15\]", line)
         assert m is not None
         self.assertIn(m.group(1), sys.modules["live_lines"].SPINNER_FRAMES)
 
@@ -284,7 +284,7 @@ class SpinnerTest(unittest.TestCase):
         live = mod.LiveLines(total_steps=15, tty=True)
         live.set_step("study", 3)
         live.add_event("planner", "", _step_finish())
-        m = re.search(r"\[planner\] (.) \[study 4/15\]", live.block()[0])
+        m = re.search(r"\[planner\] +(\S) \[study 4/15\]", live.block()[0])
         assert m is not None
         self.assertIn(m.group(1), sys.modules["live_lines"].SPINNER_FRAMES)
 
@@ -306,7 +306,7 @@ class SpinnerTest(unittest.TestCase):
             live.set_step("study", 3)
             shown = []
             for _ in range(6):
-                m = re.search(r"\[harness\] (.) \[study", live.block()[0])
+                m = re.search(r"\[harness\] +(\S) \[study", live.block()[0])
                 assert m is not None
                 shown.append(spinner.index(m.group(1)))
         # < 0.25 s: same frame; each 0.25 s boundary advances exactly one.
@@ -324,7 +324,7 @@ class SpinnerTest(unittest.TestCase):
         ):
             live = mod.LiveLines(tty=True)
             live.set_step("study", 3)
-            m = re.search(r"\[harness\] (.) \[study", live.block()[0])
+            m = re.search(r"\[harness\] +(\S) \[study", live.block()[0])
             assert m is not None
             self.assertEqual(m.group(1), spinner[4])
 
@@ -339,7 +339,7 @@ class SpinnerTest(unittest.TestCase):
         ):
             live = mod.LiveLines(tty=True)
             live.set_step("study", 3)
-            m = re.search(r"\[harness\] (.) \[study", live.block()[0])
+            m = re.search(r"\[harness\] +(\S) \[study", live.block()[0])
             assert m is not None
             self.assertEqual(m.group(1), spinner[0])
 
@@ -352,11 +352,12 @@ class HarnessLineTest(unittest.TestCase):
         mod = load_run_pipeline()
         live = mod.LiveLines(total_steps=15, tty=True)
         live.set_step("study", 3)
-        with mock.patch.object(sys.modules["live_lines"], "stamp", return_value="07:51:37"):
+        with mock.patch.object(sys.modules["table_format"], "stamp", return_value="07:51:37"):
             block = live.block()
         self.assertEqual(len(block), 1)
-        # No token section on the harness line.
-        self.assertEqual(block[0], "[07:51:37] [harness] \u280b [study 4/15]")
+        # No token section on the harness line; the role column is padded to
+        # 17 and the spinner column is drawn on a TTY (ADR-0016).
+        self.assertEqual(block[0], "[07:51:37] [harness]         \u280b [study 4/15]")
 
     def test_harness_line_without_step_omitted(self) -> None:
         # No known step yet (run id not discovered): nothing to draw.
@@ -388,8 +389,8 @@ class HarnessLineTest(unittest.TestCase):
         self.assertNotIn("[harness]", block[0])
         self.assertNotIn("[harness]", block[1])
 
-    def test_fix_all_fixes_harness_line_too(self) -> None:
-        # The harness line is part of the block: fix_all keeps it as history
+    def test_pin_all_fixes_harness_line_too(self) -> None:
+        # The harness line is part of the block: pin_all keeps it as history
         # and the next step shows its own line immediately (window without a
         # line <= one monitor tick, ADR-0012). The harness is rendered
         # before the fix, like the monitor's per-tick redraw.
@@ -397,7 +398,7 @@ class HarnessLineTest(unittest.TestCase):
         live = mod.LiveLines(total_steps=15, tty=True)
         live.set_step("study", 3)
         self.assertIn("[harness]", live.block()[0])
-        fixed = live.fix_all()
+        fixed = live.pin_all()
         self.assertEqual(len(fixed), 1)
         self.assertIn("[harness]", fixed[0])
         self.assertIn("[harness]", live.block()[0])
@@ -406,7 +407,7 @@ class HarnessLineTest(unittest.TestCase):
 
     def test_fixed_harness_keeps_completed_step_label(self) -> None:
         # Regression (bug fix): the engine advanced current_step_id before
-        # the completion is polled, so fix_all must render the completed
+        # the completion is polled, so pin_all must render the completed
         # step's harness with the step it was rendered under — never with
         # the next step's label, and never twice (once fixed, once live).
         mod = load_run_pipeline()
@@ -414,7 +415,7 @@ class HarnessLineTest(unittest.TestCase):
         live.set_step("study", 0)
         self.assertIn("[study 1/2]", live.block()[0])
         live.set_step("research", 1)
-        fixed = live.fix_all("study")
+        fixed = live.pin_all("study")
         self.assertEqual(len(fixed), 1)
         self.assertIn("[harness]", fixed[0])
         self.assertIn("[study 1/2]", fixed[0])
@@ -433,7 +434,7 @@ class HarnessLineTest(unittest.TestCase):
         live.set_step("study", 0)
         live.add_event("planner", "", _step_finish())
         live.set_step("research", 1)
-        fixed = live.fix_all("study")
+        fixed = live.pin_all("study")
         self.assertEqual(len(fixed), 1)
         self.assertIn("[planner]", fixed[0])
         self.assertIn("[study 1/2]", fixed[0])
@@ -452,15 +453,15 @@ class HarnessLineTest(unittest.TestCase):
         live.block()
         live.set_step("research", 1)
         live.block()
-        self.assertEqual(live.fix_all("study"), [])
+        self.assertEqual(live.pin_all("study"), [])
         self.assertIn("[research 2/2]", live.block()[0])
 
-    def test_fix_all_fixes_process_lines(self) -> None:
+    def test_pin_all_fixes_process_lines(self) -> None:
         mod = load_run_pipeline()
         live = mod.LiveLines(total_steps=15, tty=True)
         live.set_step("study", 3)
         live.add_event("planner", "", _step_finish())
-        fixed = live.fix_all()
+        fixed = live.pin_all()
         self.assertEqual(len(fixed), 1)
         self.assertIn("[planner]", fixed[0])
         self.assertNotIn("[harness]", fixed[0])
@@ -468,13 +469,15 @@ class HarnessLineTest(unittest.TestCase):
     def test_non_tty_step_line_once_per_step_change(self) -> None:
         mod = load_run_pipeline()
         live = mod.LiveLines(total_steps=15, tty=False)
-        with mock.patch.object(sys.modules["live_lines"], "stamp", return_value="07:51:37"):
+        with mock.patch.object(sys.modules["table_format"], "stamp", return_value="07:51:37"):
             self.assertTrue(live.set_step("study", 3))
-            self.assertEqual(live.harness_step_line(), "[07:51:37] [harness] [study 4/15]")
+            self.assertEqual(live.harness_step_line(), "[07:51:37] [harness]         [study 4/15]")
             # Same step: no new line; the next step gets its own.
             self.assertFalse(live.set_step("study", 3))
             self.assertTrue(live.set_step("research", 4))
-            self.assertEqual(live.harness_step_line(), "[07:51:37] [harness] [research 5/15]")
+            self.assertEqual(
+                live.harness_step_line(), "[07:51:37] [harness]         [research 5/15]"
+            )
 
     def test_set_step_reports_only_non_empty_changes(self) -> None:
         mod = load_run_pipeline()
@@ -613,9 +616,9 @@ class CursorUsageTest(unittest.TestCase):
 
     def test_malformed_result_event_does_not_disable_step_finish_fallback(self) -> None:
         # Regression (bug fix): a malformed result-style event is skipped
-        # WITHOUT flipping prefer_result — the step_finish fallback of a
-        # later event must keep counting. One broken event must not
-        # silently suppress all later token display.
+        # WITHOUT flipping disable_step_finish_fallback — the step_finish
+        # fallback of a later event must keep counting. One broken event
+        # must not silently suppress all later token display.
         mod = load_run_pipeline()
         live = mod.LiveLines(tty=True, backend="cursor")
         live.add_event("planner", "", {"type": "result", "usage": {"inputTokens": "abc"}})

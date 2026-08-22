@@ -31,9 +31,13 @@ class UninstallTest(InstallerTestCase):
             ".config/opencode/scripts/run-agent-cursor.sh",
             ".config/opencode/scripts/prompt_subst.sh",
             ".config/opencode/scripts/run-pipeline.py",
-            # run-pipeline.py is split one class per file: the modules are
+            # run-pipeline.py is split one concern per file: the modules are
             # removed together with the wrapper.
-            ".config/opencode/scripts/_run_pipeline_common.py",
+            ".config/opencode/scripts/engine_output.py",
+            ".config/opencode/scripts/feedback_gate.py",
+            ".config/opencode/scripts/display.py",
+            ".config/opencode/scripts/run_state.py",
+            ".config/opencode/scripts/workflow_info.py",
             ".config/opencode/scripts/run_id_discoverer.py",
             ".config/opencode/scripts/step_result_poller.py",
             ".config/opencode/scripts/agent_log_tailer.py",
@@ -47,6 +51,9 @@ class UninstallTest(InstallerTestCase):
             ".config/opencode/scripts/notify.py",
             ".config/opencode/scripts/feedback_editor.py",
             ".config/opencode/scripts/pty_spawn.py",
+            ".config/opencode/scripts/wrapper_cli.py",
+            ".config/opencode/scripts/stdout_reader.py",
+            ".config/opencode/scripts/run_finish.py",
             ".config/opencode/scripts/editor.py",
             ".config/opencode/scripts/victory.wav",
             ".config/opencode/scripts/save_adr.py",
@@ -66,7 +73,7 @@ class UninstallTest(InstallerTestCase):
         # The step scripts (one per shell step) and the legacy launcher
         # leftovers from the pre-pip model are cleaned up too.
         self.assertEqual(self.install(), 0)
-        (self.home / ".local/bin").mkdir(parents=True)
+        (self.home / ".local/bin").mkdir(parents=True, exist_ok=True)
         for name in ("modus-operandi", "editor.py", "edit_command.py"):
             (self.home / ".local/bin" / name).write_text("legacy", encoding="utf-8")
         (self.home / ".local/bin" / "exceptions").mkdir()
@@ -80,11 +87,11 @@ class UninstallTest(InstallerTestCase):
             ".config/opencode/scripts/review-task-id.sh",
             ".config/opencode/scripts/adr-task-id.sh",
             ".config/opencode/scripts/implement-retry.sh",
-            ".config/opencode/scripts/sync-adr.sh",
             ".config/opencode/scripts/clear-feedback.sh",
             ".config/opencode/scripts/implement-pass-check.sh",
             ".config/opencode/scripts/pass-check.sh",
             ".config/opencode/scripts/validate_inputs.py",
+            ".config/opencode/scripts/check_plan_deviation.py",
             ".local/bin/modus-operandi",
             ".local/bin/editor.py",
             ".local/bin/edit_command.py",
@@ -99,7 +106,7 @@ class UninstallTest(InstallerTestCase):
         # while legacy non-pip leftovers are still cleaned up.
         self.assertEqual(self.install(), 0)
         bin_dir = self.home / ".local" / "bin"
-        bin_dir.mkdir(parents=True)
+        bin_dir.mkdir(parents=True, exist_ok=True)
         launcher = bin_dir / "modus-operandi"
         launcher.write_text("pip console script", encoding="utf-8")
         (bin_dir / "editor.py").write_text("legacy", encoding="utf-8")
@@ -121,6 +128,51 @@ class UninstallTest(InstallerTestCase):
         self.assertFalse((bin_dir / "editor.py").exists())
         self.assertIn("kept the pip console scripts", sink.getvalue())
         self.assertIn("pip uninstall modus-operandi", sink.getvalue())
+
+    def test_uninstall_keeps_pip_script_recorded_with_relative_path(self) -> None:
+        # Real pip RECORD entries are stored relative to the dist-info dir
+        # (e.g. ../../../bin/modus-operandi); locate() joins them WITHOUT
+        # resolving the .. components, so the ownership check must normalize
+        # both sides before comparing — otherwise the pip console script is
+        # mistaken for a legacy leftover and deleted.
+        self.assertEqual(self.install(), 0)
+        bin_dir = self.home / ".local" / "bin"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        launcher = bin_dir / "modus-operandi"
+        launcher.write_text("pip console script", encoding="utf-8")
+
+        recorded = mock.Mock()
+        recorded.locate.return_value = str(
+            self.home
+            / ".local/lib/python3.12/site-packages/modus_operandi-0.1.0.dist-info"
+            / "../../../../bin/modus-operandi"
+        )
+        dist = mock.Mock()
+        dist.files = [recorded]
+        sink = io.StringIO()
+        with (
+            mock.patch(
+                "modus_operandi.uninstall.importlib.metadata.distribution", return_value=dist
+            ),
+            stdout(sink),
+        ):
+            rc, _ = self.run_main(["--home", str(self.home), "--uninstall", "--yes"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(launcher.exists())
+        self.assertIn("kept the pip console scripts", sink.getvalue())
+
+    def test_uninstall_removes_legacy_split_modules(self) -> None:
+        # A machine upgraded from the released 0.1.0 package still has
+        # scripts/_run_pipeline_common.py on disk (the pre-split module,
+        # replaced by the five one-concern modules): uninstall must remove
+        # it too, or "removes every modus-operandi-owned file" would be a
+        # lie forever.
+        self.assertEqual(self.install(), 0)
+        legacy = self.home / ".config/opencode/scripts/_run_pipeline_common.py"
+        legacy.write_text("legacy split module\n", encoding="utf-8")
+        rc, _ = self.run_main(["--home", str(self.home), "--uninstall", "--yes"])
+        self.assertEqual(rc, 0)
+        self.assertFalse(legacy.exists())
 
     def test_uninstall_prompt_declined_removes_nothing(self) -> None:
         self.assertEqual(self.install(), 0)

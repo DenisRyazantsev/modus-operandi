@@ -189,11 +189,13 @@ class MainTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("config applied", out.getvalue())
 
-    def test_edit_bootstrap_failure_aborts(self) -> None:
-        # No opencode on PATH: the real bootstrap fails and the editor is
-        # never launched (the script touches a marker file on execution).
+    def test_edit_works_without_backend_cli(self) -> None:
+        # The edit flow never runs the backend CLI: a user who uninstalled
+        # opencode (or is switching backends) can still edit the config and
+        # re-render the artifacts — the prerequisite check is skipped, the
+        # editor runs and the config is applied.
         mod = self.mod
-        self._write_editor('#!/bin/sh\ntouch "$1.ran"\n')
+        self._write_editor("#!/bin/sh\nexit 0\n")
         with (
             env(
                 {
@@ -202,12 +204,56 @@ class MainTest(unittest.TestCase):
                     "EDITOR": "editor",
                 }
             ),
-            stderr(io.StringIO()) as err,
+            stdout(io.StringIO()) as out,
         ):
             rc = mod.main(["edit"])
-        self.assertEqual(rc, 1)
-        self.assertIn("opencode not found", err.getvalue())
-        self.assertFalse(Path(mod.CONFIG + ".ran").exists())
+        self.assertEqual(rc, 0)
+        self.assertIn("config unchanged", out.getvalue())
+        self.assertTrue(mod._LAYOUT["install_version"].exists())
+
+    def test_edit_opens_despite_stale_marker_with_broken_config(self) -> None:
+        # Regression (bug fix): a stale/missing install marker with an
+        # INVALID config.yml must not gate the editor — `edit` exists to fix
+        # a broken config. The bootstrap render fails validation, but the
+        # editor still opens; a fixed config is applied (and the marker
+        # recorded) when the editor closes.
+        mod = self.mod
+        self._write_editor(
+            "#!/bin/sh\n"
+            "cat > \"$1\" <<'CFG'\n"
+            "backend: opencode\n"
+            "opencode:\n"
+            "  models:\n"
+            "    planner:\n"
+            "      provider: opencode-go\n"
+            "      model: deepseek-v4-pro\n"
+            "      reasoning: max\n"
+            "    executor:\n"
+            "      provider: opencode-go\n"
+            "      model: deepseek-v4-flash\n"
+            "      reasoning: max\n"
+            "workflow: {}\n"
+            "CFG\n"
+        )
+        config = Path(mod.CONFIG)
+        config.parent.mkdir(parents=True, exist_ok=True)
+        # Broken YAML (unparseable) and no install marker at all.
+        config.write_text("backend: [unclosed\n", encoding="utf-8")
+        with (
+            env(
+                {
+                    "XDG_CONFIG_HOME": self.xdg,
+                    "PATH": self._path("opencode", "python3"),
+                    "EDITOR": "editor",
+                }
+            ),
+            stdout(io.StringIO()) as out,
+        ):
+            rc = mod.main(["edit"])
+        self.assertEqual(rc, 0)
+        self.assertIn("config applied", out.getvalue())
+        self.assertIn("backend: opencode", config.read_text(encoding="utf-8"))
+        self.assertTrue(mod._LAYOUT["install_version"].exists())
 
     def test_uninstall_skips_bootstrap_and_passes_yes(self) -> None:
         # Real uninstall: the rendered files are removed from the temp config

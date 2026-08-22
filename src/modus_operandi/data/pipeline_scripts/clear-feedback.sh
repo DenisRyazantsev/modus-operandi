@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# clear-feedback.sh - adr-pipeline adr-feedback-clear step.
+# clear-feedback.sh - task-pipeline feedback-clear step.
 #
 # Removes the revise-gate feedback file after the planner applied it. The
 # workflow never embeds shell logic (CONTRIBUTING.md), so even this single

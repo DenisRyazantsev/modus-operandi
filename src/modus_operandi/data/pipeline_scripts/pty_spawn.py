@@ -1,12 +1,14 @@
 """pty/terminal plumbing for the run-pipeline.py wrapper.
 
 One responsibility: open the pty, disable its echo, spawn specify on the
-slave end and forward terminal input into the master end in the background.
-run_pipeline.py only consumes the returned handles.
+slave end and forward terminal input into the master end in the background,
+and release the pty again (stop_forwarding). run_pipeline.py only consumes
+the returned handles.
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
 import pty
 import select
@@ -27,27 +29,59 @@ def forward_terminal_input(
     it (pause.set()) while the feedback editor is open so the user's
     keystrokes reach only the editor. Exits on terminal EOF or when stop is
     set.
+
+    The source is read as raw bytes on its fd, never through a blocking
+    readline(): a line read would sit blocked mid-line once a partial line
+    was typed, ignoring pause/stop until the next completed line — the
+    forwarding thread would then swallow keystrokes the user typed into
+    the feedback editor and forward them to the pty, where the gate's
+    input() could read them as an unintended answer. Chunks are forwarded
+    as they arrive; the pty line discipline buffers them until the
+    newline, so the gate still reads whole lines.
     """
+    try:
+        fd = source.fileno()
+    except (OSError, ValueError):
+        return
     while not stop.is_set():
         if pause.is_set():
             time.sleep(0.05)
             continue
         try:
-            readable, _, _ = select.select([source], [], [], 0.1)
+            readable, _, _ = select.select([fd], [], [], 0.1)
         except (OSError, ValueError):
             return
         if not readable:
             continue
         try:
-            line = source.readline()
+            chunk = os.read(fd, 4096)
         except (OSError, ValueError):
             return
-        if not line:
+        if not chunk:
             return  # terminal EOF: nothing more to forward
         try:
-            os.write(master_fd, line.encode("utf-8"))
+            os.write(master_fd, chunk)
         except (OSError, ValueError):
             return
+
+
+def stop_forwarding(
+    master_fd: int | None,
+    forward_stop: threading.Event,
+    forward_thread: threading.Thread | None,
+) -> None:
+    """Stop stdin forwarding and release the pty before reaping the child.
+
+    The forward thread would otherwise keep writing into the pty while the
+    wrapper exits, so it is stopped and joined first; the master fd is
+    closed best-effort (a pty-less non-TTY run passes None for both).
+    """
+    forward_stop.set()
+    if master_fd is not None:
+        assert forward_thread is not None
+        forward_thread.join(timeout=1)
+        with contextlib.suppress(OSError):
+            os.close(master_fd)
 
 
 def set_pty_no_echo(fd: int) -> None:
@@ -68,7 +102,7 @@ def set_pty_no_echo(fd: int) -> None:
         pass
 
 
-def _spawn_specify(
+def spawn_specify(
     specify_cmd: list[str], env: dict[str, str]
 ) -> tuple[
     subprocess.Popen[str], int | None, threading.Event, threading.Event, threading.Thread | None

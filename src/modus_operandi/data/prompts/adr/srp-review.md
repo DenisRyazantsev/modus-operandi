@@ -36,3 +36,5 @@ do not grow a new concern inside an existing monolith.
 Write @STATE_DIR@/tasks/current/srp-review-@N@.md with the first line exactly
 'SRP: PASS' or 'SRP: FIX' followed by actionable findings. Each finding must
 name the file and propose a concrete split (which functions/classes go where).
+
+Evaluate the code against the acceptance criteria in @STATE_DIR@/tasks/current/adr.md only. plan.md is a soft document: deviations from the plan are not findings when the acceptance criteria hold.

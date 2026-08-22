@@ -40,7 +40,7 @@ TOKEN_FIELD_KEYS: dict[str, tuple[str, ...]] = {
 
 
 def event_usage(
-    event: dict[str, Any], prefer_result: bool = False
+    event: dict[str, Any], disable_step_finish_fallback: bool = False
 ) -> dict[str, int | float] | None:
     """Parse the token/cost fields of one agent-log event.
 
@@ -53,11 +53,12 @@ def event_usage(
     emits one shape per event, and a nested `usage` object, when present,
     is taken as the whole usage — the flat and step_finish branches fire
     only when there is no `usage` key at all, because mixing the shapes of
-    one event would double-count the same tokens. `prefer_result` (True
-    once the task's logs have shown a result-style event) additionally
-    disables the `step_finish` fallback: old cursor versions never emit
-    result-style usage and new ones never emit `step_finish`, so a
-    transitional build emitting both must not double-count (bug fix).
+    one event would double-count the same tokens.
+    `disable_step_finish_fallback` (True once the task's logs have shown a
+    result-style event) disables the `step_finish` fallback: old cursor
+    versions never emit result-style usage and new ones never emit
+    `step_finish`, so a transitional build emitting both must not
+    double-count (bug fix).
     """
     usage = event.get("usage")
     if isinstance(usage, dict):
@@ -71,7 +72,7 @@ def event_usage(
                 flat[name] = event[name]
     if flat:
         return _parse_usage(flat)
-    if not prefer_result and event.get("type") == "step_finish":
+    if not disable_step_finish_fallback and event.get("type") == "step_finish":
         part = event.get("part") or {}
         if not isinstance(part, dict):
             raise ValueError("non-dict part")
@@ -94,9 +95,10 @@ def event_usage(
 def is_result_style(event: dict[str, Any]) -> bool:
     """True when the event carries usage in a result-style shape — a
     `usage` object (valid or malformed) or top-level token fields — rather
-    than the opencode/old-cursor `step_finish` fallback. The callers flip
-    `prefer_result` once a task's logs have shown the modern shape, so a
-    transitional build emitting both shapes cannot double-count (bug fix).
+    than the opencode/old-cursor `step_finish` fallback. The callers pass
+    `disable_step_finish_fallback` once a task's logs have shown the modern
+    shape, so a transitional build emitting both shapes cannot double-count
+    (bug fix).
     """
     if event.get("usage") is not None:
         return True

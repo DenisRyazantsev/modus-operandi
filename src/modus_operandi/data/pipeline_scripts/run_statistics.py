@@ -18,7 +18,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from _run_pipeline_common import fmt_duration, fmt_thousands
+from display import fmt_duration, fmt_thousands
 from latency_table import print_latency_table
 from usage_parser import event_usage, is_result_style
 
@@ -27,10 +27,9 @@ def read_session_ids(state_dir: Path) -> dict[str, str]:
     """Map role -> session id from <state_dir>/sessions-<task-id>.json.
 
     The task id is taken from the <state_dir>/tasks/current symlink that the
-    workflow's generate-task-id step maintains; a missing or broken symlink
-    yields no ids (Path.resolve() never raises and always yields a final
-    name here, so the sessions-file read below simply fails). Only roles
-    with a non-empty id are returned.
+    workflow's generate-task-id step maintains; a missing or looped symlink
+    yields no ids — the try/except below turns any resolve/read failure
+    into an empty map. Only roles with a non-empty id are returned.
     """
     try:
         task_id = current_task_id(state_dir)
@@ -89,6 +88,26 @@ def export_session_info(session_id: str) -> dict[str, Any] | None:
     return None
 
 
+def _token_value(value: Any) -> int:
+    """One token field of an export as an int, 0 when not numeric.
+
+    export_session_info validates only that the export parses as JSON with
+    a dict `info`; the token fields themselves are unvalidated, and a
+    non-numeric value (a string, a nested object — plausible under
+    opencode schema drift) must degrade to zero like every other
+    missing-data path, never raise out of the statistics (the module
+    contract: "the wrapper never fails here"). Bools are rejected
+    explicitly (bool is an int subclass; config.py's validation uses the
+    same type() is not int distinction), so a JSON `true` token field
+    counts as 0, not 1.
+    """
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    return 0
+
+
 def collect_usage(state_dir: Path, backend: str = "opencode") -> dict[str, int | float]:
     """Aggregate token usage and cost across the planner and executor roles.
 
@@ -120,13 +139,13 @@ def collect_usage(state_dir: Path, backend: str = "opencode") -> dict[str, int |
             continue
         tokens = info.get("tokens")
         if isinstance(tokens, dict):
-            totals["input"] += int(tokens.get("input") or 0)
-            totals["output"] += int(tokens.get("output") or 0)
-            totals["reasoning"] += int(tokens.get("reasoning") or 0)
+            totals["input"] += _token_value(tokens.get("input"))
+            totals["output"] += _token_value(tokens.get("output"))
+            totals["reasoning"] += _token_value(tokens.get("reasoning"))
             cache = tokens.get("cache")
             if isinstance(cache, dict):
-                totals["cache_read"] += int(cache.get("read") or 0)
-                totals["cache_write"] += int(cache.get("write") or 0)
+                totals["cache_read"] += _token_value(cache.get("read"))
+                totals["cache_write"] += _token_value(cache.get("write"))
         cost = info.get("cost")
         if isinstance(cost, (int, float)):
             totals["cost"] += float(cost)
@@ -182,7 +201,7 @@ def collect_cursor_usage(state_dir: Path) -> dict[str, int | float]:
         # result-style event actually PARSES — a malformed or
         # unrecognized-shape event must not suppress the step_finish tokens
         # of the rest of the file (bug fix).
-        prefer_result = False
+        disable_step_finish_fallback = False
         for event in events:
             if not is_result_style(event):
                 continue
@@ -191,11 +210,11 @@ def collect_cursor_usage(state_dir: Path) -> dict[str, int | float]:
             except (AttributeError, TypeError, ValueError):
                 continue
             if usage is not None:
-                prefer_result = True
+                disable_step_finish_fallback = True
                 break
         for event in events:
             try:
-                usage = event_usage(event, prefer_result)
+                usage = event_usage(event, disable_step_finish_fallback)
             except (AttributeError, TypeError, ValueError):
                 continue
             if usage is None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from _run_pipeline_common import existing_run_ids
+from run_state import existing_run_ids
 
 
 class RunIdDiscoverer:

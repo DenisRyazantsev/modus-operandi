@@ -2,19 +2,21 @@
 
 No template system: the installed scripts are plain static files copied from
 the package data (``data/pipeline_scripts/``), the agents are written as
-data (frontmatter values are concatenated into the markdown), and the
-workflows are generated as data (YAML loaded into a dict, the configurable
-numbers written in, dumped back). Nothing is substituted into text with
-placeholders or ``$`` escapes.
+data (frontmatter values are concatenated into the markdown; the role bodies
+live as package data under ``data/roles/``), and the workflows are generated
+as data (YAML loaded into a dict, the configurable numbers written in,
+dumped back). Nothing is substituted into text with placeholders or ``$``
+escapes.
 """
 
-# ruff: noqa: E501  (the agent bodies below are single-line prompt paragraphs)
 from __future__ import annotations
 
 from importlib.resources import files
 from typing import Any
 
-from . import Paths, config, yaml_loader
+import yaml
+
+from . import Paths, config
 
 # The package data root, resolved through importlib.resources so the
 # rendered sources work in an installed wheel (no checkout paths).
@@ -24,31 +26,11 @@ _DATA = files("modus_operandi").joinpath("data")
 # Agents (frontmatter values written as data into the markdown)
 # ---------------------------------------------------------------------------
 
-PLANNER_BODY = """You are the planner and reviewer in a spec-driven "planner -> executor" pipeline. You run on a strong model; the executor runs on a cheap one. You never write application code yourself.
 
-A task is identified by an id `<task-id>`; all its artifacts live under `.workflow/tasks/<task-id>/` inside the project. You are given the concrete paths in each prompt.
-
-## Duties
-
-1. **Write ADRs.** When asked to plan a feature, write the ADR file (`.workflow/tasks/<task-id>/adr.md`) with YAML frontmatter (`slug`, `status: accepted`, `date`) followed by sections: Context, Decision, Alternatives, Consequences, Acceptance Criteria. The frontmatter MUST include a `slug` field: a short 2-3 word summary of the ADR in ENGLISH, lowercase kebab-case (e.g. `slug: prod-validation-splits`). Write it on its own line right after the opening `---`. The pipeline fails if it is missing or empty — do not skip it even when the ADR body is written in Russian. Ground the decision in the described feature, be specific enough for a cheap model to implement without re-asking, and keep it minimal.
-2. **Answer executor questions.** When asked, read `.workflow/tasks/<task-id>/questions.md`. If its first line is exactly `QUESTIONS: PRESENT`, write `.workflow/tasks/<task-id>/answers.md`, answering each question line-by-line in the same order. If the first line is exactly `QUESTIONS: NONE`, write nothing.
-3. **Review.** When asked to review, inspect the current git changes against `.workflow/tasks/<task-id>/adr.md` using `git diff HEAD` (this includes staged changes; run `git status` first to see what changed). Write `.workflow/tasks/<task-id>/review-N.md`, where N is the next number after the existing review files (`review-1.md`, `review-2.md`, ...). The first line must be exactly `VERDICT: PASS` or `VERDICT: FIX`, followed by concrete, actionable findings. Findings must map to acceptance criteria or explicit ADR requirements. The verdict must reflect the implemented code, not the ADR document itself.
-
-Do not implement features. Do not invent requirements beyond the ADR. Prefer your session context over re-reading files you already loaded."""
-
-EXECUTOR_BODY = """You are the executor in a spec-driven "planner -> executor" pipeline. You run on a cheap model; the planner runs on a strong one. You implement features from written artifacts; you do not design architecture on your own.
-
-A task is identified by an id `<task-id>`; all its artifacts live under `.workflow/tasks/<task-id>/` inside the project. You are given the concrete paths in each prompt.
-
-## Duties
-
-1. **Read the plan.** Start from `.workflow/tasks/<task-id>/adr.md`. If `.workflow/tasks/<task-id>/answers.md` exists, read it too.
-2. **Ask when uncertain.** If anything in the plan is ambiguous or underspecified, write `.workflow/tasks/<task-id>/questions.md` whose first line is exactly `QUESTIONS: PRESENT`, followed by numbered questions, then STOP — do not implement anything. If everything is clear, still write `.workflow/tasks/<task-id>/questions.md` with the first line exactly `QUESTIONS: NONE`.
-3. **Implement.** Follow adr.md and answers.md exactly. Prefer minimal, idiomatic changes. Do not add unrequested features.
-4. **Fix findings.** When asked to fix, read the latest `.workflow/tasks/<task-id>/review-N.md` (the highest N) and address only its findings.
-5. **Verify.** Before finishing, run the project's tests/linter if any are present.
-
-Do not re-read the whole project when its context is already in your session. Keep changes scoped to the plan."""
+def _role_body(name: str) -> str:
+    """The role prompt body, read from package data (content as data, never
+    in code — same rule as the prompt files under data/prompts/)."""
+    return _DATA.joinpath("roles", f"{name}.md").read_text(encoding="utf-8")
 
 
 def _agent_markdown(
@@ -92,7 +74,7 @@ def render_agents(cfg: dict[str, Any], paths: Paths) -> None:
             planner["provider"],
             planner["model"],
             planner["reasoning"],
-            PLANNER_BODY,
+            _role_body("planner"),
         ),
         encoding="utf-8",
     )
@@ -103,19 +85,19 @@ def render_agents(cfg: dict[str, Any], paths: Paths) -> None:
             executor["provider"],
             executor["model"],
             executor["reasoning"],
-            EXECUTOR_BODY,
+            _role_body("executor"),
         ),
         encoding="utf-8",
     )
 
 
 def render_role_bodies(paths: Paths) -> None:
-    # The role bodies as plain text next to run-agent.sh, written from the
-    # same constants as the opencode agent files (single source of truth).
+    # The role bodies as plain text next to run-agent.sh, read from the same
+    # package data as the opencode agent files (single source of truth).
     # run-agent.sh prefixes the role body to the FIRST message of a fresh
     # cursor chat; opencode carries the role in the agent files instead.
-    (paths["planner_body"]).write_text(PLANNER_BODY, encoding="utf-8")
-    (paths["executor_body"]).write_text(EXECUTOR_BODY, encoding="utf-8")
+    (paths["planner_body"]).write_text(_role_body("planner"), encoding="utf-8")
+    (paths["executor_body"]).write_text(_role_body("executor"), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -149,11 +131,14 @@ def render_name_task(paths: Paths) -> None:
 
 def render_run_pipeline(paths: Paths) -> None:
     # run-pipeline.py is split one class per file; the modules below must all
-    # be copied together so the installed wrapper stays importable. The path
-    # key of the shared module differs from its filename (leading underscore).
+    # be copied together so the installed wrapper stays importable.
     _install_script("run_pipeline.py", paths["run_pipeline"], executable=True)
     for key, source_name in (
-        ("run_pipeline_common", "_run_pipeline_common.py"),
+        ("engine_output", "engine_output.py"),
+        ("feedback_gate", "feedback_gate.py"),
+        ("display", "display.py"),
+        ("run_state", "run_state.py"),
+        ("workflow_info", "workflow_info.py"),
         ("run_id_discoverer", "run_id_discoverer.py"),
         ("step_result_poller", "step_result_poller.py"),
         ("agent_log_tailer", "agent_log_tailer.py"),
@@ -161,6 +146,7 @@ def render_run_pipeline(paths: Paths) -> None:
         ("buffered_emitter", "buffered_emitter.py"),
         ("live_monitor", "live_monitor.py"),
         ("live_lines", "live_lines.py"),
+        ("table_format", "table_format.py"),
         ("usage_parser", "usage_parser.py"),
         ("config_invocation", "config_invocation.py"),
         ("run_statistics", "run_statistics.py"),
@@ -168,6 +154,9 @@ def render_run_pipeline(paths: Paths) -> None:
         ("notify", "notify.py"),
         ("feedback_editor", "feedback_editor.py"),
         ("pty_spawn", "pty_spawn.py"),
+        ("wrapper_cli", "wrapper_cli.py"),
+        ("stdout_reader", "stdout_reader.py"),
+        ("run_finish", "run_finish.py"),
         # The shared editor resolution, copied next to the wrapper too.
         ("editor", "editor.py"),
     ):
@@ -208,12 +197,12 @@ _STEP_SCRIPTS = {
     "review_task_id": ("review-task-id.sh", True),
     "adr_task_id": ("adr-task-id.sh", True),
     "implement_retry": ("implement-retry.sh", True),
-    "sync_adr_step": ("sync-adr.sh", True),
     "clear_feedback": ("clear-feedback.sh", True),
     "implement_pass_check": ("implement-pass-check.sh", True),
     "pass_check": ("pass-check.sh", True),
     "show_file": ("show-file.sh", True),
     "validate_inputs": ("validate_inputs.py", False),
+    "check_plan_deviation": ("check_plan_deviation.py", False),
 }
 
 
@@ -275,13 +264,9 @@ def _patch_workflow_numbers(data: dict[str, Any], cfg: dict[str, Any]) -> None:
 
 def _generate_workflow(source_name: str, cfg: dict[str, Any]) -> str:
     source = _DATA.joinpath("workflows", f"{source_name}.yml")
-    data = yaml_loader.yaml.safe_load(source.read_text(encoding="utf-8"))
+    data = yaml.safe_load(source.read_text(encoding="utf-8"))
     _patch_workflow_numbers(data, cfg)
-    return str(
-        yaml_loader.yaml.safe_dump(
-            data, allow_unicode=True, sort_keys=False, default_flow_style=False
-        )
-    )
+    return str(yaml.safe_dump(data, allow_unicode=True, sort_keys=False, default_flow_style=False))
 
 
 def render_review_workflow(cfg: dict[str, Any], paths: Paths) -> None:
