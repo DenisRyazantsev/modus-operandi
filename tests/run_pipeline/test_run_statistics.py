@@ -61,8 +61,9 @@ class RunStatisticsTest(unittest.TestCase):
         ):
             self.assertIsNone(mod.export_session_info("p1"))
         # The export writes only garbage (unparseable both attempts).
-        with tempfile.TemporaryDirectory() as tmp, env(
-            export_env(Path(tmp) / "bin", "#!/bin/sh\necho 'not json'\n")
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            env(export_env(Path(tmp) / "bin", "#!/bin/sh\necho 'not json'\n")),
         ):
             self.assertIsNone(mod.export_session_info("p1"))
 
