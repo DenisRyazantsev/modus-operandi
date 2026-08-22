@@ -6,9 +6,9 @@ project directory, without `specify init` required. It delegates to the
 installed run-pipeline.py wrapper with the absolute workflow path, so runs
 keep the timestamps, live step output, run statistics and the victory sound.
 `modus-operandi edit` opens the installed config.yml in your terminal editor and
-validates it on save and close — a valid config is applied, an invalid one is
-rolled back. `modus-operandi uninstall` removes the rendered pipeline files from
-the machine.
+applies it on save and close — a valid config is applied, an invalid one is
+rolled back, an unchanged one is left as-is. `modus-operandi uninstall` removes
+the rendered pipeline files from the machine.
 
 The launcher resolves every installed path at runtime: run-pipeline.py, both
 workflows and config.yml come from the config base directory derived from
@@ -112,8 +112,9 @@ USAGE = """Usage: modus-operandi <subcommand> [args]
 
   modus-operandi edit
       Open the installed config.yml in your terminal editor (VISUAL, then
-      EDITOR, then nano, then vi). On save and close it validates the file: a
-      valid config is applied, an invalid one is rolled back.
+      EDITOR, then nano, then vi). On save and close it validates the file:
+      a valid config is applied, an invalid one is rolled back, and one that
+      was left unchanged is not re-applied.
 
   modus-operandi uninstall [--yes]
       Remove the rendered pipeline files (~/.config/modus-operandi and the

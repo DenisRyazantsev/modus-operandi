@@ -78,7 +78,9 @@ def _run_edit(config: str, layout: Paths) -> int:
     # code does not gate the apply: a user can save a valid edit and still
     # close the editor non-zero (vim :cq, ...), and apply() re-validates the
     # config anyway, rolling back an invalid edit. Only a failure to start
-    # the editor aborts.
+    # the editor aborts. Leaving the editor without changing the file (the
+    # user quit without saving) is detected byte-for-byte against the
+    # pre-edit snapshot and skips the apply entirely.
     editor_cmd = resolve_editor()
     if editor_cmd is None:
         print(
@@ -91,4 +93,13 @@ def _run_edit(config: str, layout: Paths) -> int:
         return 1
     if _launch_editor(editor_cmd + [config]) is None:
         return 1
+    try:
+        current = Path(config).read_bytes()
+    except OSError:
+        # The editor removed the file: treat it as a change so apply() runs
+        # and its validation error restores the snapshot.
+        current = None
+    if current is not None and current == backup:
+        print("config unchanged - nothing to apply")
+        return 0
     return _apply_config(config, layout, backup)
