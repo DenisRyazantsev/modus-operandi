@@ -111,7 +111,12 @@ run_cursor_once() {
   AGENT_PID=$!
   record_agent_pid "$AGENT_PID"
   wait "$AGENT_PID" || rc=$?
-  python3 - "$raw" "$LOG_FILE" <<'PYEOF'
+  # The filter failure is handled explicitly: under `set -euo pipefail` an
+  # unguarded failure would terminate run-agent.sh with a bare python exit
+  # code, and the caller would never see the documented "run-agent: ..."
+  # error path below. `return 1` reaches run_cursor's RC handling, which
+  # prints the friendly message with the full log location.
+  python3 - "$raw" "$LOG_FILE" <<'PYEOF' || { echo "error: cannot filter agent log $raw" >&2; return 1; }
 import json
 import sys
 
