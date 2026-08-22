@@ -34,7 +34,15 @@ repository = "https://github.com/DenisRyazantsev/modus-operandi"
 modus-operandi = "modus_operandi.cli:main"
 
 [dependency-groups]
-dev = ["pytest", "ruff", "mypy", "types-PyYAML"]
+dev = [
+    "pytest~=9.1.1",
+    "ruff~=0.16.4",
+    "mypy~=2.3.1",
+    # types-PyYAML does not follow semver: the version is the targeted
+    # PyYAML version + a typeshed calver (date) suffix, and any stub update
+    # can change type-checking results. Pin exactly.
+    "types-PyYAML==6.0.12.20260815",
+]
 
 [tool.ruff]
 target-version = "py312"
