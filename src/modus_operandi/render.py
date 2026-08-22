@@ -14,7 +14,9 @@ from __future__ import annotations
 from importlib.resources import files
 from typing import Any
 
-from . import Paths, config, yaml_loader
+import yaml
+
+from . import Paths, config
 
 # The package data root, resolved through importlib.resources so the
 # rendered sources work in an installed wheel (no checkout paths).
@@ -254,10 +256,10 @@ def _patch_workflow_numbers(data: dict[str, Any], cfg: dict[str, Any]) -> None:
 
 def _generate_workflow(source_name: str, cfg: dict[str, Any]) -> str:
     source = _DATA.joinpath("workflows", f"{source_name}.yml")
-    data = yaml_loader.yaml.safe_load(source.read_text(encoding="utf-8"))
+    data = yaml.safe_load(source.read_text(encoding="utf-8"))
     _patch_workflow_numbers(data, cfg)
     return str(
-        yaml_loader.yaml.safe_dump(
+        yaml.safe_dump(
             data, allow_unicode=True, sort_keys=False, default_flow_style=False
         )
     )

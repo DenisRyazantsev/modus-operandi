@@ -81,7 +81,7 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     except OSError:
         return {}
     try:
-        import yaml  # installed by the installer (deps.ensure_pyyaml)
+        import yaml  # pyproject.toml declares pyyaml as a package dependency
 
         data = yaml.safe_load(text) or {}
     except Exception:
