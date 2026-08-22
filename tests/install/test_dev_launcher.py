@@ -29,7 +29,9 @@ class DevLauncherTest(InstallerTestCase):
         target = self.home / ".local/bin/modus-operandi"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("#!/bin/sh\necho pip\n", encoding="utf-8")
-        with mock.patch.object(uninstall, "pip_installed_bin", return_value={target}):
+        # pip_installed_bin returns RESOLVED paths (RECORD entries contain
+        # .. components), which is what _render_launcher compares against.
+        with mock.patch.object(uninstall, "pip_installed_bin", return_value={target.resolve()}):
             rc, _ = self.run_main(["--home", str(self.home)])
         self.assertEqual(rc, 0)
         self.assertEqual(target.read_text(encoding="utf-8"), "#!/bin/sh\necho pip\n")

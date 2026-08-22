@@ -101,10 +101,15 @@ def pip_installed_bin(paths: Paths) -> set[Path]:
         return owned
     for entry in dist.files or []:
         try:
-            located = Path(entry.locate())
+            # RECORD entries are stored relative to the dist-info dir (e.g.
+            # ../../../bin/modus-operandi) and locate() joins them WITHOUT
+            # resolving the .. components, so both sides must be normalized
+            # before the comparison — a lexical parent match would never
+            # equal the real ~/.local/bin.
+            located = Path(entry.locate()).resolve()
         except OSError:
             continue
-        if located.parent == paths["user_bin"]:
+        if located.parent == paths["user_bin"].resolve():
             owned.add(located)
     return owned
 
@@ -119,7 +124,7 @@ def do_uninstall(paths: Paths, yes: bool) -> int:
     if not yes:
         ok = prompt.confirm(
             f"remove {paths['config_dir']} (including your config.yml) and "
-            f"modus-operandi files from {paths['agents'].parent.parent}? [y/N] "
+            f"modus-operandi files from {paths['agents'].parent}? [y/N] "
         )
         if not ok:
             print("aborted")
@@ -143,7 +148,7 @@ def do_uninstall(paths: Paths, yes: bool) -> int:
             removed.append(str(legacy))
     for name in _LEGACY_BIN_NAMES:
         legacy = paths["user_bin"] / name
-        if legacy in pip_owned:
+        if legacy.resolve() in pip_owned:
             # The live console script of the installed package: pip uninstall
             # removes it together with the wheel; deleting it here would
             # leave the pip metadata pointing at a missing file.

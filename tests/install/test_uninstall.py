@@ -126,6 +126,38 @@ class UninstallTest(InstallerTestCase):
         self.assertIn("kept the pip console scripts", sink.getvalue())
         self.assertIn("pip uninstall modus-operandi", sink.getvalue())
 
+    def test_uninstall_keeps_pip_script_recorded_with_relative_path(self) -> None:
+        # Real pip RECORD entries are stored relative to the dist-info dir
+        # (e.g. ../../../bin/modus-operandi); locate() joins them WITHOUT
+        # resolving the .. components, so the ownership check must normalize
+        # both sides before comparing — otherwise the pip console script is
+        # mistaken for a legacy leftover and deleted.
+        self.assertEqual(self.install(), 0)
+        bin_dir = self.home / ".local" / "bin"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        launcher = bin_dir / "modus-operandi"
+        launcher.write_text("pip console script", encoding="utf-8")
+
+        recorded = mock.Mock()
+        recorded.locate.return_value = str(
+            self.home
+            / ".local/lib/python3.12/site-packages/modus_operandi-0.1.0.dist-info"
+            / "../../../../bin/modus-operandi"
+        )
+        dist = mock.Mock()
+        dist.files = [recorded]
+        sink = io.StringIO()
+        with (
+            mock.patch(
+                "modus_operandi.uninstall.importlib.metadata.distribution", return_value=dist
+            ),
+            stdout(sink),
+        ):
+            rc, _ = self.run_main(["--home", str(self.home), "--uninstall", "--yes"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(launcher.exists())
+        self.assertIn("kept the pip console scripts", sink.getvalue())
+
     def test_uninstall_removes_legacy_split_modules(self) -> None:
         # A machine upgraded from the released 0.1.0 package still has
         # scripts/_run_pipeline_common.py on disk (the pre-split module,

@@ -111,9 +111,20 @@ class HasChangesTest(RealGitCase):
         with cwd(self.repo):
             self.assertTrue(check_implementation.has_changes("architecture")[0])
 
-    def test_diff_error_is_reported(self) -> None:
-        # No git repository at all: the real git diff fails with 128.
+    def test_unborn_head_repo_with_no_files_reports_no_changes(self) -> None:
+        # A fresh repo (git init, zero commits) has no HEAD: the empty-tree
+        # fallback turns the previously-failing `git diff HEAD` (exit 128)
+        # into a real diff against the empty tree, so an untouched repo
+        # reports no changes instead of a git error.
         with cwd(self.repo):
+            self.assertEqual(
+                check_implementation.has_changes("architecture"), (False, "no changes")
+            )
+
+    def test_diff_error_is_reported(self) -> None:
+        # No git repository at all (the temp root, not the initialized
+        # subdir): the real git diff fails and the failure is reported.
+        with cwd(Path(self.tmp.name)):
             changes, summary = check_implementation.has_changes("architecture")
         self.assertFalse(changes)
         self.assertIn("git diff failed", summary)
@@ -125,6 +136,28 @@ class HasChangesTest(RealGitCase):
         adr.write_text("x\n", encoding="utf-8")
         with cwd(self.repo):
             self.assertEqual(check_implementation.has_changes("docs"), (False, "no changes"))
+
+    def test_dot_adr_dir_excludes_the_saved_adr(self) -> None:
+        # adr_dir "." is a valid config value; git ls-files prints paths
+        # without a "./" prefix, so the exclusion must normalize the prefix
+        # — a raw "./ADR-" match would count the pipeline's own ADR as
+        # executor work and an empty implementation would pass the guard.
+        self._commit("a.txt")
+        adr = self.repo / "ADR-0001-x.md"
+        adr.write_text("x\n", encoding="utf-8")
+        with cwd(self.repo):
+            self.assertEqual(check_implementation.has_changes("."), (False, "no changes"))
+
+    def test_unborn_head_repo_with_untracked_work_passes(self) -> None:
+        # A fresh repo (git init, zero commits) has no HEAD: `git diff HEAD`
+        # would exit 128 and fail the guard even though the executor created
+        # real untracked files. The empty-tree fallback lets the untracked
+        # files count as changes.
+        (self.repo / "new.py").write_text("x\n", encoding="utf-8")
+        with cwd(self.repo):
+            changes, summary = check_implementation.has_changes("architecture")
+        self.assertTrue(changes)
+        self.assertIn("new file(s)", summary)
 
 
 class ExitCodeTest(RealGitCase):

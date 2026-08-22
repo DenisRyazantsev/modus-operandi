@@ -39,14 +39,22 @@ class StepResultPoller:
 
         state.json is read only if the caller has not already read it: the
         monitor reads it once per tick for current_step_id (the gate check)
-        and passes the same data in.
+        and passes the same data in. Like read_state, the data is treated
+        as untrusted: a malformed `step_results` (a list, a non-dict entry
+        during a truncated engine write) is skipped instead of raising in
+        the monitor thread and silently killing the live status.
         """
         if data is None:
             data = self.read_state()
             if data is None:
                 return []
+        step_results = data.get("step_results")
+        if not isinstance(step_results, dict):
+            return []
         events: list[tuple[str, dict[str, Any]]] = []
-        for step_id, result in data.get("step_results", {}).items():
+        for step_id, result in step_results.items():
+            if not isinstance(result, dict):
+                continue
             if step_id in self._seen_steps or result.get("status") not in TERMINAL_STATUSES:
                 continue
             self._seen_steps.add(step_id)

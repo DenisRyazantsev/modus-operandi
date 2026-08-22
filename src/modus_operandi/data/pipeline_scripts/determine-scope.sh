@@ -17,6 +17,12 @@ STATE_DIR="$1"
 BRANCH_DIFF="$2"
 
 if [ "$BRANCH_DIFF" = "true" ]; then
+  # Outside a git repo every probe below would fail and the review would run
+  # against a meaningless "HEAD" scope — tell the user instead.
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "error: not a git repository - branch-diff review requires git" >&2
+    exit 1
+  fi
   base=""
   if git symbolic-ref -q refs/remotes/origin/HEAD >/dev/null 2>&1; then
     base=$(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/@@')
@@ -30,8 +36,15 @@ if [ "$BRANCH_DIFF" = "true" ]; then
     echo "WARNING: no main/master branch found; reviewing against HEAD"
     base="HEAD"
   fi
-  if git diff "$base" --quiet && [ -z "$(git ls-files --others --exclude-standard)" ]; then
-    echo "error: no changes against $base - nothing to review" >&2
+  if git rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
+    if git diff "$base" --quiet && [ -z "$(git ls-files --others --exclude-standard)" ]; then
+      echo "error: no changes against $base - nothing to review" >&2
+      exit 1
+    fi
+  elif [ -z "$(git ls-files --others --exclude-standard)" ]; then
+    # Unborn HEAD (a fresh repo with no commits): `git diff HEAD` cannot
+    # run, so only untracked files can be changes.
+    echo "error: no changes against HEAD - nothing to review" >&2
     exit 1
   fi
   printf '%s' "$base" > "$STATE_DIR/base-branch.txt"

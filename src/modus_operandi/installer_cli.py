@@ -57,7 +57,7 @@ def _render_launcher(layout: Paths) -> bool:
     foreign content.
     """
     target = layout["user_bin"] / "modus-operandi"
-    if target in uninstall.pip_installed_bin(layout):
+    if target.resolve() in uninstall.pip_installed_bin(layout):
         return False
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(_LAUNCHER.format(src_dir=_REPO_SRC), encoding="utf-8")

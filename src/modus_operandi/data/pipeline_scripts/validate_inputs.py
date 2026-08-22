@@ -48,7 +48,10 @@ def _load_inputs(run_id: str) -> dict[str, Any]:
     try:
         with open(path, encoding="utf-8") as handle:
             data = json.load(handle)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
+        # OSError: unreadable file; ValueError: a truncated or invalid JSON
+        # document. Both are user-facing failures of the same read path and
+        # print a clean error instead of a traceback inside the workflow.
         print("error: cannot read run inputs: " + str(exc), file=sys.stderr)
         sys.exit(1)
     inputs = data.get("inputs")

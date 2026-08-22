@@ -23,6 +23,7 @@ alike (a git error is reported in the printed summary).
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 
@@ -35,7 +36,17 @@ def run_git(args: list[str]) -> subprocess.CompletedProcess[str]:
 def has_changes(adr_dir: str) -> tuple[bool, str]:
     """Return (changes_present, summary) for the current working tree."""
     summary: list[str] = []
-    diff = run_git(["diff", "--quiet", "HEAD"])
+    head = run_git(["rev-parse", "--verify", "--quiet", "HEAD"])
+    if head.returncode == 0:
+        head_spec = "HEAD"
+    else:
+        # Unborn HEAD (a brand-new repo with no commits): `git diff HEAD`
+        # would exit 128 with "ambiguous argument 'HEAD'", so fall back to
+        # the empty tree — real untracked work then counts as changes via
+        # the ls-files check below instead of failing the run.
+        empty_tree = run_git(["hash-object", "-t", "tree", "/dev/null"])
+        head_spec = empty_tree.stdout.strip() if empty_tree.returncode == 0 else "HEAD"
+    diff = run_git(["diff", "--quiet", head_spec])
     if diff.returncode not in (0, 1):
         return False, f"git diff failed: {(diff.stderr or diff.stdout).strip()}"
     if diff.returncode == 1:
@@ -44,8 +55,15 @@ def has_changes(adr_dir: str) -> tuple[bool, str]:
     if untracked.returncode != 0:
         return False, f"git ls-files failed: {(untracked.stderr or untracked.stdout).strip()}"
     # The pipeline's own saved ADR (written by save-adr before implement) is
-    # untracked but is not executor work.
-    adr_prefix = adr_dir.rstrip("/") + "/ADR-"
+    # untracked but is not executor work. git ls-files prints repo-relative
+    # paths without a "./" prefix, so the adr_dir is normalized before the
+    # prefix: with adr_dir "." or "./architecture" a raw "./ADR-" prefix
+    # would never match and the exclusion would silently stop working,
+    # letting an empty implementation pass the guard.
+    normalized = os.path.normpath(adr_dir)
+    # The repo root (""/"."): the saved ADRs sit directly under the root,
+    # so the exclusion matches their bare repo-relative names ("ADR-...").
+    adr_prefix = "ADR-" if normalized in ("", ".") else normalized.rstrip("/") + "/ADR-"
     new_files = [line for line in untracked.stdout.splitlines() if not line.startswith(adr_prefix)]
     if new_files:
         summary.append(f"{len(new_files)} new file(s)")
