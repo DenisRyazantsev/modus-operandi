@@ -10,7 +10,7 @@ from unittest import mock
 from .helpers import load_run_pipeline
 
 
-def _step_finish():
+def _step_finish() -> dict[str, object]:
     return {
         "type": "step_finish",
         "part": {
@@ -34,21 +34,19 @@ class LiveMonitorStepLineTest(unittest.TestCase):
     def _prepare(self, tmp: str, step_id: str, step_index: int | None = None) -> None:
         run_dir = Path(tmp) / "workflows" / "runs" / "abc12345"
         run_dir.mkdir(parents=True)
-        state = {"current_step_id": step_id}
+        state: dict[str, object] = {"current_step_id": step_id}
         if step_index is not None:
             state["current_step_index"] = step_index
         state["step_results"] = {}
         (run_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
         (Path(tmp) / ".workflow" / "logs").mkdir(parents=True)
 
-    def test_prints_harness_line_once_per_step_change(self):
+    def test_prints_harness_line_once_per_step_change(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             self._prepare(tmp, "study", 0)
             with mock.patch.object(Path, "cwd", return_value=Path(tmp)):
-                monitor = mod.LiveMonitor(
-                    Path(tmp), set(), step_ids=["study", "research"]
-                )
+                monitor = mod.LiveMonitor(Path(tmp), set(), step_ids=["study", "research"])
                 monitor.run_id = "abc12345"
                 captured = io.StringIO()
                 with mock.patch("sys.stdout", captured):
@@ -59,16 +57,14 @@ class LiveMonitorStepLineTest(unittest.TestCase):
             self.assertEqual(out.count("[harness] [study 1/2]"), 1)
             self.assertEqual(out.count("[harness]"), 1)
 
-    def test_no_harness_line_when_step_already_has_agent_lines(self):
+    def test_no_harness_line_when_step_already_has_agent_lines(self) -> None:
         # The step's first event lands in the same tick as the step change:
         # the event line replaces the step-start line (ADR-0012).
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             self._prepare(tmp, "study", 0)
             with mock.patch.object(Path, "cwd", return_value=Path(tmp)):
-                monitor = mod.LiveMonitor(
-                    Path(tmp), set(), step_ids=["study", "research"]
-                )
+                monitor = mod.LiveMonitor(Path(tmp), set(), step_ids=["study", "research"])
                 monitor.run_id = "abc12345"
                 log = Path(tmp) / ".workflow" / "logs" / "sessions-planner.jsonl"
                 log.write_text(json.dumps(_step_finish()) + "\n", encoding="utf-8")
@@ -79,7 +75,7 @@ class LiveMonitorStepLineTest(unittest.TestCase):
             self.assertIn("[planner]", out)
             self.assertNotIn("[harness]", out)
 
-    def test_new_step_line_prints_after_previous_marker(self):
+    def test_new_step_line_prints_after_previous_marker(self) -> None:
         # The engine advanced current_step_id to the next step: the step
         # start line for it prints AFTER the completed step's marker.
         mod = load_run_pipeline()
@@ -103,9 +99,7 @@ class LiveMonitorStepLineTest(unittest.TestCase):
             )
             (Path(tmp) / ".workflow" / "logs").mkdir(parents=True)
             with mock.patch.object(Path, "cwd", return_value=Path(tmp)):
-                monitor = mod.LiveMonitor(
-                    Path(tmp), set(), step_ids=["study", "research"]
-                )
+                monitor = mod.LiveMonitor(Path(tmp), set(), step_ids=["study", "research"])
                 monitor.run_id = "abc12345"
                 captured = io.StringIO()
                 with mock.patch("sys.stdout", captured):

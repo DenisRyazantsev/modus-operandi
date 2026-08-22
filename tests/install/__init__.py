@@ -1,4 +1,4 @@
-"""Shared fixtures for the spec-run installer tests.
+"""Shared fixtures for the modus-operandi installer tests.
 
 All installs go through --home <tempdir>; external commands are faked.
 """

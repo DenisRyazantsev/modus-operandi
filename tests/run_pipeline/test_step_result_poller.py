@@ -14,7 +14,7 @@ class StepResultPollerTest(unittest.TestCase):
         run_dir.mkdir(parents=True)
         return run_dir
 
-    def test_non_terminal_statuses_never_reported(self):
+    def test_non_terminal_statuses_never_reported(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = self._run_dir(tmp)
@@ -35,7 +35,7 @@ class StepResultPollerTest(unittest.TestCase):
             self.assertEqual([step for step, _ in first], ["gate"])
             self.assertEqual(poller.poll(), [])
 
-    def test_step_completing_later_is_reported_once(self):
+    def test_step_completing_later_is_reported_once(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = self._run_dir(tmp)

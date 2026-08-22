@@ -7,8 +7,8 @@ from .installer_test_case import InstallerTestCase
 class PrerequisitesTest(InstallerTestCase):
     """Install-time prerequisite checks: missing tools."""
 
-    def test_missing_opencode_fails_with_message(self):
-        def which(name):
+    def test_missing_opencode_fails_with_message(self) -> None:
+        def which(name: str) -> str | None:
             if name == "opencode":
                 return None
             return which_fake(name)
@@ -17,7 +17,7 @@ class PrerequisitesTest(InstallerTestCase):
         self.assertEqual(rc, 1)
         self.assertIn("opencode not found", err)
 
-    def test_missing_cursor_tool_fails_with_message(self):
+    def test_missing_cursor_tool_fails_with_message(self) -> None:
         # backend: cursor requires cursor-agent OR agent on PATH; opencode is
         # not required in this mode.
         self.assertEqual(self.install(), 0)
@@ -32,7 +32,7 @@ class PrerequisitesTest(InstallerTestCase):
             "workflow: {}\n"
         )
 
-        def which_no_cursor(name):
+        def which_no_cursor(name: str) -> str | None:
             if name in ("cursor-agent", "agent"):
                 return None
             return which_fake(name)
@@ -41,7 +41,7 @@ class PrerequisitesTest(InstallerTestCase):
         self.assertEqual(rc, 1)
         self.assertIn("cursor-agent (or agent) not found", err)
 
-    def test_cursor_backend_does_not_require_opencode(self):
+    def test_cursor_backend_does_not_require_opencode(self) -> None:
         # A cursor-only install succeeds with opencode off PATH: prerequisite
         # checks, agent rendering and the opencode agent checks are skipped.
         self.assertEqual(self.install(), 0)
@@ -56,7 +56,7 @@ class PrerequisitesTest(InstallerTestCase):
             "workflow: {}\n"
         )
 
-        def which_no_opencode(name):
+        def which_no_opencode(name: str) -> str | None:
             if name == "opencode":
                 return None
             return which_fake(name)

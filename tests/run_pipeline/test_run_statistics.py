@@ -9,6 +9,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from .helpers import load_run_pipeline
@@ -17,7 +18,7 @@ from .helpers import load_run_pipeline
 class RunStatisticsTest(unittest.TestCase):
     """Parsing/summing `opencode export` JSON into the final block."""
 
-    def _state(self, tmp: str, sessions: dict, task_id: str = "task-1") -> Path:
+    def _state(self, tmp: str, sessions: dict[str, object], task_id: str = "task-1") -> Path:
         state = Path(tmp) / ".workflow"
         tasks = state / "tasks"
         tasks.mkdir(parents=True, exist_ok=True)
@@ -26,20 +27,16 @@ class RunStatisticsTest(unittest.TestCase):
         current = tasks / "current"
         if not current.exists():
             current.symlink_to(task_id, target_is_directory=True)
-        (state / f"sessions-{task_id}.json").write_text(
-            json.dumps(sessions), encoding="utf-8"
-        )
+        (state / f"sessions-{task_id}.json").write_text(json.dumps(sessions), encoding="utf-8")
         return state
 
-    def test_read_session_ids_from_current_task_symlink(self):
+    def test_read_session_ids_from_current_task_symlink(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             state = self._state(tmp, {"planner": "p1", "executor": "e1"})
-            self.assertEqual(
-                mod.read_session_ids(state), {"planner": "p1", "executor": "e1"}
-            )
+            self.assertEqual(mod.read_session_ids(state), {"planner": "p1", "executor": "e1"})
 
-    def test_read_session_ids_ignores_missing_empty_and_unreadable(self):
+    def test_read_session_ids_ignores_missing_empty_and_unreadable(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             state = self._state(tmp, {"planner": "", "executor": "e1", "other": "x"})
@@ -52,29 +49,28 @@ class RunStatisticsTest(unittest.TestCase):
             broken = self._state(tmp, {}, task_id="broken")
             self.assertEqual(mod.read_session_ids(broken), {})
 
-    def test_export_session_info_failures_return_none(self):
+    def test_export_session_info_failures_return_none(self) -> None:
         mod = load_run_pipeline()
         with mock.patch("subprocess.run", side_effect=OSError("boom")):
             self.assertIsNone(mod.export_session_info("p1"))
-        with mock.patch(
-            "subprocess.run", return_value=mock.Mock(returncode=1, stdout="")
-        ):
+        with mock.patch("subprocess.run", return_value=mock.Mock(returncode=1, stdout="")):
             self.assertIsNone(mod.export_session_info("p1"))
+
         # The export writes only garbage (unparseable both attempts).
-        def garbage_run(cmd, stdout=None, **kwargs):
+        def garbage_run(cmd: list[str], stdout: Any = None, **kwargs: object) -> mock.Mock:
             stdout.write(b"not json")
             return mock.Mock(returncode=0)
 
         with mock.patch("subprocess.run", side_effect=garbage_run):
             self.assertIsNone(mod.export_session_info("p1"))
 
-    def test_export_retries_once_on_truncated_json(self):
+    def test_export_retries_once_on_truncated_json(self) -> None:
         # opencode (<= 1.18.x) can exit before its piped stdout is fully
         # flushed; the export is retried once before degrading to zeros.
         mod = load_run_pipeline()
-        attempts = []
+        attempts: list[int] = []
 
-        def fake_run(cmd, stdout=None, **kwargs):
+        def fake_run(cmd: list[str], stdout: Any = None, **kwargs: object) -> mock.Mock:
             attempts.append(1)
             if len(attempts) == 1:
                 stdout.write(b'{"info": {"tokens": {"input": 1')
@@ -88,12 +84,12 @@ class RunStatisticsTest(unittest.TestCase):
         self.assertEqual(len(attempts), 2)
         self.assertEqual(info["tokens"]["input"], 5)
 
-    def test_usage_sums_both_roles(self):
+    def test_usage_sums_both_roles(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             state = self._state(tmp, {"planner": "p1", "executor": "e1"})
 
-            def fake_run(cmd, stdout=None, **kwargs):
+            def fake_run(cmd: list[str], stdout: Any = None, **kwargs: object) -> mock.Mock:
                 payloads = {
                     "p1": {
                         "tokens": {
@@ -126,12 +122,12 @@ class RunStatisticsTest(unittest.TestCase):
         self.assertEqual(usage["cache_write"], 5)
         self.assertAlmostEqual(usage["cost"], 0.03)
 
-    def test_print_run_statistics_block(self):
+    def test_print_run_statistics_block(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             state = self._state(tmp, {"planner": "p1"})
 
-            def fake_run(cmd, stdout=None, **kwargs):
+            def fake_run(cmd: list[str], stdout: Any = None, **kwargs: object) -> mock.Mock:
                 payload = {
                     "info": {
                         "tokens": {
@@ -159,7 +155,7 @@ class RunStatisticsTest(unittest.TestCase):
         self.assertIn("cache: read 9 032 013 · write 0", out)
         self.assertIn("cost: $0.03", out)
 
-    def test_collect_cursor_usage_reuses_the_shared_parser(self):
+    def test_collect_cursor_usage_reuses_the_shared_parser(self) -> None:
         # collect_cursor_usage sums the cursor logs through the shared
         # usage_parser (SRP split): nested usage objects, flat cache names
         # and top-level token fields all accumulate; a malformed event is
@@ -203,7 +199,7 @@ class RunStatisticsTest(unittest.TestCase):
         # The step_finish fallback was ignored: no cost accumulated.
         self.assertEqual(usage["cost"], 0.0)
 
-    def test_collect_cursor_usage_sees_all_review_loop_iterations(self):
+    def test_collect_cursor_usage_sees_all_review_loop_iterations(self) -> None:
         # Regression (ADR-0013 bug fix): the per-kind review log is a stable
         # file that run-agent-cursor.sh APPENDS to on every check, so the
         # end-of-run statistics must see every review-fix-loop iteration of a
@@ -238,7 +234,7 @@ class RunStatisticsTest(unittest.TestCase):
         self.assertEqual(usage["input"], 15)
         self.assertEqual(usage["cache_read"], 10)
 
-    def test_collect_cursor_usage_counts_step_finish_only_files(self):
+    def test_collect_cursor_usage_counts_step_finish_only_files(self) -> None:
         # Old cursor builds emit only the opencode-shaped step_finish: a
         # file without any result-style event still counts the fallback
         # (bug fix regression guard).
@@ -273,7 +269,7 @@ class RunStatisticsTest(unittest.TestCase):
         self.assertEqual(usage["cache_read"], 4)
         self.assertAlmostEqual(usage["cost"], 0.03)
 
-    def test_malformed_result_event_does_not_suppress_step_finish_tokens(self):
+    def test_malformed_result_event_does_not_suppress_step_finish_tokens(self) -> None:
         # Regression (bug fix): a malformed or unrecognized-shape
         # result-style event is skipped without disabling the fallback —
         # the step_finish tokens of the same file must still count.
@@ -312,7 +308,7 @@ class RunStatisticsTest(unittest.TestCase):
         self.assertEqual(usage["cache_read"], 4)
         self.assertAlmostEqual(usage["cost"], 0.03)
 
-    def test_print_run_statistics_degrades_to_zeros(self):
+    def test_print_run_statistics_degrades_to_zeros(self) -> None:
         # No sessions file / no opencode: the block still prints with zeros
         # and the wrapper must not crash.
         mod = load_run_pipeline()
@@ -327,7 +323,7 @@ class RunStatisticsTest(unittest.TestCase):
         self.assertIn("cache: read 0 · write 0", out)
         self.assertIn("cost: $0.00", out)
 
-    def test_formatting_helpers(self):
+    def test_formatting_helpers(self) -> None:
         mod = load_run_pipeline()
         self.assertEqual(mod.fmt_thousands(321213), "321 213")
         self.assertEqual(mod.fmt_thousands(0), "0")

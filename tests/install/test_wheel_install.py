@@ -29,7 +29,7 @@ def _network_available() -> bool:
 class WheelBootstrapTest(unittest.TestCase):
     """Build the wheel, inspect it, install it and run the entry point."""
 
-    def setUp(self):
+    def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
@@ -40,12 +40,10 @@ class WheelBootstrapTest(unittest.TestCase):
         self.run_dir = self.root / "run"
         self.run_dir.mkdir()
 
-    def _run(self, cmd, **kwargs):
-        return subprocess.run(
-            cmd, capture_output=True, text=True, cwd=REPO_ROOT, **kwargs
-        )
+    def _run(self, cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT)
 
-    def _build(self):
+    def _build(self) -> Path:
         result = self._run(["uv", "build", "--out-dir", str(self.dist)])
         self.assertEqual(result.returncode, 0, result.stderr)
         wheels = list(self.dist.glob("*.whl"))
@@ -53,37 +51,35 @@ class WheelBootstrapTest(unittest.TestCase):
         return wheels[0]
 
     @unittest.skipUnless(_network_available(), "network required for uv build")
-    def test_wheel_contains_package_data(self):
+    def test_wheel_contains_package_data(self) -> None:
         wheel = self._build()
         with zipfile.ZipFile(wheel) as zf:
             names = zf.namelist()
         for needle in (
-            "spec_run/data/pipeline_scripts/run_pipeline.py",
-            "spec_run/data/pipeline_scripts/editor.py",
-            "spec_run/data/pipeline_scripts/run-agent.sh",
-            "spec_run/data/prompts/adr/write-adr.md",
-            "spec_run/data/prompts/task/study.md",
-            "spec_run/data/workflows/task-pipeline.yml",
-            "spec_run/data/workflows/review-pipeline.yml",
-            "spec_run/data/config.example.yml",
-            "spec_run/data/victory.wav",
-            "spec_run/cli.py",
+            "modus_operandi/data/pipeline_scripts/run_pipeline.py",
+            "modus_operandi/data/pipeline_scripts/editor.py",
+            "modus_operandi/data/pipeline_scripts/run-agent.sh",
+            "modus_operandi/data/prompts/adr/write-adr.md",
+            "modus_operandi/data/prompts/task/study.md",
+            "modus_operandi/data/workflows/task-pipeline.yml",
+            "modus_operandi/data/workflows/review-pipeline.yml",
+            "modus_operandi/data/config.example.yml",
+            "modus_operandi/data/victory.wav",
+            "modus_operandi/cli.py",
             # The MIT license text ships in the wheel (PEP 639 license-files).
-            "spec_run-0.1.0.dist-info/licenses/LICENSE",
+            "modus_operandi-0.1.0.dist-info/licenses/LICENSE",
         ):
             self.assertIn(needle, names, needle)
         # The standalone adr pipeline is not shipped.
-        self.assertNotIn("spec_run/data/workflows/adr-pipeline.yml", names)
+        self.assertNotIn("modus_operandi/data/workflows/adr-pipeline.yml", names)
 
     @unittest.skipUnless(_network_available(), "network required to install the wheel")
-    def test_wheel_bootstrap_end_to_end(self):
+    def test_wheel_bootstrap_end_to_end(self) -> None:
         wheel = self._build()
         result = self._run(["uv", "venv", str(self.venv)])
         self.assertEqual(result.returncode, 0, result.stderr)
         venv_python = self.venv / "bin" / "python"
-        result = self._run(
-            ["uv", "pip", "install", "--python", str(venv_python), str(wheel)]
-        )
+        result = self._run(["uv", "pip", "install", "--python", str(venv_python), str(wheel)])
         self.assertEqual(result.returncode, 0, result.stderr)
 
         # A fake backend CLI satisfies the bootstrap prerequisite check.
@@ -95,29 +91,29 @@ class WheelBootstrapTest(unittest.TestCase):
         env = os.environ.copy()
         env["PATH"] = f"{self.bin}:{env['PATH']}"
         env["XDG_CONFIG_HOME"] = str(self.xdg)
-        spec_run = self.venv / "bin" / "spec-run"
-        self.assertTrue(spec_run.exists())
+        modus_operandi = self.venv / "bin" / "modus-operandi"
+        self.assertTrue(modus_operandi.exists())
 
         # First run: the bootstrap renders everything and prints one status
         # line (the run itself fails on the fake backend - not asserted).
         first = subprocess.run(
-            [str(spec_run), "review"],
+            [str(modus_operandi), "review"],
             env=env,
             cwd=str(self.run_dir),
             capture_output=True,
             text=True,
         )
-        self.assertIn("spec-run: installed to", first.stdout)
-        self.assertIn(str(self.xdg / "spec-run"), first.stdout)
+        self.assertIn("modus-operandi: installed to", first.stdout)
+        self.assertIn(str(self.xdg / "modus-operandi"), first.stdout)
 
         for rel in (
-            "spec-run/config.yml",
-            "spec-run/config.example.yml",
-            "spec-run/task-pipeline.yml",
-            "spec-run/review-pipeline.yml",
-            "spec-run/install-version.txt",
-            "spec-run/prompts/task/study.md",
-            "spec-run/prompts/adr/write-adr.md",
+            "modus-operandi/config.yml",
+            "modus-operandi/config.example.yml",
+            "modus-operandi/task-pipeline.yml",
+            "modus-operandi/review-pipeline.yml",
+            "modus-operandi/install-version.txt",
+            "modus-operandi/prompts/task/study.md",
+            "modus-operandi/prompts/adr/write-adr.md",
             "opencode/agent/planner.md",
             "opencode/agent/executor.md",
             "opencode/scripts/run-pipeline.py",
@@ -128,17 +124,15 @@ class WheelBootstrapTest(unittest.TestCase):
 
         # Second run with the same version: no re-render, no status line,
         # and a user-edited config.yml survives untouched.
-        config = self.xdg / "spec-run" / "config.yml"
-        config.write_text(
-            config.read_text(encoding="utf-8") + "# USER EDITED\n", encoding="utf-8"
-        )
+        config = self.xdg / "modus-operandi" / "config.yml"
+        config.write_text(config.read_text(encoding="utf-8") + "# USER EDITED\n", encoding="utf-8")
         second = subprocess.run(
-            [str(spec_run), "review"],
+            [str(modus_operandi), "review"],
             env=env,
             cwd=str(self.run_dir),
             capture_output=True,
             text=True,
         )
-        self.assertNotIn("spec-run: installed", second.stdout)
-        self.assertNotIn("spec-run: updated", second.stdout)
+        self.assertNotIn("modus-operandi: installed", second.stdout)
+        self.assertNotIn("modus-operandi: updated", second.stdout)
         self.assertIn("# USER EDITED", config.read_text(encoding="utf-8"))

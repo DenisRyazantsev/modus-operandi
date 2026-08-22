@@ -10,6 +10,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from .helpers import FakeProc, load_run_pipeline, point_config_at
@@ -20,7 +21,9 @@ class FeedbackGateFlowTest(unittest.TestCase):
     no victory sound is played (both for the editor path and the manual
     fallback); regular gates still notify()."""
 
-    def _run_main(self, mod, tmp, step_id, editor_result):
+    def _run_main(
+        self, mod: Any, tmp: str, step_id: str, editor_result: Any
+    ) -> tuple[int, Any, Any]:
         point_config_at(mod, tmp)
         state_root = Path(tmp) / ".specify"
         run_dir = state_root / "workflows" / "runs" / "abc12345"
@@ -35,7 +38,7 @@ class FeedbackGateFlowTest(unittest.TestCase):
         # the run) and later calls must find it.
         state = {"calls": 0}
 
-        def fake_existing(state_dir):
+        def fake_existing(state_dir: Any) -> set[str]:
             state["calls"] += 1
             return {"abc12345"} if state["calls"] > 1 else set()
 
@@ -46,9 +49,7 @@ class FeedbackGateFlowTest(unittest.TestCase):
                 mock.patch("pty.openpty", return_value=(real_master, real_slave)),
                 mock.patch(
                     "subprocess.Popen",
-                    return_value=FakeProc(
-                        ["┌─ Gate ─────────", "Run ID: abc12345"], 0, env={}
-                    ),
+                    return_value=FakeProc(["┌─ Gate ─────────", "Run ID: abc12345"], 0, env={}),
                 ),
                 mock.patch.object(sys, "argv", ["run-pipeline.py", "adr-pipeline"]),
                 mock.patch("sys.stdout", io.StringIO()),
@@ -71,12 +72,10 @@ class FeedbackGateFlowTest(unittest.TestCase):
                     os.close(fd)
         return rc, notify, editor
 
-    def test_feedback_gate_opens_editor_without_sound(self):
+    def test_feedback_gate_opens_editor_without_sound(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
-            rc, notify, editor = self._run_main(
-                mod, tmp, "adr-feedback-gate", editor_result=True
-            )
+            rc, notify, editor = self._run_main(mod, tmp, "adr-feedback-gate", editor_result=True)
         self.assertEqual(rc, 0)
         editor.assert_called_once()
         state_dir, pause, master_fd, step_id = editor.call_args.args
@@ -88,7 +87,7 @@ class FeedbackGateFlowTest(unittest.TestCase):
         # success signal fires.
         self.assertEqual(notify.call_count, 1)
 
-    def test_feedback_gate_loop_iteration_without_sound(self):
+    def test_feedback_gate_loop_iteration_without_sound(self) -> None:
         # The loop-iteration form of the feedback gate id is recognized too.
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
@@ -100,22 +99,18 @@ class FeedbackGateFlowTest(unittest.TestCase):
         self.assertEqual(editor.call_args.args[3], "adr-loop:adr-feedback-gate:1")
         self.assertEqual(notify.call_count, 1)
 
-    def test_feedback_gate_fallback_without_sound(self):
+    def test_feedback_gate_fallback_without_sound(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
-            rc, notify, editor = self._run_main(
-                mod, tmp, "adr-feedback-gate", editor_result=False
-            )
+            rc, notify, editor = self._run_main(mod, tmp, "adr-feedback-gate", editor_result=False)
         self.assertEqual(rc, 0)
         editor.assert_called_once()
         self.assertEqual(notify.call_count, 1)
 
-    def test_regular_gate_still_notifies(self):
+    def test_regular_gate_still_notifies(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
-            rc, notify, editor = self._run_main(
-                mod, tmp, "adr-gate", editor_result=True
-            )
+            rc, notify, editor = self._run_main(mod, tmp, "adr-gate", editor_result=True)
         self.assertEqual(rc, 0)
         editor.assert_not_called()
         # gate open + successful finish

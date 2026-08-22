@@ -14,6 +14,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from .helpers import FakeProc, load_run_pipeline, point_config_at
@@ -22,25 +23,21 @@ from .helpers import FakeProc, load_run_pipeline, point_config_at
 class EngineLineClassifierTest(unittest.TestCase):
     """Pure predicates: step-start lines, one-time headers, errors."""
 
-    def test_recognizes_step_start_lines(self):
+    def test_recognizes_step_start_lines(self) -> None:
         mod = load_run_pipeline()
+        self.assertTrue(mod.is_engine_step_start("  ▸ [review-fix-loop:pending-kinds:1] shell …"))
         self.assertTrue(
-            mod.is_engine_step_start("  ▸ [review-fix-loop:pending-kinds:1] shell …")
-        )
-        self.assertTrue(
-            mod.is_engine_step_start(
-                "  ▸ [review-fix-loop:review-fan:1:check:N] fan-out …"
-            )
+            mod.is_engine_step_start("  ▸ [review-fix-loop:review-fan:1:check:N] fan-out …")
         )
         self.assertTrue(mod.is_engine_step_start("▸ [a] b"))
 
-    def test_rejects_non_step_start_lines(self):
+    def test_rejects_non_step_start_lines(self) -> None:
         mod = load_run_pipeline()
         self.assertFalse(mod.is_engine_step_start(""))
         self.assertFalse(mod.is_engine_step_start("writing the ADR..."))
         self.assertFalse(mod.is_engine_step_start("│ 1. approve"))
 
-    def test_recognizes_one_time_headers(self):
+    def test_recognizes_one_time_headers(self) -> None:
         mod = load_run_pipeline()
         for line in (
             "Running workflow: adr-pipeline (abc)",
@@ -52,7 +49,7 @@ class EngineLineClassifierTest(unittest.TestCase):
         self.assertFalse(mod.is_engine_header("status: lowercase"))
         self.assertFalse(mod.is_engine_header(""))
 
-    def test_recognizes_engine_errors_and_diagnostics(self):
+    def test_recognizes_engine_errors_and_diagnostics(self) -> None:
         mod = load_run_pipeline()
         for line in ("Error: boom", "Workflow failed: nope", "Warning: careful"):
             self.assertTrue(mod.is_engine_error(line), line)
@@ -68,7 +65,9 @@ class ConsumeOutputEchoPolicyTest(unittest.TestCase):
     filtering so the resume message still works, and unknown lines echo
     unchanged (fail-open)."""
 
-    def _run_main(self, mod, tmp, lines, returncode=0):
+    def _run_main(
+        self, mod: Any, tmp: str, lines: list[str], returncode: int = 0
+    ) -> tuple[int, io.StringIO]:
         point_config_at(mod, tmp)
         out = io.StringIO()
         with (
@@ -82,7 +81,7 @@ class ConsumeOutputEchoPolicyTest(unittest.TestCase):
             rc = mod.main()
         return rc, out
 
-    def test_engine_progress_and_headers_are_not_echoed(self):
+    def test_engine_progress_and_headers_are_not_echoed(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             rc, out = self._run_main(
@@ -109,14 +108,13 @@ class ConsumeOutputEchoPolicyTest(unittest.TestCase):
         ):
             self.assertNotIn(needle, text)
 
-    def test_engine_errors_echo_in_harness_format(self):
+    def test_engine_errors_echo_in_harness_format(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             rc, out = self._run_main(
                 mod,
                 tmp,
-                ["Error: boom", "Workflow failed: nope", "Warning: careful",
-                 "Run ID: abc12345"],
+                ["Error: boom", "Workflow failed: nope", "Warning: careful", "Run ID: abc12345"],
                 1,
             )
         self.assertEqual(rc, 1)
@@ -132,7 +130,7 @@ class ConsumeOutputEchoPolicyTest(unittest.TestCase):
         self.assertIn("resume with: specify workflow resume abc12345", text)
         self.assertNotIn("Run ID: abc12345", text)
 
-    def test_unknown_lines_echo_unchanged(self):
+    def test_unknown_lines_echo_unchanged(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             rc, out = self._run_main(

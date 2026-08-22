@@ -1,10 +1,28 @@
 """Faked external-command layer for the installer tests."""
 
+from collections.abc import Callable
+from pathlib import Path
+
 from .fake_result import FakeResult
 
+_COMMANDS = {
+    "opencode": "/usr/bin/opencode",
+    "python3": "/usr/bin/python3",
+    "specify": "/usr/bin/specify",
+    "cursor-agent": "/usr/bin/cursor-agent",
+    "agent": "/usr/bin/agent",
+}
 
-def make_run(records=None):
-    def _run(cmd, cwd=None, env=None, check=True):
+
+def make_run(
+    records: list[list[str]] | None = None,
+) -> Callable[[list[str], str | Path | None, dict[str, str] | None, bool], FakeResult]:
+    def _run(
+        cmd: list[str],
+        cwd: str | Path | None = None,
+        env: dict[str, str] | None = None,
+        check: bool = True,
+    ) -> FakeResult:
         if records is not None:
             records.append(list(cmd))
         if cmd[-1] == "--version" and "specify" in cmd[0]:
@@ -18,11 +36,5 @@ def make_run(records=None):
     return _run
 
 
-def which_fake(name):
-    return {
-        "opencode": "/usr/bin/opencode",
-        "python3": "/usr/bin/python3",
-        "specify": "/usr/bin/specify",
-        "cursor-agent": "/usr/bin/cursor-agent",
-        "agent": "/usr/bin/agent",
-    }.get(name)
+def which_fake(name: str) -> str | None:
+    return _COMMANDS.get(name)

@@ -21,7 +21,7 @@ class LatencyTableTest(unittest.TestCase):
     and the agent-vs-shell breakdown, with graceful degradation on missing
     data."""
 
-    def _state(self, tmp: str, sessions: dict, task_id: str = "task-1") -> Path:
+    def _state(self, tmp: str, sessions: dict[str, object], task_id: str = "task-1") -> Path:
         state = Path(tmp) / ".workflow"
         tasks = state / "tasks"
         tasks.mkdir(parents=True, exist_ok=True)
@@ -30,9 +30,7 @@ class LatencyTableTest(unittest.TestCase):
         current = tasks / "current"
         if not current.exists():
             current.symlink_to(task_id, target_is_directory=True)
-        (state / f"sessions-{task_id}.json").write_text(
-            json.dumps(sessions), encoding="utf-8"
-        )
+        (state / f"sessions-{task_id}.json").write_text(json.dumps(sessions), encoding="utf-8")
         return state
 
     def _run_dir(self, tmp: str, with_state: bool = True) -> Path:
@@ -54,9 +52,7 @@ class LatencyTableTest(unittest.TestCase):
         lines = []
         for step_id, start, end, status in events:
             lines.append(
-                json.dumps(
-                    {"event": "step_started", "step_id": step_id, "timestamp": iso(start)}
-                )
+                json.dumps({"event": "step_started", "step_id": step_id, "timestamp": iso(start)})
             )
             lines.append(
                 json.dumps(
@@ -92,18 +88,14 @@ class LatencyTableTest(unittest.TestCase):
         logs = state / "logs"
         logs.mkdir(parents=True, exist_ok=True)
         (logs / "sessions-task-1-planner-fork-11.jsonl").write_text(
-            json.dumps(
-                {"type": "step_start", "timestamp": _ms("2026-08-16T10:00:10+00:00")}
-            )
+            json.dumps({"type": "step_start", "timestamp": _ms("2026-08-16T10:00:10+00:00")})
             + "\n"
-            + json.dumps(
-                {"type": "step_finish", "timestamp": _ms("2026-08-16T10:00:20+00:00")}
-            )
+            + json.dumps({"type": "step_finish", "timestamp": _ms("2026-08-16T10:00:20+00:00")})
             + "\n",
             encoding="utf-8",
         )
 
-    def test_latency_table_lists_stages_with_agent_shell_breakdown(self):
+    def test_latency_table_lists_stages_with_agent_shell_breakdown(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             state = self._state(tmp, {"planner": "p1"})
@@ -126,7 +118,7 @@ class LatencyTableTest(unittest.TestCase):
         # of the row durations (nested/parallel rows overlap).
         self.assertIn("76.7%", out)
 
-    def test_latency_table_parallel_checks_block(self):
+    def test_latency_table_parallel_checks_block(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             state = self._state(tmp, {"planner": "p1"})
@@ -150,7 +142,7 @@ class LatencyTableTest(unittest.TestCase):
         self.assertIn("10.0%", out)
         self.assertIn("13.3%", out)
 
-    def test_latency_table_fan_out_wall_is_per_iteration(self):
+    def test_latency_table_fan_out_wall_is_per_iteration(self) -> None:
         # Bug fix: the fan-out wall must be computed per retry-loop iteration,
         # not as the min(start)..max(end) span across ALL iterations — that
         # would stretch from the first check of iteration 1 to the last check
@@ -233,7 +225,7 @@ class LatencyTableTest(unittest.TestCase):
         self.assertIn("review", out)
         self.assertIn("comment", out)
 
-    def test_latency_table_distinct_minute_durations(self):
+    def test_latency_table_distinct_minute_durations(self) -> None:
         # Minutes-scale stages produce distinct fmt_minutes values and
         # percents (90s -> 2m, 150s -> 3m, 60s -> 1m of a 300s total).
         mod = load_run_pipeline()
@@ -284,7 +276,7 @@ class LatencyTableTest(unittest.TestCase):
         self.assertIn("30.0%", out)
         self.assertIn("50.0%", out)
 
-    def test_percent_denominator_is_run_wall_time_not_row_sum(self):
+    def test_percent_denominator_is_run_wall_time_not_row_sum(self) -> None:
         # Bug fix: the percent base is the run's wall time (first start ..
         # last end across ALL records), NOT the sum of the row durations —
         # a parent loop step and its nested iteration steps overlap, so
@@ -338,7 +330,7 @@ class LatencyTableTest(unittest.TestCase):
         # for a partition of the run.
         self.assertIn("percentages are shares of the run's wall time", out)
 
-    def test_latency_table_degrades_to_empty_without_run_dir(self):
+    def test_latency_table_degrades_to_empty_without_run_dir(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             state = self._state(tmp, {"planner": "p1"})
@@ -352,7 +344,7 @@ class LatencyTableTest(unittest.TestCase):
         self.assertIn("=== run statistics ===", out)
         self.assertNotIn("=== latency by stage ===", out)
 
-    def test_latency_table_degrades_when_log_jsonl_missing(self):
+    def test_latency_table_degrades_when_log_jsonl_missing(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             state = self._state(tmp, {"planner": "p1"})
@@ -366,7 +358,7 @@ class LatencyTableTest(unittest.TestCase):
                 mod.print_run_statistics(state, 30.0, run_dir)
         self.assertNotIn("=== latency by stage ===", captured.getvalue())
 
-    def test_latency_table_module_importable_directly(self):
+    def test_latency_table_module_importable_directly(self) -> None:
         # The module is a standalone concern (ADR-0009 SRP finding): it must
         # be importable on its own, not only through run_statistics.py.
         mod = load_run_pipeline()

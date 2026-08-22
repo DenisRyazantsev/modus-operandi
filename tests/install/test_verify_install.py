@@ -1,15 +1,17 @@
 """Tests for verify.verify_install."""
 
+from pathlib import Path
+from typing import Any
 from unittest import mock
 
-from spec_run import InstallError, config, paths, proc, tool_discovery, verify
+from modus_operandi import InstallError, config, paths, proc, tool_discovery, verify
 
 from .fake_result import FakeResult
 from .install_helpers import which_fake
 from .installer_test_case import InstallerTestCase
 
 
-def _opencode_cfg() -> dict:
+def _opencode_cfg() -> dict[str, Any]:
     """A cfg with the opencode section present (agent files are required)."""
     return config.validate_config(
         config.apply_defaults(
@@ -30,7 +32,7 @@ class VerifyInstallTest(InstallerTestCase):
     syntax probe degrades to the documented message when specify is off
     PATH."""
 
-    def test_verify_collects_all_errors(self):
+    def test_verify_collects_all_errors(self) -> None:
         layout = paths.build_paths(str(self.home))
         (self.home / ".config/opencode/agent").mkdir(parents=True)
         run_agent = self.home / ".config/opencode/scripts/run-agent.sh"
@@ -38,7 +40,12 @@ class VerifyInstallTest(InstallerTestCase):
         run_agent.touch()
         run_agent.chmod(0o755)
 
-        def run_fake(cmd, cwd=None, env=None, check=True):
+        def run_fake(
+            cmd: list[str],
+            cwd: str | Path | None = None,
+            env: dict[str, str] | None = None,
+            check: bool = True,
+        ) -> FakeResult:
             if cmd[1:3] == ["workflow", "info"]:
                 return FakeResult(1, "", "Error: Required input 'feature' not provided.\n")
             if cmd[-3:] == ["opencode", "agent", "list"]:
@@ -57,7 +64,7 @@ class VerifyInstallTest(InstallerTestCase):
         self.assertIn("check_review.py", err)
         self.assertIn("adr_utils.py", err)
 
-    def test_verify_skips_opencode_checks_for_cursor_backend(self):
+    def test_verify_skips_opencode_checks_for_cursor_backend(self) -> None:
         # With backend: cursor and no opencode section, the missing opencode
         # agent files and the `opencode agent list` check are not errors; the
         # shared script checks still run.
@@ -85,14 +92,12 @@ class VerifyInstallTest(InstallerTestCase):
         self.assertTrue(any("save_adr.py" in e for e in errors))
         self.assertEqual(verify.check_agents_visible(layout, cfg), [])
 
-    def test_verify_workflow_syntax_specify_off_path(self):
+    def test_verify_workflow_syntax_specify_off_path(self) -> None:
         self.assertEqual(self.install(), 0)
         layout = paths.build_paths(str(self.home))
-        cfg = config.validate_config(
-            config.apply_defaults(config.load_config(layout["config"]))
-        )
+        cfg = config.validate_config(config.apply_defaults(config.load_config(layout["config"])))
 
-        def which_off_specify(name):
+        def which_off_specify(name: str) -> str | None:
             if name == "specify":
                 return None
             return which_fake(name)

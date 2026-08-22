@@ -2,18 +2,18 @@
 
 import os
 
-from spec_run import __version__
+from modus_operandi import __version__
 
 from .installer_test_case import InstallerTestCase
 
-DATA_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "src", "spec_run", "data")
+DATA_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "src", "modus_operandi", "data")
 
 
 class InstallLayoutTest(InstallerTestCase):
     """What the installer writes and its properties: the installed file
     layout, permissions and the rendered content of scripts and agents."""
 
-    def test_install_creates_all_target_files(self):
+    def test_install_creates_all_target_files(self) -> None:
         self.assertEqual(self.install(), 0)
         expected = [
             ".config/opencode/agent/planner.md",
@@ -54,29 +54,27 @@ class InstallLayoutTest(InstallerTestCase):
             ".config/opencode/scripts/adr_utils.py",
             ".config/opencode/scripts/agent_call.py",
             ".config/opencode/scripts/show-file.sh",
-            ".config/spec-run/review-pipeline.yml",
-            ".config/spec-run/task-pipeline.yml",
-            ".config/spec-run/config.example.yml",
-            ".config/spec-run/install-version.txt",
-            ".config/spec-run/prompts/review/srp-review.md",
-            ".config/spec-run/prompts/adr/implement.md",
-            ".config/spec-run/prompts/task/study.md",
-            ".config/spec-run/prompts/srp-fix.md",
+            ".config/modus-operandi/review-pipeline.yml",
+            ".config/modus-operandi/task-pipeline.yml",
+            ".config/modus-operandi/config.example.yml",
+            ".config/modus-operandi/install-version.txt",
+            ".config/modus-operandi/prompts/review/srp-review.md",
+            ".config/modus-operandi/prompts/adr/implement.md",
+            ".config/modus-operandi/prompts/task/study.md",
+            ".config/modus-operandi/prompts/srp-fix.md",
         ]
         for rel in expected:
             self.assertTrue((self.home / rel).exists(), rel)
         self.assertTrue(os.access(self.home / ".config/opencode/scripts/run-agent.sh", os.X_OK))
         self.assertTrue(os.access(self.home / ".config/opencode/scripts/name-task.sh", os.X_OK))
-        self.assertTrue(
-            os.access(self.home / ".config/opencode/scripts/prompt_subst.sh", os.X_OK)
-        )
+        self.assertTrue(os.access(self.home / ".config/opencode/scripts/prompt_subst.sh", os.X_OK))
         # The adr pipeline is gone and no launcher is rendered into
         # ~/.local/bin anymore (the console script comes from pip).
-        self.assertFalse((self.home / ".config/spec-run/adr-pipeline.yml").exists())
-        self.assertFalse((self.home / ".config/spec-run/install-path.txt").exists())
-        self.assertFalse((self.home / ".local/bin/spec-run").exists())
+        self.assertFalse((self.home / ".config/modus-operandi/adr-pipeline.yml").exists())
+        self.assertFalse((self.home / ".config/modus-operandi/install-path.txt").exists())
+        self.assertFalse((self.home / ".local/bin/modus-operandi").exists())
 
-    def test_reinstall_preserves_user_config(self):
+    def test_reinstall_preserves_user_config(self) -> None:
         self.assertEqual(self.install(), 0)
         self.write_config(
             "# USER EDITED\n"
@@ -93,22 +91,22 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertIn("# USER EDITED", self.read_config())
         self.assertIn("my-model", self.read_config())
 
-    def test_install_version_marker(self):
+    def test_install_version_marker(self) -> None:
         # The marker records the package version, so the launcher bootstrap
         # knows the rendered artifacts are current.
         self.assertEqual(self.install(), 0)
-        marker = self.home / ".config/spec-run/install-version.txt"
+        marker = self.home / ".config/modus-operandi/install-version.txt"
         self.assertTrue(marker.exists())
         self.assertEqual(marker.read_text(encoding="utf-8").strip(), __version__)
 
-    def test_rendered_executor_has_model_and_permissions(self):
+    def test_rendered_executor_has_model_and_permissions(self) -> None:
         self.assertEqual(self.install(), 0)
         executor = (self.home / ".config/opencode/agent/executor.md").read_text(encoding="utf-8")
         self.assertIn("opencode-go/deepseek-v4-flash", executor)
         self.assertIn("reasoningEffort: max", executor)
         self.assertIn("permission", executor)
 
-    def test_rendered_planner_reasoning_from_config(self):
+    def test_rendered_planner_reasoning_from_config(self) -> None:
         self.assertEqual(self.install(), 0)
         self.write_config(self.read_config().replace("reasoning: max", "reasoning: high", 1))
         self.assertEqual(self.install(), 0)
@@ -117,37 +115,35 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertIn("reasoningEffort: high", planner)
         self.assertIn("reasoningEffort: max", executor)
 
-    def test_custom_state_dir_is_not_baked(self):
+    def test_custom_state_dir_is_not_baked(self) -> None:
         # workflow.state_dir is configurable; the value must NOT be baked into
         # the installed scripts or workflows — it is delivered at runtime: the
         # wrapper reads the installed config.yml and passes state_dir to the
-        # workflow as -i input, and run-agent.sh takes it from SKLC_STATE_DIR.
+        # workflow as -i input, and run-agent.sh takes it from MO_STATE_DIR.
         self.assertEqual(self.install(), 0)
-        self.write_config(
-            self.read_config().replace("state_dir: .workflow", "state_dir: meta")
-        )
+        self.write_config(self.read_config().replace("state_dir: .workflow", "state_dir: meta"))
         self.assertEqual(self.install(), 0)
-        workflow = (self.home / ".config/spec-run/task-pipeline.yml").read_text(
+        workflow = (self.home / ".config/modus-operandi/task-pipeline.yml").read_text(
             encoding="utf-8"
         )
         self.assertNotIn("meta", workflow)
         self.assertIn("{{ inputs.state_dir }}", workflow)
-        parsed = self.parsed_workflow(".config/spec-run/task-pipeline.yml")
+        parsed = self.parsed_workflow(".config/modus-operandi/task-pipeline.yml")
         self.assertEqual(parsed["inputs"]["state_dir"]["default"], ".workflow")
         run_agent = (self.home / ".config/opencode/scripts/run-agent.sh").read_text(
             encoding="utf-8"
         )
-        self.assertIn("${SKLC_STATE_DIR:-.workflow}", run_agent)
+        self.assertIn("${MO_STATE_DIR:-.workflow}", run_agent)
         self.assertNotIn("meta", run_agent)
         wrapper = (self.home / ".config/opencode/scripts/run-pipeline.py").read_text(
             encoding="utf-8"
         )
         self.assertNotIn("meta", wrapper)
         self.assertNotIn(".workflow/logs", wrapper)
-        self.assertIn("SKLC_ATTACH_FLAG", wrapper)
-        self.assertIn("SKLC_CONFIG", wrapper)
+        self.assertIn("MO_ATTACH_FLAG", wrapper)
+        self.assertIn("MO_CONFIG", wrapper)
 
-    def test_run_pipeline_wrapper_installed(self):
+    def test_run_pipeline_wrapper_installed(self) -> None:
         self.assertEqual(self.install(), 0)
         wrapper = self.home / ".config/opencode/scripts/run-pipeline.py"
         self.assertTrue(wrapper.exists())
@@ -162,8 +158,8 @@ class InstallLayoutTest(InstallerTestCase):
         # The wrapper resolves the victory.wav and the config from its own
         # location at runtime; no install-time values are baked in.
         self.assertIn("victory.wav", text)
-        self.assertIn("SKLC_SCRIPTS_DIR", text)
-        self.assertIn("SKLC_ATTACH_FLAG", text)
+        self.assertIn("MO_SCRIPTS_DIR", text)
+        self.assertIn("MO_ATTACH_FLAG", text)
         self.assertNotIn(str(wrapper), text)
         self.assertNotIn("PYEOF", text)
         self.assertNotIn("#!/usr/bin/env bash", text)
@@ -174,7 +170,7 @@ class InstallLayoutTest(InstallerTestCase):
         common = self.home / ".config/opencode/scripts/_run_pipeline_common.py"
         self.assertIn('strftime("%H:%M:%S")', common.read_text(encoding="utf-8"))
 
-    def test_victory_wav_shipped_next_to_wrapper(self):
+    def test_victory_wav_shipped_next_to_wrapper(self) -> None:
         self.assertEqual(self.install(), 0)
         wav = self.home / ".config/opencode/scripts/victory.wav"
         self.assertTrue(wav.is_file())
@@ -182,14 +178,14 @@ class InstallLayoutTest(InstallerTestCase):
         with open(shipped, "rb") as fh:
             self.assertEqual(wav.read_bytes(), fh.read())
 
-    def test_run_agent_guards(self):
+    def test_run_agent_guards(self) -> None:
         self.assertEqual(self.install(), 0)
         run_agent = (self.home / ".config/opencode/scripts/run-agent.sh").read_text(
             encoding="utf-8"
         )
-        session_store = (
-            self.home / ".config/opencode/scripts/session_store.sh"
-        ).read_text(encoding="utf-8")
+        session_store = (self.home / ".config/opencode/scripts/session_store.sh").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("--task)\n      [ $# -ge 2 ] || usage", run_agent)
         # --prompt-file is parsed in the same order-independent flag loop as
         # --task (the parallel fan-out calls `--review-fork <kind>
@@ -203,7 +199,7 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertIn("ps -p", session_store)
         self.assertIn("STALE_PROC_PATTERN", session_store)
         self.assertIn("^(cursor-agent|agent)$", session_store)
-        self.assertIn("SKLC_BACKEND", run_agent)
+        self.assertIn("MO_BACKEND", run_agent)
         self.assertIn('> "$LOG_FILE" 2>&1', run_agent)
         self.assertNotIn('tail -c 4096 "$LOG_FILE"', run_agent)
         self.assertNotIn('cat "$LOG_FILE"', run_agent)
@@ -213,7 +209,7 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertEqual(session_store.count("session[_]?[iI][dD]"), 1)
         self.assertNotIn("'name'", run_agent)
 
-    def test_run_agent_cursor_dispatch_present(self):
+    def test_run_agent_cursor_dispatch_present(self) -> None:
         self.assertEqual(self.install(), 0)
         run_agent = (self.home / ".config/opencode/scripts/run-agent.sh").read_text(
             encoding="utf-8"
@@ -228,15 +224,15 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertIn("run-agent-cursor.sh", run_agent)
         self.assertIn("session_store.sh", run_agent)
         self.assertIn("prompt_subst.sh", run_agent)
-        self.assertIn('command -v cursor-agent', cursor)
-        self.assertIn('create-chat', cursor)
+        self.assertIn("command -v cursor-agent", cursor)
+        self.assertIn("create-chat", cursor)
         self.assertIn('--resume "$SESSION_ID"', cursor)
         self.assertIn('--model "$ROLE_MODEL"', cursor)
-        self.assertIn('--output-format json', cursor)
-        self.assertIn('ROLE_BODY_FILE', cursor)
+        self.assertIn("--output-format json", cursor)
+        self.assertIn("ROLE_BODY_FILE", cursor)
         self.assertIn('PROMPT_FULL="$BODY', cursor)
 
-    def test_cursor_only_install_writes_no_agent_files(self):
+    def test_cursor_only_install_writes_no_agent_files(self) -> None:
         # A cursor-only config (no opencode section) installs without opencode
         # agent files but still renders the role bodies next to run-agent.sh.
         self.write_config(
@@ -259,7 +255,7 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertIn("You are the planner", planner_body.read_text(encoding="utf-8"))
         self.assertIn("You are the executor", executor_body.read_text(encoding="utf-8"))
 
-    def test_name_task_script_rendered(self):
+    def test_name_task_script_rendered(self) -> None:
         self.assertEqual(self.install(), 0)
         name_task = (self.home / ".config/opencode/scripts/name-task.sh").read_text(
             encoding="utf-8"
@@ -269,10 +265,10 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertIn("opencode run", name_task)
         # The cursor branch uses text output (final answer only, no parsing).
         self.assertIn("--output-format text", name_task)
-        self.assertIn("SKLC_EXECUTOR_MODEL", name_task)
+        self.assertIn("MO_EXECUTOR_MODEL", name_task)
         self.assertNotIn("SESSION", name_task)
 
-    def test_slug_sanitization_error_messages(self):
+    def test_slug_sanitization_error_messages(self) -> None:
         self.assertEqual(self.install(), 0)
         adr_utils = (self.home / ".config/opencode/scripts/adr_utils.py").read_text(
             encoding="utf-8"
@@ -280,7 +276,7 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertIn("must contain ASCII letters", adr_utils)
         self.assertIn("w[:60]", adr_utils)
 
-    def test_run_agent_sets_output_token_limit(self):
+    def test_run_agent_sets_output_token_limit(self) -> None:
         # ADR-0007: opencode's default 32k per-response cap must be raised so
         # an agent cannot burn the whole budget on reasoning before acting.
         self.assertEqual(self.install(), 0)

@@ -3,7 +3,7 @@ requires = ["uv_build >= 0.12.1, <0.13.0"]
 build-backend = "uv_build"
 
 [project]
-name = "spec-run"
+name = "modus-operandi"
 version = "0.1.0"
 description = "Spec-driven planner -> executor pipelines for opencode and cursor"
 readme = "README.md"
@@ -25,13 +25,13 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Build Tools",
 ]
-dependencies = ["specify-cli>=0.16", "pyyaml"]
+dependencies = ["specify-cli>=0.16", "pyyaml>=6.0"]
 
 [project.urls]
-repository = "https://github.com/DenisRyazantsev/spec-run"
+repository = "https://github.com/DenisRyazantsev/modus-operandi"
 
 [project.scripts]
-spec-run = "spec_run.cli:main"
+modus-operandi = "modus_operandi.cli:main"
 
 [dependency-groups]
 dev = ["pytest", "ruff", "mypy", "types-PyYAML"]
@@ -40,48 +40,22 @@ dev = ["pytest", "ruff", "mypy", "types-PyYAML"]
 target-version = "py312"
 line-length = 100
 lint.select = ["E", "F", "I", "W", "B", "UP", "SIM"]
+# CI scripts live in the hidden .github/ tree, which ruff skips by default;
+# they are first-class code and must be linted like everything else.
+extend-include = [".github/scripts/*.py"]
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
-# The standalone data scripts are not part of the spec_run package (no
+# The standalone data scripts are not part of the modus_operandi package (no
 # __init__.py under data/): with explicit package bases mypy maps them only
 # through mypy_path, so their sibling imports resolve to the same module
 # names the scripts use at runtime.
 explicit_package_bases = true
-files = [
-    "install.py",
-    "src/spec_run",
-    # The standalone pipeline scripts are data (rendered verbatim into
-    # ~/.config/opencode/scripts), but they are first-class code: keep them
-    # under strict checking like the pre-pip installer did.
-    "src/spec_run/data/pipeline_scripts/save_adr.py",
-    "src/spec_run/data/pipeline_scripts/check_review.py",
-    "src/spec_run/data/pipeline_scripts/check_implementation.py",
-    "src/spec_run/data/pipeline_scripts/check_questions.py",
-    "src/spec_run/data/pipeline_scripts/task_utils.py",
-    "src/spec_run/data/pipeline_scripts/adr_utils.py",
-    "src/spec_run/data/pipeline_scripts/agent_call.py",
-]
-# The rest of the package data is runtime artifact material (rendered
-# verbatim, exercised by pytest); the negative lookahead keeps the
-# explicitly checked standalone scripts above in scope.
-exclude = [
-    "src/spec_run/data/(?!pipeline_scripts/(save_adr|check_review|check_implementation|check_questions|task_utils|adr_utils|agent_call)\\.py$)",
-]
+# Everything is checked: the whole repo tree, no whitelist, no exclude.
+files = ["."]
 # The standalone scripts import each other from the same directory (e.g.
 # save_adr.py imports adr_utils/agent_call/task_utils); point mypy at it so
 # those sibling imports resolve. "src" is the explicit package base of the
-# spec_run package.
-mypy_path = ["src", "src/spec_run/data/pipeline_scripts"]
-
-[[tool.mypy.overrides]]
-module = "tests.*"
-strict = false
-disallow_untyped_defs = false
-check_untyped_defs = false
-disallow_untyped_calls = false
-disallow_any_generics = false
-warn_return_any = false
-no_implicit_optional = false
-allow_incomplete_defs = false
+# modus_operandi package.
+mypy_path = ["src", "src/modus_operandi/data/pipeline_scripts", "."]

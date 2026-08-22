@@ -2,18 +2,20 @@
 
 import shutil
 import subprocess
+from collections.abc import Iterator
+from typing import Any
 
 from .installer_test_case import InstallerTestCase
 
-TASK_WF = ".config/spec-run/task-pipeline.yml"
-REVIEW_WF = ".config/spec-run/review-pipeline.yml"
+TASK_WF = ".config/modus-operandi/task-pipeline.yml"
+REVIEW_WF = ".config/modus-operandi/review-pipeline.yml"
 
 
 class WorkflowStructureTest(InstallerTestCase):
     """The installed task-pipeline.yml and review-pipeline.yml structures:
     step ids, ordering, inputs, loops, gate options and inline shell blocks."""
 
-    def shell_runs(self, steps):
+    def shell_runs(self, steps: Any) -> Iterator[tuple[Any, Any]]:
         for step in steps:
             if step.get("type") == "shell" and isinstance(step.get("run"), str):
                 yield step["id"], step["run"]
@@ -22,7 +24,7 @@ class WorkflowStructureTest(InstallerTestCase):
                 if isinstance(nested, list):
                     yield from self.shell_runs(nested)
 
-    def test_workflow_input_defaults_stay_at_config_defaults(self):
+    def test_workflow_input_defaults_stay_at_config_defaults(self) -> None:
         # state_dir/adr_dir are NOT baked: they are declared as optional
         # workflow inputs with the config default values, and the launcher
         # passes the configured values via -i at runtime.
@@ -33,21 +35,21 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertFalse(parsed["inputs"]["state_dir"].get("required"))
         self.assertFalse(parsed["inputs"]["adr_dir"].get("required"))
 
-    def test_workflow_scripts_dir_has_fallback_for_direct_runs(self):
+    def test_workflow_scripts_dir_has_fallback_for_direct_runs(self) -> None:
         # `specify workflow run <path> -i task=...` is a documented entry
-        # point that does not go through run-pipeline.py: SKLC_SCRIPTS_DIR is
+        # point that does not go through run-pipeline.py: MO_SCRIPTS_DIR is
         # then unset, so every step referencing the scripts must expand to
         # the default install location instead of an empty prefix. The
         # expansion is the ONLY shell syntax a run: value may carry
-        # (CONTRIBUTING.md), so a bare $SKLC_SCRIPTS_DIR without the fallback
+        # (CONTRIBUTING.md), so a bare $MO_SCRIPTS_DIR without the fallback
         # is a violation.
         self.assertEqual(self.install(), 0)
-        fallback = "${SKLC_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}"
+        fallback = "${MO_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}"
 
-        def missing_fallback(steps, missing):
+        def missing_fallback(steps: Any, missing: list[str]) -> None:
             for step in steps:
                 run = step.get("run")
-                if isinstance(run, str) and "$SKLC_SCRIPTS_DIR" in run and fallback not in run:
+                if isinstance(run, str) and "$MO_SCRIPTS_DIR" in run and fallback not in run:
                     missing.append(step.get("id"))
                 for branch in ("steps", "then", "else"):
                     nested = step.get(branch)
@@ -59,28 +61,24 @@ class WorkflowStructureTest(InstallerTestCase):
 
         for rel in (TASK_WF, REVIEW_WF):
             parsed = self.parsed_workflow(rel)
-            missing: list = []
+            missing: list[str] = []
             missing_fallback(parsed["steps"], missing)
             self.assertEqual(missing, [], rel)
 
-    def test_workflow_loop_and_pass_check_structure(self):
+    def test_workflow_loop_and_pass_check_structure(self) -> None:
         self.assertEqual(self.install(), 0)
         workflow = (self.home / TASK_WF).read_text(encoding="utf-8")
         self.assertIn("do-while", workflow)
         self.assertIn("continue_on_error: true", workflow)
         self.assertIn("check_review.py", workflow)
-        merge_run = self.find_step(self.parsed_workflow(TASK_WF)["steps"], "merge-reports")[
-            "run"
-        ]
+        merge_run = self.find_step(self.parsed_workflow(TASK_WF)["steps"], "merge-reports")["run"]
         self.assertIn(
             'check_review.py" merge "{{ inputs.state_dir }}" "{{ inputs.task_id }}"',
             merge_run,
         )
         # CONTRIBUTING.md: pass-check calls pass-check.sh; the verdict loop
         # and the messages live in the installed script.
-        pass_check_run = self.find_step(self.parsed_workflow(TASK_WF)["steps"], "pass-check")[
-            "run"
-        ]
+        pass_check_run = self.find_step(self.parsed_workflow(TASK_WF)["steps"], "pass-check")["run"]
         self.assertIn("pass-check.sh", pass_check_run)
         self.assertIn('"{{ inputs.state_dir }}"', pass_check_run)
         self.assertIn('"{{ inputs.task_id }}"', pass_check_run)
@@ -94,20 +92,20 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertIn("- id: fix-branch", workflow)
         self.assertNotIn("sort -V", workflow)
 
-    def test_workflow_task_id_is_optional(self):
+    def test_workflow_task_id_is_optional(self) -> None:
         self.assertEqual(self.install(), 0)
         parsed = self.parsed_workflow(TASK_WF)
         task_id = parsed["inputs"]["task_id"]
         self.assertEqual(task_id["required"], False)
         self.assertNotIn("default", task_id)
 
-    def test_review_workflow_structure(self):
+    def test_review_workflow_structure(self) -> None:
         self.assertEqual(self.install(), 0)
         review = (self.home / REVIEW_WF).read_text(encoding="utf-8")
         parsed = self.parsed_workflow(REVIEW_WF)
         runs: list[str] = []
 
-        def collect(steps):
+        def collect(steps: Any) -> None:
             for step in steps:
                 run = step.get("run")
                 if isinstance(run, str):
@@ -182,7 +180,7 @@ class WorkflowStructureTest(InstallerTestCase):
         warm_planner = (self.home / ".config/opencode/scripts/warm-planner.sh").read_text(
             encoding="utf-8"
         )
-        self.assertIn("SKLC_BACKEND", warm_planner)
+        self.assertIn("MO_BACKEND", warm_planner)
         self.assertIn('"cursor"', warm_planner)
         self.assertIn("review/warmup.md", warm_planner)
         self.assertIn("cursor backend: skipping warm-up", warm_planner)
@@ -210,21 +208,19 @@ class WorkflowStructureTest(InstallerTestCase):
         for needle in ("git branch --show-current", "date +%Y%m%d-%H%M", "ln -sfn"):
             self.assertIn(needle, task_id_script, needle)
         # The merged review-report.md is the only writer of the name now.
-        self.assertFalse(
-            (self.home / ".config/spec-run/prompts/review/report.md").exists()
-        )
+        self.assertFalse((self.home / ".config/modus-operandi/prompts/review/report.md").exists())
         self.assertNotIn("base=$(cat", all_runs)
         self.assertNotIn("adr.md", all_runs)
         self.assertNotIn("adr_dir", all_runs)
         self.assertNotIn("--task", all_runs)
 
-    def test_review_rerun_prompts_include_git_status(self):
+    def test_review_rerun_prompts_include_git_status(self) -> None:
         # Regression: git diff <snapshot> never shows untracked files, so a
         # NEW file the executor creates while fixing a finding was invisible
         # in every subsequent re-review. Each re-review prompt must also ask
         # for git status so untracked files are in the review scope.
         self.assertEqual(self.install(), 0)
-        prompts = self.home / ".config/spec-run/prompts/review"
+        prompts = self.home / ".config/modus-operandi/prompts/review"
         for name in ("srp-rereview", "bug-rereview", "review-rereview", "comment-rereview"):
             # The prompts are prose wrapped across lines (srp-rereview breaks
             # mid-phrase), so join the lines before substring checks.
@@ -236,14 +232,14 @@ class WorkflowStructureTest(InstallerTestCase):
             self.assertIn("git status", prompt)
             self.assertIn("does not show untracked files", prompt)
 
-    def test_review_first_iteration_prompts_include_untracked_files(self):
+    def test_review_first_iteration_prompts_include_untracked_files(self) -> None:
         # Regression: determine-scope admits branches whose only changes are
         # untracked files, but the first-iteration prompts told the reviewer
         # to look only at `git diff <base>` — which is empty for untracked
         # files. Every first-iteration prompt must also ask for git status so
         # untracked files are in the review scope on the first pass too.
         self.assertEqual(self.install(), 0)
-        prompts = self.home / ".config/spec-run/prompts/review"
+        prompts = self.home / ".config/modus-operandi/prompts/review"
         for name in ("srp-review", "bug-review", "review", "comment-review"):
             prompt = (prompts / f"{name}.md").read_text()
             # The wording differs per stage ("Run git status" in srp-review
@@ -253,7 +249,7 @@ class WorkflowStructureTest(InstallerTestCase):
             self.assertIn("git status", prompt)
             self.assertIn("new files appear only in git status", prompt)
 
-    def test_review_workflow_order(self):
+    def test_review_workflow_order(self) -> None:
         self.assertEqual(self.install(), 0)
         review = (self.home / REVIEW_WF).read_text(encoding="utf-8")
         order = [
@@ -268,7 +264,7 @@ class WorkflowStructureTest(InstallerTestCase):
         ]
         self.assertEqual(order, sorted(order))
 
-    def test_workflow_saves_adr_to_adr_dir(self):
+    def test_workflow_saves_adr_to_adr_dir(self) -> None:
         self.assertEqual(self.install(), 0)
         workflow = (self.home / TASK_WF).read_text(encoding="utf-8")
         self.assertIn("- id: save-adr", workflow)
@@ -289,11 +285,11 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertIn("must contain ASCII letters", adr_utils)
         self.assertIn("w[:60]", adr_utils)
 
-    def test_workflow_deviation_sync(self):
+    def test_workflow_deviation_sync(self) -> None:
         self.assertEqual(self.install(), 0)
         workflow = (self.home / TASK_WF).read_text(encoding="utf-8")
         self.assertIn("- id: sync-adr", workflow)
-        sync_prompt = (self.home / ".config/spec-run/prompts/adr/sync-adr.md").read_text()
+        sync_prompt = (self.home / ".config/modus-operandi/prompts/adr/sync-adr.md").read_text()
         self.assertIn("## Amendments", sync_prompt)
         # CONTRIBUTING.md: the deviation check and the sync live in sync-adr.sh.
         sync_step = self.find_step(self.parsed_workflow(TASK_WF)["steps"], "sync-adr")
@@ -318,13 +314,11 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertLess(review_loop_index, sync_index)
         self.assertLess(sync_index, pass_index)
 
-    def test_workflow_validate_task_id(self):
+    def test_workflow_validate_task_id(self) -> None:
         self.assertEqual(self.install(), 0)
         workflow = (self.home / TASK_WF).read_text(encoding="utf-8")
         self.assertIn("- id: validate-task-id", workflow)
-        self.assertLess(
-            workflow.index("- id: validate-task-id"), workflow.index("- id: write-adr")
-        )
+        self.assertLess(workflow.index("- id: validate-task-id"), workflow.index("- id: write-adr"))
         # The task_id input is inlined into double-quoted shell strings in
         # generate-task-id and save-adr, so anything outside [A-Za-z0-9_-]
         # must be rejected before any step embeds it. CONTRIBUTING.md: the
@@ -349,21 +343,19 @@ class WorkflowStructureTest(InstallerTestCase):
         )
         self.assertIn("^[A-Za-z0-9_-]+$", run_agent)
 
-    def test_workflow_fan_out_item_timeout_is_patched(self):
+    def test_workflow_fan_out_item_timeout_is_patched(self) -> None:
         # The engine accepts only a literal timeout; the renderer's
         # _patch_workflow_numbers must reach into the fan-out `step:` template
         # and overwrite its literal with the configured shell_timeout.
         self.assertEqual(self.install(), 0)
-        self.write_config(
-            self.read_config().replace("shell_timeout: 7200", "shell_timeout: 1234")
-        )
+        self.write_config(self.read_config().replace("shell_timeout: 7200", "shell_timeout: 1234"))
         self.assertEqual(self.install(), 0)
         parsed = self.parsed_workflow(TASK_WF)
         fan = self.find_step(parsed["steps"], "review-fan")
         self.assertIsNotNone(fan)
         self.assertEqual(fan["step"].get("timeout"), 1234)
 
-    def test_workflow_unified_review_loop_structure(self):
+    def test_workflow_unified_review_loop_structure(self) -> None:
         # ADR-0009: the four sequential review loops (srp/bug/review/comment)
         # are replaced by one retry do-while whose fan-out runs only the
         # still-failing kinds in parallel forks of the warm planner session.
@@ -443,7 +435,7 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertLess(loop_index, sync_index)
         self.assertLess(sync_index, pass_index)
 
-    def test_workflow_implement_loop_structure(self):
+    def test_workflow_implement_loop_structure(self) -> None:
         # ADR-0007: after implement, a verify loop guards against an executor
         # that made no changes; one retry prompt, then the run fails.
         self.assertEqual(self.install(), 0)
@@ -459,9 +451,7 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertIn('check_implementation.py" check "{{ inputs.adr_dir }}"', implement_verify_run)
         # CONTRIBUTING.md: implement-retry calls implement-retry.sh; the
         # marker logic and the executor prompt live in the installed script.
-        retry_run = self.find_step(self.parsed_workflow(TASK_WF)["steps"], "implement-retry")[
-            "run"
-        ]
+        retry_run = self.find_step(self.parsed_workflow(TASK_WF)["steps"], "implement-retry")["run"]
         self.assertIn("implement-retry.sh", retry_run)
         self.assertIn('"{{ inputs.state_dir }}"', retry_run)
         retry_script = (self.home / ".config/opencode/scripts/implement-retry.sh").read_text(
@@ -473,7 +463,7 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertIn("adr/implement-retry.md", retry_script)
         self.assertIn(
             "You didn't do changes.",
-            (self.home / ".config/spec-run/prompts/adr/implement-retry.md").read_text(),
+            (self.home / ".config/modus-operandi/prompts/adr/implement-retry.md").read_text(),
         )
         # The IMPLEMENT OK / failure messages live in implement-pass-check.sh.
         pass_check_script = (
@@ -485,9 +475,7 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertIn("{{ steps.implement-verify.output.exit_code != 0 }}", workflow)
         self.assertIn("implement-pass-check.sh", workflow)
         parsed = self.parsed_workflow(TASK_WF)
-        self.assertEqual(
-            self.find_step(parsed["steps"], "implement-loop")["max_iterations"], 2
-        )
+        self.assertEqual(self.find_step(parsed["steps"], "implement-loop")["max_iterations"], 2)
         implement_index = workflow.index("- id: implement")
         loop_index = workflow.index("- id: implement-loop")
         review_loop_index = workflow.index("- id: review-fix-loop")
@@ -496,25 +484,21 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertLess(loop_index, review_loop_index)
         self.assertLess(loop_index, pass_index)
 
-    def test_workflow_implement_iterations_configurable(self):
+    def test_workflow_implement_iterations_configurable(self) -> None:
         self.assertEqual(self.install(), 0)
         self.write_config(
-            self.read_config().replace(
-                "max_implement_iterations: 2", "max_implement_iterations: 3"
-            )
+            self.read_config().replace("max_implement_iterations: 2", "max_implement_iterations: 3")
         )
         self.assertEqual(self.install(), 0)
         parsed = self.parsed_workflow(TASK_WF)
-        self.assertEqual(
-            self.find_step(parsed["steps"], "implement-loop")["max_iterations"], 3
-        )
+        self.assertEqual(self.find_step(parsed["steps"], "implement-loop")["max_iterations"], 3)
 
-    def test_workflow_per_kind_review_prompts_still_ship(self):
+    def test_workflow_per_kind_review_prompts_still_ship(self) -> None:
         # ADR-0009 retires the per-kind FIX prompts and the sequential loops,
         # but the four per-kind REVIEW prompts are still the prompt files the
         # parallel fan-out dispatches on (one per kind).
         self.assertEqual(self.install(), 0)
-        adr_prompts = self.home / ".config/spec-run/prompts/adr"
+        adr_prompts = self.home / ".config/modus-operandi/prompts/adr"
         self.assertIn(
             "SRP: FIX",
             (adr_prompts / "srp-review.md").read_text(encoding="utf-8"),
@@ -532,7 +516,7 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertIn("Why a reader would be misled:", comment_prompt)
         self.assertIn("Verdict: COMMENT | REFACTOR", comment_prompt)
 
-    def test_workflow_shell_blocks_are_syntactically_valid(self):
+    def test_workflow_shell_blocks_are_syntactically_valid(self) -> None:
         # Every inline shell block must parse with /bin/sh (what specify uses).
         # Regression: determine-scope (review-pipeline) used a folded >- block
         # with #-comments inside; folding joins all lines with spaces, so the

@@ -4,6 +4,7 @@ import argparse
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from .failed_result import FailedResult
@@ -12,17 +13,17 @@ from .helpers import save_adr
 
 
 class CmdSaveTest(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.task_dir = self.root / ".workflow" / "tasks" / "t1"
         self.task_dir.mkdir(parents=True)
 
-    def adr(self, text):
+    def adr(self, text: str) -> None:
         (self.task_dir / "adr.md").write_text(text, encoding="utf-8")
 
-    def save(self):
+    def save(self) -> None:
         save_adr.cmd_save(
             argparse.Namespace(
                 state_dir=str(self.root / ".workflow"),
@@ -32,7 +33,7 @@ class CmdSaveTest(unittest.TestCase):
             )
         )
 
-    def test_save_with_slug_creates_adr(self):
+    def test_save_with_slug_creates_adr(self) -> None:
         self.adr("---\nslug: prod-validation-splits\n---\n# ADR: Сплиты\n")
         self.save()
         saved = self.root / "architecture" / "ADR-0001-prod-validation-splits.md"
@@ -41,23 +42,25 @@ class CmdSaveTest(unittest.TestCase):
         saved_txt = (self.task_dir / "adr-saved.txt").read_text(encoding="utf-8")
         self.assertEqual(saved_txt, str(saved))
 
-    def test_save_is_idempotent_by_slug(self):
+    def test_save_is_idempotent_by_slug(self) -> None:
         self.adr("---\nslug: prod-validation-splits\n---\n# ADR: Сплиты\n")
         self.save()
         self.save()
         files = list((self.root / "architecture").glob("ADR-*.md"))
         self.assertEqual(len(files), 1)
 
-    def test_missing_slug_asks_planner(self):
+    def test_missing_slug_asks_planner(self) -> None:
         self.adr("---\nstatus: accepted\n---\n# ADR: Сплиты\n")
 
-        def fake_run(cmd, text=True, capture_output=True):
+        def fake_run(cmd: list[str], text: bool = True, capture_output: bool = True) -> FakeResult:
             assert text is True and capture_output is True
             assert "planner" in cmd
             adr = self.task_dir / "adr.md"
-            text = adr.read_text(encoding="utf-8")
+            content = adr.read_text(encoding="utf-8")
             adr.write_text(
-                text.replace("status: accepted", "slug: prod-validation-splits\nstatus: accepted"),
+                content.replace(
+                    "status: accepted", "slug: prod-validation-splits\nstatus: accepted"
+                ),
                 encoding="utf-8",
             )
             return FakeResult()
@@ -67,29 +70,31 @@ class CmdSaveTest(unittest.TestCase):
         saved = self.root / "architecture" / "ADR-0001-prod-validation-splits.md"
         self.assertTrue(saved.exists())
 
-    def test_planner_refusal_fails(self):
+    def test_planner_refusal_fails(self) -> None:
         self.adr("---\nstatus: accepted\n---\n# ADR: Сплиты\n")
-        with mock.patch("subprocess.run", return_value=FakeResult()), self.assertRaises(
-            SystemExit
-        ) as cm:
+        with (
+            mock.patch("subprocess.run", return_value=FakeResult()),
+            self.assertRaises(SystemExit) as cm,
+        ):
             self.save()
         self.assertIn("slug", str(cm.exception))
 
-    def test_agent_transport_failure_is_readable(self):
+    def test_agent_transport_failure_is_readable(self) -> None:
         # If the planner process itself fails (crash, timeout, attach
         # failure), the error must surface run-agent.sh's message, not a raw
         # CalledProcessError traceback.
         self.adr("---\nstatus: accepted\n---\n# ADR: Сплиты\n")
-        with mock.patch("subprocess.run", return_value=FailedResult()), self.assertRaises(
-            SystemExit
-        ) as cm:
+        with (
+            mock.patch("subprocess.run", return_value=FailedResult()),
+            self.assertRaises(SystemExit) as cm,
+        ):
             self.save()
         message = str(cm.exception)
         self.assertIn("agent call failed (exit 2)", message)
         self.assertIn("full log: /tmp/x.jsonl", message)
         self.assertNotIn("Traceback", message)
 
-    def test_rerun_same_task_reuses_own_file(self):
+    def test_rerun_same_task_reuses_own_file(self) -> None:
         self.adr("---\nslug: prod-validation-splits\n---\n# ADR: Сплиты\n")
         self.save()
         self.adr("---\nslug: prod-validation-splits\n---\n# ADR: Сплиты v2\n")
@@ -97,7 +102,7 @@ class CmdSaveTest(unittest.TestCase):
         files = list((self.root / "architecture").glob("ADR-*.md"))
         self.assertEqual(len(files), 1)
 
-    def test_same_slug_different_task_is_collision_not_reuse(self):
+    def test_same_slug_different_task_is_collision_not_reuse(self) -> None:
         t2 = self.root / ".workflow" / "tasks" / "t2"
         t2.mkdir()
         self.adr("---\nslug: prod-validation-splits\n---\n# ADR: Сплиты t1\n")
@@ -120,10 +125,10 @@ class CmdSaveTest(unittest.TestCase):
         self.assertFalse((t2 / "adr-saved.txt").exists())
         self.assertIn("# ADR-0001: Сплиты t1", saved.read_text(encoding="utf-8"))
 
-    def test_ask_planner_uses_list_form(self):
-        recorded = {}
+    def test_ask_planner_uses_list_form(self) -> None:
+        recorded: dict[str, Any] = {}
 
-        def fake_run(cmd, text=True, capture_output=True):
+        def fake_run(cmd: list[str], text: bool = True, capture_output: bool = True) -> FakeResult:
             recorded["cmd"] = cmd
             return FakeResult()
 
@@ -135,7 +140,7 @@ class CmdSaveTest(unittest.TestCase):
         self.assertEqual(recorded["cmd"][1], "planner")
         self.assertEqual(recorded["cmd"][-2:], ["--task", "t1"])
 
-    def test_save_via_symlink_is_idempotent(self):
+    def test_save_via_symlink_is_idempotent(self) -> None:
         tasks = self.root / ".workflow" / "tasks"
         (tasks / "auto-1").mkdir()
         (tasks / "current").symlink_to("auto-1")
@@ -143,7 +148,7 @@ class CmdSaveTest(unittest.TestCase):
             "---\nslug: auto-feature\n---\n# ADR: Авто\n", encoding="utf-8"
         )
 
-        def save_empty_id():
+        def save_empty_id() -> None:
             save_adr.cmd_save(
                 argparse.Namespace(
                     state_dir=str(self.root / ".workflow"),

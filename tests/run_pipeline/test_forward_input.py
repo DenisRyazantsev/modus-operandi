@@ -5,6 +5,7 @@ import pty
 import threading
 import time
 import unittest
+from typing import TextIO
 
 from .helpers import load_run_pipeline
 
@@ -13,7 +14,7 @@ class ForwardInputTest(unittest.TestCase):
     """forward_terminal_input copies terminal lines into the pty master and
     pauses while the feedback editor is open."""
 
-    def _setup(self):
+    def _setup(self) -> tuple[TextIO, int, int, int]:
         read_fd, write_fd = os.pipe()
         master_fd, slave_fd = pty.openpty()
         # The text-mode file owns read_fd: it is closed via source.close()
@@ -22,7 +23,7 @@ class ForwardInputTest(unittest.TestCase):
         source = os.fdopen(read_fd, "r")
         return source, write_fd, master_fd, slave_fd
 
-    def _read_echo(self, master_fd, expected_bytes, timeout=2.0):
+    def _read_echo(self, master_fd: int, expected_bytes: bytes, timeout: float = 2.0) -> bytes:
         # The pty line discipline echoes with \n translated to \r\n (ONLCR);
         # strip \r before comparing.
         deadline = time.monotonic() + timeout
@@ -34,7 +35,7 @@ class ForwardInputTest(unittest.TestCase):
                 time.sleep(0.05)
         return data.replace(b"\r", b"")
 
-    def test_forwards_terminal_lines_into_pty(self):
+    def test_forwards_terminal_lines_into_pty(self) -> None:
         mod = load_run_pipeline()
         source, write_fd, master_fd, slave_fd = self._setup()
         try:
@@ -58,7 +59,7 @@ class ForwardInputTest(unittest.TestCase):
             os.close(master_fd)
             os.close(slave_fd)
 
-    def test_paused_while_editor_open(self):
+    def test_paused_while_editor_open(self) -> None:
         mod = load_run_pipeline()
         source, write_fd, master_fd, slave_fd = self._setup()
         try:

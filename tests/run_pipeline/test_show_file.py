@@ -7,7 +7,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-SCRIPT = REPO_ROOT / "src/spec_run/data/pipeline_scripts" / "show-file.sh"
+SCRIPT = REPO_ROOT / "src/modus_operandi/data/pipeline_scripts" / "show-file.sh"
 
 
 class ShowFileTest(unittest.TestCase):
@@ -15,14 +15,14 @@ class ShowFileTest(unittest.TestCase):
     characters stripped (except \\t and \\n), rejects paths escaping
     state_dir (exit 2) and reports read errors with exit 1."""
 
-    def _run(self, state_dir: Path, file: str):
+    def _run(self, state_dir: Path, file: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["bash", str(SCRIPT), str(state_dir), file],
             capture_output=True,
             text=True,
         )
 
-    def test_prints_file_without_control_characters(self):
+    def test_prints_file_without_control_characters(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)
             target = state / "tasks" / "current"
@@ -38,7 +38,7 @@ class ShowFileTest(unittest.TestCase):
         self.assertIn("line2\twith tab", result.stdout)
         self.assertIn("red", result.stdout)
 
-    def test_rejects_paths_escaping_state_dir(self):
+    def test_rejects_paths_escaping_state_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)
             for file in ("../etc/passwd", "tasks/../../etc/passwd", "..", "a/.."):
@@ -47,7 +47,7 @@ class ShowFileTest(unittest.TestCase):
                 self.assertEqual(result.stdout, "", file)
                 self.assertIn("escapes", result.stderr)
 
-    def test_missing_file_returns_1_with_empty_stdout(self):
+    def test_missing_file_returns_1_with_empty_stdout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)
             result = self._run(state, "tasks/current/missing.md")
@@ -55,7 +55,7 @@ class ShowFileTest(unittest.TestCase):
         self.assertEqual(result.stdout, "")
         self.assertNotEqual(result.stderr, "")
 
-    def test_wrong_arity_returns_2(self):
+    def test_wrong_arity_returns_2(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)
             result = subprocess.run(

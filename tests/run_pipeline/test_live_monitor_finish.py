@@ -10,7 +10,13 @@ from unittest import mock
 from .helpers import load_run_pipeline
 
 
-def step_finish(input=1, output=2, reasoning=3, cache_read=4, cost=0.01):
+def step_finish(
+    input: int = 1,
+    output: int = 2,
+    reasoning: int = 3,
+    cache_read: int = 4,
+    cost: float = 0.01,
+) -> dict[str, object]:
     return {
         "type": "step_finish",
         "part": {
@@ -34,7 +40,7 @@ class LiveMonitorFinishTest(unittest.TestCase):
     otherwise never reach the live status lines (ADR-0011).
     """
 
-    def test_finish_prints_late_step_finish_line(self):
+    def test_finish_prints_late_step_finish_line(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             # The tailer is built as cwd/'${state_dir}/logs'; state_dir
@@ -59,7 +65,7 @@ class LiveMonitorFinishTest(unittest.TestCase):
             self.assertIn("cache 4", out)
             self.assertIn("price $0.01", out)
 
-    def test_finish_polls_late_step_results(self):
+    def test_finish_polls_late_step_results(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp) / "workflows" / "runs" / "abc12345"

@@ -458,7 +458,7 @@ wheels = [
 ]
 
 [[package]]
-name = "spec-run"
+name = "modus-operandi"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -476,7 +476,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "pyyaml" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "specify-cli", specifier = ">=0.16" },
 ]
 

@@ -12,12 +12,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 # save_adr.py imports task_utils.py from the same directory. The directory is
 # appended (not inserted at 0) so its modules never shadow the test packages
-# during unittest discovery (e.g. pipeline_scripts/spec_run.py must not win
-# over tests/spec_run/ when discovery imports the "spec_run" package).
-sys.path.append(str(REPO_ROOT / "src/spec_run/data/pipeline_scripts"))
+# during unittest discovery (e.g. pipeline_scripts/modus_operandi.py must not win
+# over tests/modus_operandi/ when discovery imports the "modus_operandi" package).
+sys.path.append(str(REPO_ROOT / "src/modus_operandi/data/pipeline_scripts"))
 
 _SPEC = importlib.util.spec_from_file_location(
-    "save_adr_under_test", REPO_ROOT / "src/spec_run/data/pipeline_scripts" / "save_adr.py"
+    "save_adr_under_test", REPO_ROOT / "src/modus_operandi/data/pipeline_scripts" / "save_adr.py"
 )
 assert _SPEC is not None and _SPEC.loader is not None
 # Registered under a distinct name so it does not shadow the tests.save_adr

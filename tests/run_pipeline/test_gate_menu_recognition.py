@@ -10,13 +10,13 @@ class GateMenuRecognitionTest(unittest.TestCase):
     window is on screen; recognizing the window's first line is a pure
     string predicate."""
 
-    def test_recognizes_menu_opener_line(self):
+    def test_recognizes_menu_opener_line(self) -> None:
         mod = load_run_pipeline()
         self.assertTrue(mod.is_gate_menu_opener("┌─ Gate ───────────"))
         self.assertTrue(mod.is_gate_menu_opener("  ┌─ Gate ···"))  # leading spaces
         self.assertTrue(mod.is_gate_menu_opener("┌─ Gate"))
 
-    def test_rejects_other_lines(self):
+    def test_rejects_other_lines(self) -> None:
         mod = load_run_pipeline()
         self.assertFalse(mod.is_gate_menu_opener(""))
         self.assertFalse(mod.is_gate_menu_opener("writing the ADR..."))

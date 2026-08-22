@@ -11,14 +11,14 @@ class RenderLogEventFilterTest(unittest.TestCase):
     status lines replace the old log echo). The function keeps its (role,
     text) contract, always returning an empty text."""
 
-    def test_text_events_are_suppressed(self):
+    def test_text_events_are_suppressed(self) -> None:
         mod = load_run_pipeline()
         role, text = mod.render_log_event(
             "executor", '{"part": {"type": "text", "text": "writing ADR"}}'
         )
         self.assertEqual((role, text), ("executor", ""))
 
-    def test_all_event_types_are_suppressed(self):
+    def test_all_event_types_are_suppressed(self) -> None:
         mod = load_run_pipeline()
         for line in (
             '{"type": "step-start", "part": {"type": "step-start"}}',
@@ -30,7 +30,7 @@ class RenderLogEventFilterTest(unittest.TestCase):
         ):
             self.assertEqual(mod.render_log_event("executor", line)[1], "")
 
-    def test_non_json_line_is_suppressed(self):
+    def test_non_json_line_is_suppressed(self) -> None:
         mod = load_run_pipeline()
         role, text = mod.render_log_event("executor", "plain line")
         self.assertEqual((role, text), ("executor", ""))

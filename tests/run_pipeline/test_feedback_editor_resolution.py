@@ -12,17 +12,15 @@ class FeedbackEditorResolutionTest(unittest.TestCase):
     vi, each candidate validated on PATH; None when the whole chain is
     empty (unlike the launcher, which must always return something)."""
 
-    def test_prefers_visual_over_editor(self):
+    def test_prefers_visual_over_editor(self) -> None:
         mod = load_run_pipeline()
         with (
-            mock.patch.dict(
-                "os.environ", {"VISUAL": "code --wait", "EDITOR": "vim"}, clear=True
-            ),
+            mock.patch.dict("os.environ", {"VISUAL": "code --wait", "EDITOR": "vim"}, clear=True),
             mock.patch("shutil.which", side_effect=lambda name: "/usr/bin/" + name),
         ):
             self.assertEqual(mod.resolve_editor(), ["code", "--wait"])
 
-    def test_uses_editor_when_visual_unset(self):
+    def test_uses_editor_when_visual_unset(self) -> None:
         mod = load_run_pipeline()
         with (
             mock.patch.dict("os.environ", {"EDITOR": "emacs -nw"}, clear=True),
@@ -30,38 +28,34 @@ class FeedbackEditorResolutionTest(unittest.TestCase):
         ):
             self.assertEqual(mod.resolve_editor(), ["emacs", "-nw"])
 
-    def test_missing_binary_falls_through_to_next_candidate(self):
+    def test_missing_binary_falls_through_to_next_candidate(self) -> None:
         # A VISUAL/EDITOR whose binary is not on PATH is skipped and the
         # chain continues (the launcher would return it as-is instead).
         mod = load_run_pipeline()
 
-        def which(name):
+        def which(name: str) -> str | None:
             return "/usr/bin/" + name if name == "vim" else None
 
         with (
-            mock.patch.dict(
-                "os.environ", {"VISUAL": "subl", "EDITOR": "vim"}, clear=True
-            ),
+            mock.patch.dict("os.environ", {"VISUAL": "subl", "EDITOR": "vim"}, clear=True),
             mock.patch("shutil.which", side_effect=which),
         ):
             self.assertEqual(mod.resolve_editor(), ["vim"])
 
-    def test_malformed_visual_is_skipped_with_warning(self):
+    def test_malformed_visual_is_skipped_with_warning(self) -> None:
         mod = load_run_pipeline()
         with (
-            mock.patch.dict(
-                "os.environ", {"VISUAL": 'code --wait"', "EDITOR": "vim"}, clear=True
-            ),
+            mock.patch.dict("os.environ", {"VISUAL": 'code --wait"', "EDITOR": "vim"}, clear=True),
             mock.patch("shutil.which", side_effect=lambda name: "/usr/bin/" + name),
             mock.patch("sys.stderr", io.StringIO()) as stderr,
         ):
             self.assertEqual(mod.resolve_editor(), ["vim"])
         self.assertIn("warning", stderr.getvalue())
 
-    def test_falls_back_to_nano_then_vi(self):
+    def test_falls_back_to_nano_then_vi(self) -> None:
         mod = load_run_pipeline()
 
-        def with_nano(name):
+        def with_nano(name: str) -> str | None:
             return "/usr/bin/" + name if name in ("nano", "vi") else None
 
         with (
@@ -70,7 +64,7 @@ class FeedbackEditorResolutionTest(unittest.TestCase):
         ):
             self.assertEqual(mod.resolve_editor(), ["nano"])
 
-        def vi_only(name):
+        def vi_only(name: str) -> str | None:
             return "/usr/bin/vi" if name == "vi" else None
 
         with (
@@ -79,7 +73,7 @@ class FeedbackEditorResolutionTest(unittest.TestCase):
         ):
             self.assertEqual(mod.resolve_editor(), ["vi"])
 
-    def test_no_editor_available_returns_none(self):
+    def test_no_editor_available_returns_none(self) -> None:
         mod = load_run_pipeline()
         with (
             mock.patch.dict("os.environ", {}, clear=True),
@@ -93,7 +87,7 @@ class FeedbackEditorPlatformTest(unittest.TestCase):
     (ADR-0011) — macOS TextEdit (waited), Linux GUI in a separate window
     (detached), the terminal chain as the no-GUI fallback (waited)."""
 
-    def test_macos_uses_textedit_waited(self):
+    def test_macos_uses_textedit_waited(self) -> None:
         mod = load_run_pipeline()
         with mock.patch("sys.platform", "darwin"):
             self.assertEqual(
@@ -101,7 +95,7 @@ class FeedbackEditorPlatformTest(unittest.TestCase):
                 ("waited", ["open", "-a", "TextEdit", "-W"]),
             )
 
-    def test_linux_flatpak_detached(self):
+    def test_linux_flatpak_detached(self) -> None:
         # flatpak on PATH and `flatpak info org.gnome.TextEditor` exits 0:
         # the Flatpak GNOME Text Editor is used, detached.
         mod = load_run_pipeline()
@@ -109,9 +103,7 @@ class FeedbackEditorPlatformTest(unittest.TestCase):
             mock.patch("sys.platform", "linux"),
             mock.patch(
                 "shutil.which",
-                side_effect=lambda name: "/usr/bin/" + name
-                if name == "flatpak"
-                else None,
+                side_effect=lambda name: "/usr/bin/" + name if name == "flatpak" else None,
             ),
             mock.patch("subprocess.run", return_value=mock.Mock(returncode=0)) as run,
         ):
@@ -121,12 +113,12 @@ class FeedbackEditorPlatformTest(unittest.TestCase):
             )
         self.assertEqual(run.call_args.args[0], ["flatpak", "info", "org.gnome.TextEditor"])
 
-    def test_linux_flatpak_not_installed_falls_to_gnome_text_editor(self):
+    def test_linux_flatpak_not_installed_falls_to_gnome_text_editor(self) -> None:
         # flatpak on PATH but the app not installed (exit 1): the RPM binary
         # is tried next.
         mod = load_run_pipeline()
 
-        def which(name):
+        def which(name: str) -> str | None:
             return "/usr/bin/" + name if name in ("flatpak", "gnome-text-editor") else None
 
         with (
@@ -134,14 +126,12 @@ class FeedbackEditorPlatformTest(unittest.TestCase):
             mock.patch("shutil.which", side_effect=which),
             mock.patch("subprocess.run", return_value=mock.Mock(returncode=1)),
         ):
-            self.assertEqual(
-                mod.resolve_feedback_editor(), ("detached", ["gnome-text-editor"])
-            )
+            self.assertEqual(mod.resolve_feedback_editor(), ("detached", ["gnome-text-editor"]))
 
-    def test_linux_gio_open_detached(self):
+    def test_linux_gio_open_detached(self) -> None:
         mod = load_run_pipeline()
 
-        def which(name):
+        def which(name: str) -> str | None:
             return "/usr/bin/" + name if name == "gio" else None
 
         with (
@@ -151,10 +141,10 @@ class FeedbackEditorPlatformTest(unittest.TestCase):
         ):
             self.assertEqual(mod.resolve_feedback_editor(), ("detached", ["gio", "open"]))
 
-    def test_linux_xdg_open_detached(self):
+    def test_linux_xdg_open_detached(self) -> None:
         mod = load_run_pipeline()
 
-        def which(name):
+        def which(name: str) -> str | None:
             return "/usr/bin/" + name if name == "xdg-open" else None
 
         with (
@@ -162,14 +152,12 @@ class FeedbackEditorPlatformTest(unittest.TestCase):
             mock.patch("shutil.which", side_effect=which),
             mock.patch("subprocess.run", return_value=mock.Mock(returncode=1)),
         ):
-            self.assertEqual(
-                mod.resolve_feedback_editor(), ("detached", ["xdg-open"])
-            )
+            self.assertEqual(mod.resolve_feedback_editor(), ("detached", ["xdg-open"]))
 
-    def test_linux_no_gui_falls_back_to_terminal_chain(self):
+    def test_linux_no_gui_falls_back_to_terminal_chain(self) -> None:
         mod = load_run_pipeline()
 
-        def which(name):
+        def which(name: str) -> str | None:
             return "/usr/bin/" + name if name in ("nano", "vi") else None
 
         with (
@@ -180,7 +168,7 @@ class FeedbackEditorPlatformTest(unittest.TestCase):
         ):
             self.assertEqual(mod.resolve_feedback_editor(), ("waited", ["nano"]))
 
-    def test_no_editor_returns_none(self):
+    def test_no_editor_returns_none(self) -> None:
         mod = load_run_pipeline()
         with (
             mock.patch("sys.platform", "linux"),

@@ -13,9 +13,10 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-RUN_AGENT = REPO_ROOT / "src/spec_run/data/pipeline_scripts" / "run-agent.sh"
+RUN_AGENT = REPO_ROOT / "src/modus_operandi/data/pipeline_scripts" / "run-agent.sh"
 
 PLANNER_BODY = "You are the planner and reviewer in a spec-driven pipeline."
 EXECUTOR_BODY = "You are the executor in a spec-driven pipeline."
@@ -96,8 +97,8 @@ def read_invocations(log_path: Path) -> list[list[str]]:
     command: `create-chat` (cursor chat mint), `-p` (cursor run) or `run`
     (opencode run). NUL separation keeps multi-line prompt args intact.
     """
-    args = [a for a in log_path.read_bytes().split(b"\0") if a]
-    args = [a.decode("utf-8") for a in args]
+    raw: list[bytes] = [a for a in log_path.read_bytes().split(b"\0") if a]
+    args = [a.decode("utf-8") for a in raw]
     invocations: list[list[str]] = []
     current: list[str] | None = None
     for arg in args:
@@ -115,7 +116,7 @@ def read_invocations(log_path: Path) -> list[list[str]]:
 class RunAgentTest(unittest.TestCase):
     """End-to-end backend dispatch of the installed run-agent.sh."""
 
-    def setUp(self):
+    def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="run_agent_test_"))
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.scripts = self.tmp / "scripts"
@@ -126,10 +127,9 @@ class RunAgentTest(unittest.TestCase):
         self.state.mkdir()
         # run-agent.sh is split one concern per file: the session store and
         # the cursor backend are sourced, prompt_subst.sh is called.
-        for name in ("run-agent.sh", "session_store.sh", "run-agent-cursor.sh",
-                     "prompt_subst.sh"):
+        for name in ("run-agent.sh", "session_store.sh", "run-agent-cursor.sh", "prompt_subst.sh"):
             dst = self.scripts / name
-            shutil.copy2(REPO_ROOT / "src/spec_run/data/pipeline_scripts" / name, dst)
+            shutil.copy2(REPO_ROOT / "src/modus_operandi/data/pipeline_scripts" / name, dst)
             if name in ("run-agent.sh", "prompt_subst.sh"):
                 dst.chmod(0o755)
         self.run_agent = self.scripts / "run-agent.sh"
@@ -139,12 +139,12 @@ class RunAgentTest(unittest.TestCase):
         self.agent_log = self.tmp / "agent.log"
         self.opencode_log = self.tmp / "opencode.log"
 
-    def _env(self, **extra) -> dict:
+    def _env(self, **extra: str) -> dict[str, str]:
         env = {
             "PATH": str(self.bin) + os.pathsep + _safe_system_path(),
-            "SKLC_STATE_DIR": str(self.state),
-            "SKLC_PLANNER_MODEL": "planner-slug",
-            "SKLC_EXECUTOR_MODEL": "executor-slug",
+            "MO_STATE_DIR": str(self.state),
+            "MO_PLANNER_MODEL": "planner-slug",
+            "MO_EXECUTOR_MODEL": "executor-slug",
             "FAKE_CURSOR_LOG": str(self.cursor_log),
             "FAKE_AGENT_LOG": str(self.agent_log),
             "FAKE_OPENCODE_LOG": str(self.opencode_log),
@@ -152,7 +152,7 @@ class RunAgentTest(unittest.TestCase):
         env.update(extra)
         return env
 
-    def _run(self, *args, **env_extra) -> subprocess.CompletedProcess:
+    def _run(self, *args: str, **env_extra: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [str(self.run_agent), *args],
             capture_output=True,
@@ -161,28 +161,28 @@ class RunAgentTest(unittest.TestCase):
             env=self._env(**env_extra),
         )
 
-    def _sessions(self) -> dict:
+    def _sessions(self) -> dict[str, Any]:
         path = self.state / "sessions.json"
         if not path.exists():
             return {}
-        return json.loads(path.read_text(encoding="utf-8"))
+        data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+        return data
 
     def _seed_session(self, role: str, chat_id: str) -> None:
-        (self.state / "sessions.json").write_text(
-            json.dumps({role: chat_id}), encoding="utf-8"
-        )
+        (self.state / "sessions.json").write_text(json.dumps({role: chat_id}), encoding="utf-8")
 
     # -- cursor backend ---------------------------------------------------
 
-    def test_cursor_first_call_mints_chat_and_prefixes_role_body(self):
+    def test_cursor_first_call_mints_chat_and_prefixes_role_body(self) -> None:
         _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_SCRIPT)
-        result = self._run("planner", "write the adr now", SKLC_BACKEND="cursor")
+        result = self._run("planner", "write the adr now", MO_BACKEND="cursor")
         self.assertEqual(result.returncode, 0, result.stderr)
         invs = read_invocations(self.cursor_log)
         self.assertEqual(invs[0], ["create-chat"])
         run = invs[1]
-        self.assertEqual(run[:6], ["-p", "--output-format", "json", "--force",
-                                   "--trust", "--workspace"])
+        self.assertEqual(
+            run[:6], ["-p", "--output-format", "json", "--force", "--trust", "--workspace"]
+        )
         self.assertEqual(run[8], "planner-slug")  # --model <role-model>
         self.assertEqual(run[9], "--resume")
         self.assertEqual(run[10], "chat-fresh-123")
@@ -191,10 +191,10 @@ class RunAgentTest(unittest.TestCase):
         self.assertEqual(self._sessions().get("planner"), "chat-fresh-123")
         self.assertIn("SESSION:chat-fresh-123", result.stdout)
 
-    def test_cursor_resume_sends_bare_prompt_without_create_chat(self):
+    def test_cursor_resume_sends_bare_prompt_without_create_chat(self) -> None:
         _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_SCRIPT)
         self._seed_session("planner", "chat-old-456")
-        result = self._run("planner", "continue please", SKLC_BACKEND="cursor")
+        result = self._run("planner", "continue please", MO_BACKEND="cursor")
         self.assertEqual(result.returncode, 0, result.stderr)
         invs = read_invocations(self.cursor_log)
         self.assertEqual([i[0] for i in invs], ["-p"])  # no create-chat
@@ -205,10 +205,10 @@ class RunAgentTest(unittest.TestCase):
         self.assertEqual(run[-1], "continue please")
         self.assertIn("SESSION:chat-old-456", result.stdout)
 
-    def test_cursor_model_selected_by_role(self):
+    def test_cursor_model_selected_by_role(self) -> None:
         _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_SCRIPT)
-        self._run("planner", "plan something", SKLC_BACKEND="cursor")
-        self._run("executor", "implement something", SKLC_BACKEND="cursor")
+        self._run("planner", "plan something", MO_BACKEND="cursor")
+        self._run("executor", "implement something", MO_BACKEND="cursor")
         invs = read_invocations(self.cursor_log)
         planner_run = invs[1]
         executor_run = invs[3]
@@ -216,9 +216,9 @@ class RunAgentTest(unittest.TestCase):
         self.assertEqual(executor_run[8], "executor-slug")
         self.assertTrue(executor_run[-1].startswith(EXECUTOR_BODY))
 
-    def test_cursor_falls_back_to_agent_binary(self):
+    def test_cursor_falls_back_to_agent_binary(self) -> None:
         _write_executable(self.bin / "agent", AGENT_SCRIPT)
-        result = self._run("planner", "write the adr now", SKLC_BACKEND="cursor")
+        result = self._run("planner", "write the adr now", MO_BACKEND="cursor")
         self.assertEqual(result.returncode, 0, result.stderr)
         invs = read_invocations(self.agent_log)
         self.assertEqual(invs[0], ["create-chat"])
@@ -226,9 +226,9 @@ class RunAgentTest(unittest.TestCase):
         self.assertEqual(invs[1][10], "chat-agent-789")
         self.assertIn("SESSION:chat-agent-789", result.stdout)
 
-    def test_cursor_recovers_chat_id_from_json_when_create_chat_fails(self):
+    def test_cursor_recovers_chat_id_from_json_when_create_chat_fails(self) -> None:
         _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_NO_CREATE_SCRIPT)
-        result = self._run("planner", "write the adr now", SKLC_BACKEND="cursor")
+        result = self._run("planner", "write the adr now", MO_BACKEND="cursor")
         self.assertEqual(result.returncode, 0, result.stderr)
         invs = read_invocations(self.cursor_log)
         self.assertEqual(invs[0], ["create-chat"])  # attempted, failed
@@ -237,22 +237,20 @@ class RunAgentTest(unittest.TestCase):
         self.assertEqual(self._sessions().get("planner"), "chat-from-json")
         self.assertIn("SESSION:chat-from-json", result.stdout)
 
-    def test_cursor_missing_binary_errors(self):
-        result = self._run("planner", "write the adr now", SKLC_BACKEND="cursor")
+    def test_cursor_missing_binary_errors(self) -> None:
+        result = self._run("planner", "write the adr now", MO_BACKEND="cursor")
         self.assertEqual(result.returncode, 2)
         self.assertIn("not found in PATH", result.stderr)
 
-    def test_cursor_missing_role_model_errors(self):
+    def test_cursor_missing_role_model_errors(self) -> None:
         _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_SCRIPT)
-        result = self._run(
-            "planner", "write the adr now", SKLC_BACKEND="cursor", SKLC_PLANNER_MODEL=""
-        )
+        result = self._run("planner", "write the adr now", MO_BACKEND="cursor", MO_PLANNER_MODEL="")
         self.assertEqual(result.returncode, 2)
-        self.assertIn("SKLC_PLANNER_MODEL", result.stderr)
+        self.assertIn("MO_PLANNER_MODEL", result.stderr)
 
     # -- opencode backend (default) ----------------------------------------
 
-    def test_opencode_default_dispatch_and_resume(self):
+    def test_opencode_default_dispatch_and_resume(self) -> None:
         _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
         result = self._run("planner", "write the adr now")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -268,14 +266,22 @@ class RunAgentTest(unittest.TestCase):
         invs = read_invocations(self.opencode_log)
         self.assertEqual(
             invs[1],
-            ["run", "--session", "sess-abc", "--agent", "planner", "--auto",
-             "--format", "json", "continue please"],
+            [
+                "run",
+                "--session",
+                "sess-abc",
+                "--agent",
+                "planner",
+                "--auto",
+                "--format",
+                "json",
+                "continue please",
+            ],
         )
-
 
     # -- review fork (ADR-0013): one per-kind session per review check ------
 
-    def test_review_fork_first_call_forks_parent_and_saves_kind_id(self):
+    def test_review_fork_first_call_forks_parent_and_saves_kind_id(self) -> None:
         _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
         self._seed_session("planner", "warm-999")
         result = self._run("planner", "review now", "--review-fork", "srp")
@@ -283,8 +289,18 @@ class RunAgentTest(unittest.TestCase):
         invs = read_invocations(self.opencode_log)
         self.assertEqual(
             invs[0],
-            ["run", "--session", "warm-999", "--fork", "--agent", "planner",
-             "--auto", "--format", "json", "review now"],
+            [
+                "run",
+                "--session",
+                "warm-999",
+                "--fork",
+                "--agent",
+                "planner",
+                "--auto",
+                "--format",
+                "json",
+                "review now",
+            ],
         )
         # The fork's id is saved to the per-kind file, never to the per-role
         # store: the parent warm session stays authoritative.
@@ -297,14 +313,10 @@ class RunAgentTest(unittest.TestCase):
         self.assertIn("SESSION:sess-fork-1", result.stdout)
         # Stable per-kind log/pid files: the tailer labels the live line
         # [planner#srp] and the token sums continue between iterations.
-        self.assertTrue(
-            (self.state / "logs" / "sessions-planner-fork-srp.jsonl").is_file()
-        )
-        self.assertTrue(
-            (self.state / "pids" / "sessions-planner-fork-srp.pid").is_file()
-        )
+        self.assertTrue((self.state / "logs" / "sessions-planner-fork-srp.jsonl").is_file())
+        self.assertTrue((self.state / "pids" / "sessions-planner-fork-srp.pid").is_file())
 
-    def test_review_fork_second_call_continues_without_fork(self):
+    def test_review_fork_second_call_continues_without_fork(self) -> None:
         _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
         self._seed_session("planner", "warm-999")
         kind_file = self.state / "sessions-review-srp.json"
@@ -314,8 +326,17 @@ class RunAgentTest(unittest.TestCase):
         invs = read_invocations(self.opencode_log)
         self.assertEqual(
             invs[0],
-            ["run", "--session", "sess-fork-1", "--agent", "planner",
-             "--auto", "--format", "json", "review again"],
+            [
+                "run",
+                "--session",
+                "sess-fork-1",
+                "--agent",
+                "planner",
+                "--auto",
+                "--format",
+                "json",
+                "review again",
+            ],
         )
         # The id is not re-saved (it did not change); the parent store is
         # untouched.
@@ -326,7 +347,7 @@ class RunAgentTest(unittest.TestCase):
         self.assertEqual(self._sessions().get("planner"), "warm-999")
         self.assertIn("SESSION:sess-fork-1", result.stdout)
 
-    def test_review_fork_vanished_session_clears_id_and_reforks_parent(self):
+    def test_review_fork_vanished_session_clears_id_and_reforks_parent(self) -> None:
         # A continue that fails with "Session not found" (opencode
         # auto-compact/cleanup) drops the per-kind id and forks the parent
         # again (ADR-0013).
@@ -339,13 +360,32 @@ class RunAgentTest(unittest.TestCase):
         invs = read_invocations(self.opencode_log)
         self.assertEqual(
             invs[0],
-            ["run", "--session", "sess-gone", "--agent", "planner",
-             "--auto", "--format", "json", "review again"],
+            [
+                "run",
+                "--session",
+                "sess-gone",
+                "--agent",
+                "planner",
+                "--auto",
+                "--format",
+                "json",
+                "review again",
+            ],
         )
         self.assertEqual(
             invs[1],
-            ["run", "--session", "warm-999", "--fork", "--agent", "planner",
-             "--auto", "--format", "json", "review again"],
+            [
+                "run",
+                "--session",
+                "warm-999",
+                "--fork",
+                "--agent",
+                "planner",
+                "--auto",
+                "--format",
+                "json",
+                "review again",
+            ],
         )
         self.assertEqual(
             json.loads(kind_file.read_text(encoding="utf-8"))["planner"],
@@ -353,13 +393,13 @@ class RunAgentTest(unittest.TestCase):
         )
         self.assertIn("SESSION:sess-fork-1", result.stdout)
 
-    def test_review_fork_without_warm_session_errors(self):
+    def test_review_fork_without_warm_session_errors(self) -> None:
         _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
         result = self._run("planner", "review now", "--review-fork", "srp")
         self.assertEqual(result.returncode, 2)
         self.assertIn("no warm session to fork", result.stderr)
 
-    def test_review_fork_with_prompt_file_parses_flags_in_any_order(self):
+    def test_review_fork_with_prompt_file_parses_flags_in_any_order(self) -> None:
         # The parallel fan-out invokes `planner --review-fork <kind>
         # --prompt-file <path>` (ADR-0013): --prompt-file must be recognized
         # at any position, not only as the second argument, or the leftover
@@ -373,8 +413,18 @@ class RunAgentTest(unittest.TestCase):
         invs = read_invocations(self.opencode_log)
         self.assertEqual(
             invs[0],
-            ["run", "--session", "warm-999", "--fork", "--agent", "planner",
-             "--auto", "--format", "json", "review now"],
+            [
+                "run",
+                "--session",
+                "warm-999",
+                "--fork",
+                "--agent",
+                "planner",
+                "--auto",
+                "--format",
+                "json",
+                "review now",
+            ],
         )
         kind_file = self.state / "sessions-review-srp.json"
         self.assertEqual(
@@ -382,21 +432,19 @@ class RunAgentTest(unittest.TestCase):
             "sess-fork-1",
         )
 
-    def test_review_fork_invalid_kind_errors(self):
+    def test_review_fork_invalid_kind_errors(self) -> None:
         _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
         result = self._run("planner", "review now", "--review-fork", "srp bad!")
         self.assertEqual(result.returncode, 2)
         self.assertIn("invalid --review-fork", result.stderr)
 
-    def test_review_fork_files_scoped_by_task_id(self):
+    def test_review_fork_files_scoped_by_task_id(self) -> None:
         _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
         # The parent warm session is task-scoped too: sessions-task-42.json.
         (self.state / "sessions-task-42.json").write_text(
             json.dumps({"planner": "warm-999"}), encoding="utf-8"
         )
-        result = self._run(
-            "planner", "review now", "--review-fork", "bugs", "--task", "task-42"
-        )
+        result = self._run("planner", "review now", "--review-fork", "bugs", "--task", "task-42")
         self.assertEqual(result.returncode, 0, result.stderr)
         kind_file = self.state / "sessions-task-42-review-bugs.json"
         self.assertEqual(
@@ -407,16 +455,14 @@ class RunAgentTest(unittest.TestCase):
             (self.state / "logs" / "sessions-task-42-planner-fork-bugs.jsonl").is_file()
         )
 
-    def test_cursor_review_fork_first_call_mints_and_saves_kind_chat(self):
+    def test_cursor_review_fork_first_call_mints_and_saves_kind_chat(self) -> None:
         # cursor-agent has no fork primitive (ADR-0013, documented in
         # run-agent-cursor.sh): the per-kind chat IS the fork. The first
         # check of a kind mints a fresh chat, saves its id to the per-kind
         # file (never to the shared store) and prefixes the role body.
         _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_SCRIPT)
         self._seed_session("planner", "warm-456")
-        result = self._run(
-            "planner", "review now", "--review-fork", "srp", SKLC_BACKEND="cursor"
-        )
+        result = self._run("planner", "review now", "--review-fork", "srp", MO_BACKEND="cursor")
         self.assertEqual(result.returncode, 0, result.stderr)
         invs = read_invocations(self.cursor_log)
         self.assertEqual(invs[0], ["create-chat"])
@@ -434,14 +480,12 @@ class RunAgentTest(unittest.TestCase):
         self.assertEqual(self._sessions().get("planner"), "warm-456")
         self.assertIn("SESSION:chat-fresh-123", result.stdout)
 
-    def test_cursor_review_fork_resumes_saved_kind_chat(self):
+    def test_cursor_review_fork_resumes_saved_kind_chat(self) -> None:
         _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_SCRIPT)
         self._seed_session("planner", "warm-456")
         kind_file = self.state / "sessions-review-srp.json"
         kind_file.write_text(json.dumps({"planner": "chat-srp-1"}), encoding="utf-8")
-        result = self._run(
-            "planner", "review again", "--review-fork", "srp", SKLC_BACKEND="cursor"
-        )
+        result = self._run("planner", "review again", "--review-fork", "srp", MO_BACKEND="cursor")
         self.assertEqual(result.returncode, 0, result.stderr)
         invs = read_invocations(self.cursor_log)
         self.assertEqual([i[0] for i in invs], ["-p"])  # no create-chat
@@ -453,12 +497,10 @@ class RunAgentTest(unittest.TestCase):
         self.assertEqual(self._sessions().get("planner"), "warm-456")
         self.assertIn("SESSION:chat-srp-1", result.stdout)
 
-    def test_cursor_review_fork_recovers_kind_chat_when_create_chat_fails(self):
+    def test_cursor_review_fork_recovers_kind_chat_when_create_chat_fails(self) -> None:
         _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_NO_CREATE_SCRIPT)
         self._seed_session("planner", "warm-456")
-        result = self._run(
-            "planner", "review now", "--review-fork", "srp", SKLC_BACKEND="cursor"
-        )
+        result = self._run("planner", "review now", "--review-fork", "srp", MO_BACKEND="cursor")
         self.assertEqual(result.returncode, 0, result.stderr)
         invs = read_invocations(self.cursor_log)
         self.assertEqual(invs[0], ["create-chat"])  # attempted, failed
@@ -473,7 +515,7 @@ class RunAgentTest(unittest.TestCase):
         self.assertEqual(self._sessions().get("planner"), "warm-456")
         self.assertIn("SESSION:chat-from-json", result.stdout)
 
-    def test_cursor_review_fork_log_accumulates_across_iterations(self):
+    def test_cursor_review_fork_log_accumulates_across_iterations(self) -> None:
         # Regression (ADR-0013 bug fix): the per-kind cursor log is a stable
         # file and must ACCUMULATE across the review-fix-loop iterations —
         # the end-of-run statistics (collect_cursor_usage) sums every event
@@ -481,19 +523,13 @@ class RunAgentTest(unittest.TestCase):
         # last iteration's tokens.
         _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_SCRIPT)
         self._seed_session("planner", "warm-456")
-        first = self._run(
-            "planner", "review now", "--review-fork", "srp", SKLC_BACKEND="cursor"
-        )
+        first = self._run("planner", "review now", "--review-fork", "srp", MO_BACKEND="cursor")
         self.assertEqual(first.returncode, 0, first.stderr)
-        second = self._run(
-            "planner", "review again", "--review-fork", "srp", SKLC_BACKEND="cursor"
-        )
+        second = self._run("planner", "review again", "--review-fork", "srp", MO_BACKEND="cursor")
         self.assertEqual(second.returncode, 0, second.stderr)
         log = self.state / "logs" / "sessions-planner-fork-srp.jsonl"
         self.assertTrue(log.is_file())
-        events = [
-            line for line in log.read_text(encoding="utf-8").splitlines() if line.strip()
-        ]
+        events = [line for line in log.read_text(encoding="utf-8").splitlines() if line.strip()]
         # One result event per invocation, both preserved.
         self.assertEqual(len(events), 2)
 

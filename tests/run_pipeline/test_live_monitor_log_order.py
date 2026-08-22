@@ -14,7 +14,7 @@ class LiveMonitorLogOrderTest(unittest.TestCase):
     """The finishing step's live status line is fixed (printed as history)
     BEFORE the step's "--- step X (completed)" marker."""
 
-    def test_step_finish_line_prints_before_step_marker(self):
+    def test_step_finish_line_prints_before_step_marker(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)
@@ -69,7 +69,7 @@ class LiveMonitorLogOrderTest(unittest.TestCase):
                 out.index("--- step write-adr (completed)"),
             )
 
-    def test_fixed_line_prints_once_no_stale_block(self):
+    def test_fixed_line_prints_once_no_stale_block(self) -> None:
         # The fixed line is the block's last state: it prints plainly as
         # history and must not reappear as a (stale) live block after the
         # marker — the count of its content is exactly one.
@@ -128,7 +128,7 @@ class LiveMonitorLogOrderTest(unittest.TestCase):
             )
             self.assertEqual(out.count("cache 4"), 1)
 
-    def test_unreadable_current_step_index_does_not_crash(self):
+    def test_unreadable_current_step_index_does_not_crash(self) -> None:
         # A non-numeric current_step_index in state.json must not crash the
         # monitor thread (bug fix): the live line degrades to no N/M.
         mod = load_run_pipeline()

@@ -8,13 +8,13 @@ class TaskPipelineStructureTest(InstallerTestCase):
     research -> write-adr) plus the adr-pipeline tail with the
     executor-questions loop instead of the one-shot questions pair."""
 
-    def test_task_workflow_exists_with_inputs(self):
+    def test_task_workflow_exists_with_inputs(self) -> None:
         self.assertEqual(self.install(), 0)
-        workflow = (self.home / ".config/spec-run/task-pipeline.yml").read_text(
+        workflow = (self.home / ".config/modus-operandi/task-pipeline.yml").read_text(
             encoding="utf-8"
         )
         self.assertIn("id: task-pipeline", workflow)
-        parsed = self.parsed_workflow(".config/spec-run/task-pipeline.yml")
+        parsed = self.parsed_workflow(".config/modus-operandi/task-pipeline.yml")
         self.assertEqual(parsed["workflow"]["id"], "task-pipeline")
         inputs = parsed["inputs"]
         self.assertEqual(inputs["task"]["required"], True)
@@ -27,9 +27,9 @@ class TaskPipelineStructureTest(InstallerTestCase):
         # verdict input no longer exists.
         self.assertNotIn("proposal_verdict", inputs)
 
-    def test_task_workflow_phases_use_planner_prompts(self):
+    def test_task_workflow_phases_use_planner_prompts(self) -> None:
         self.assertEqual(self.install(), 0)
-        parsed = self.parsed_workflow(".config/spec-run/task-pipeline.yml")
+        parsed = self.parsed_workflow(".config/modus-operandi/task-pipeline.yml")
         for step_id, prompt in (
             ("study", "task/study.md"),
             ("study-revise", "task/study-revise.md"),
@@ -46,9 +46,9 @@ class TaskPipelineStructureTest(InstallerTestCase):
         study = self.find_step(parsed["steps"], "study")
         self.assertIn('--export "TASK={{ inputs.task }}"', study["run"])
 
-    def test_task_workflow_motivation_loop(self):
+    def test_task_workflow_motivation_loop(self) -> None:
         self.assertEqual(self.install(), 0)
-        parsed = self.parsed_workflow(".config/spec-run/task-pipeline.yml")
+        parsed = self.parsed_workflow(".config/modus-operandi/task-pipeline.yml")
         loop = self.find_step(parsed["steps"], "motivation-loop")
         self.assertIsNotNone(loop)
         self.assertEqual(loop["type"], "do-while")
@@ -88,14 +88,14 @@ class TaskPipelineStructureTest(InstallerTestCase):
         # 'clear' with no round limit.
         self.assertIsNone(self.find_step(parsed["steps"], "motivation-unapproved"))
 
-    def test_task_workflow_has_no_proposal_gate(self):
+    def test_task_workflow_has_no_proposal_gate(self) -> None:
         # The proposal agreement gate duplicates the motivation agreement and
         # was removed (ADR-0011): research goes straight to write-adr.
         self.assertEqual(self.install(), 0)
-        workflow = (self.home / ".config/spec-run/task-pipeline.yml").read_text(
+        workflow = (self.home / ".config/modus-operandi/task-pipeline.yml").read_text(
             encoding="utf-8"
         )
-        parsed = self.parsed_workflow(".config/spec-run/task-pipeline.yml")
+        parsed = self.parsed_workflow(".config/modus-operandi/task-pipeline.yml")
         for old in (
             "proposal-loop",
             "proposal-gate",
@@ -113,11 +113,11 @@ class TaskPipelineStructureTest(InstallerTestCase):
         write_index = workflow.index("- id: write-adr")
         self.assertLess(research_index, write_index)
 
-    def test_task_workflow_has_no_adr_gate(self):
+    def test_task_workflow_has_no_adr_gate(self) -> None:
         # The proposal was already agreed before write-adr, so there is no
         # adr-loop/adr-gate: write-adr is followed directly by save-adr.
         self.assertEqual(self.install(), 0)
-        workflow = (self.home / ".config/spec-run/task-pipeline.yml").read_text(
+        workflow = (self.home / ".config/modus-operandi/task-pipeline.yml").read_text(
             encoding="utf-8"
         )
         self.assertNotIn("- id: adr-loop", workflow)
@@ -127,9 +127,9 @@ class TaskPipelineStructureTest(InstallerTestCase):
         save_index = workflow.index("- id: save-adr")
         self.assertLess(write_index, save_index)
 
-    def test_task_workflow_executor_questions_loop(self):
+    def test_task_workflow_executor_questions_loop(self) -> None:
         self.assertEqual(self.install(), 0)
-        parsed = self.parsed_workflow(".config/spec-run/task-pipeline.yml")
+        parsed = self.parsed_workflow(".config/modus-operandi/task-pipeline.yml")
         loop = self.find_step(parsed["steps"], "executor-questions-loop")
         self.assertIsNotNone(loop)
         self.assertEqual(loop["type"], "do-while")
@@ -154,12 +154,10 @@ class TaskPipelineStructureTest(InstallerTestCase):
         self.assertNotIn("executor-questions", top_level_ids)
         self.assertNotIn("planner-answers", top_level_ids)
 
-    def _task_workflow_text(self):
-        return (self.home / ".config/spec-run/task-pipeline.yml").read_text(
-            encoding="utf-8"
-        )
+    def _task_workflow_text(self) -> str:
+        return (self.home / ".config/modus-operandi/task-pipeline.yml").read_text(encoding="utf-8")
 
-    def test_task_workflow_tail_mirrors_adr_pipeline(self):
+    def test_task_workflow_tail_mirrors_adr_pipeline(self) -> None:
         self.assertEqual(self.install(), 0)
         workflow = self._task_workflow_text()
         for step in (
@@ -188,35 +186,31 @@ class TaskPipelineStructureTest(InstallerTestCase):
         self.assertEqual(order, sorted(order))
         # The review fan-out uses the same "adr" prompt namespace as the
         # adr-pipeline tail.
-        parsed = self.parsed_workflow(".config/spec-run/task-pipeline.yml")
+        parsed = self.parsed_workflow(".config/modus-operandi/task-pipeline.yml")
         check = self.find_step(parsed["steps"], "review-fan")["step"]
         self.assertIn("adr", check["run"])
 
-    def test_task_workflow_loop_ceilings_are_configurable(self):
+    def test_task_workflow_loop_ceilings_are_configurable(self) -> None:
         self.assertEqual(self.install(), 0)
         self.write_config(
-            self.read_config().replace(
-                "max_questions_iterations: 3", "max_questions_iterations: 7"
-            )
+            self.read_config().replace("max_questions_iterations: 3", "max_questions_iterations: 7")
         )
         self.assertEqual(self.install(), 0)
-        parsed = self.parsed_workflow(".config/spec-run/task-pipeline.yml")
+        parsed = self.parsed_workflow(".config/modus-operandi/task-pipeline.yml")
         self.assertEqual(
             self.find_step(parsed["steps"], "executor-questions-loop")["max_iterations"], 7
         )
         # The motivation loop ceiling is a literal (100), never config-driven:
         # no config key exists for it (ADR-0011).
-        self.assertEqual(
-            self.find_step(parsed["steps"], "motivation-loop")["max_iterations"], 100
-        )
+        self.assertEqual(self.find_step(parsed["steps"], "motivation-loop")["max_iterations"], 100)
         self.assertNotIn("max_motivation_iterations", self.read_config())
 
-    def test_task_workflow_validate_task(self):
+    def test_task_workflow_validate_task(self) -> None:
         self.assertEqual(self.install(), 0)
         workflow = self._task_workflow_text()
         self.assertIn("- id: validate-task", workflow)
         run = self.find_step(
-            self.parsed_workflow(".config/spec-run/task-pipeline.yml")["steps"],
+            self.parsed_workflow(".config/modus-operandi/task-pipeline.yml")["steps"],
             "validate-task",
         )["run"]
         self.assertIn("validate_inputs.py", run)
@@ -227,10 +221,10 @@ class TaskPipelineStructureTest(InstallerTestCase):
             workflow.index("- id: validate-task"), workflow.index("- id: generate-task-id")
         )
 
-    def test_task_workflow_generate_task_id_uses_task_text(self):
+    def test_task_workflow_generate_task_id_uses_task_text(self) -> None:
         self.assertEqual(self.install(), 0)
         run = self.find_step(
-            self.parsed_workflow(".config/spec-run/task-pipeline.yml")["steps"],
+            self.parsed_workflow(".config/modus-operandi/task-pipeline.yml")["steps"],
             "generate-task-id",
         )["run"]
         self.assertIn("adr-task-id.sh", run)
@@ -238,9 +232,9 @@ class TaskPipelineStructureTest(InstallerTestCase):
         self.assertIn('"{{ inputs.task_id }}"', run)
         self.assertIn('"{{ inputs.task }}"', run)
 
-    def test_task_workflow_agent_steps_have_timeout(self):
+    def test_task_workflow_agent_steps_have_timeout(self) -> None:
         self.assertEqual(self.install(), 0)
-        parsed = self.parsed_workflow(".config/spec-run/task-pipeline.yml")
+        parsed = self.parsed_workflow(".config/modus-operandi/task-pipeline.yml")
         for step in (
             "study",
             "study-revise",
@@ -281,9 +275,9 @@ class TaskPipelineStructureTest(InstallerTestCase):
             self.assertIsNotNone(found, step)
             self.assertNotIn("timeout", found, step)
 
-    def test_task_workflow_prompts_ship(self):
+    def test_task_workflow_prompts_ship(self) -> None:
         self.assertEqual(self.install(), 0)
-        prompts = self.home / ".config/spec-run/prompts/task"
+        prompts = self.home / ".config/modus-operandi/prompts/task"
         for name in ("study", "study-revise", "research", "write-adr"):
             self.assertTrue((prompts / f"{name}.md").is_file(), name)
         # The proposal-revise prompt is gone with the proposal gate (ADR-0011).
@@ -301,7 +295,7 @@ class TaskPipelineStructureTest(InstallerTestCase):
         self.assertIn("slug", write_adr)
         # The updated executor-questions prompt re-reads answers.md.
         executor_questions = (
-            self.home / ".config/spec-run/prompts/adr/executor-questions.md"
+            self.home / ".config/modus-operandi/prompts/adr/executor-questions.md"
         ).read_text(encoding="utf-8")
         self.assertIn("answers.md", executor_questions)
         self.assertIn("QUESTIONS: NONE", executor_questions)

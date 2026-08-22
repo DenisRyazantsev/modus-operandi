@@ -15,11 +15,11 @@ class NotifyTest(unittest.TestCase):
     def _sound(self, mod: types.ModuleType) -> Path:
         # SOUND_FILE resolves from the module's own location: ship the wav
         # next to the loaded copy.
-        wav = Path(mod.__file__).parent / "victory.wav"
+        wav = Path(mod.__file__ or "").parent / "victory.wav"
         wav.write_bytes(b"RIFF")
         return wav
 
-    def test_plays_sound_via_system_player(self):
+    def test_plays_sound_via_system_player(self) -> None:
         mod = load_run_pipeline()
         wav = self._sound(mod)
         with (
@@ -34,7 +34,7 @@ class NotifyTest(unittest.TestCase):
         # The system player: afplay (macOS) or paplay/aplay (Linux).
         self.assertTrue(cmd[0].endswith(("afplay", "paplay", "aplay")))
 
-    def test_skips_when_not_a_tty(self):
+    def test_skips_when_not_a_tty(self) -> None:
         mod = load_run_pipeline()
         with (
             mock.patch("sys.stdout.isatty", return_value=False),
@@ -43,7 +43,7 @@ class NotifyTest(unittest.TestCase):
             mod.notify()
         popen.assert_not_called()
 
-    def test_skips_when_sound_file_missing(self):
+    def test_skips_when_sound_file_missing(self) -> None:
         # No victory.wav next to the wrapper: quiet degradation.
         mod = load_run_pipeline()
         with (
@@ -53,7 +53,7 @@ class NotifyTest(unittest.TestCase):
             mod.notify()
         popen.assert_not_called()
 
-    def test_skips_when_no_player_available(self):
+    def test_skips_when_no_player_available(self) -> None:
         mod = load_run_pipeline()
         self._sound(mod)
         with (

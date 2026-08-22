@@ -1,0 +1,36 @@
+# modus-operandi configuration
+# On first run this file is copied to ~/.config/modus-operandi/config.yml.
+# Edit the values below, then re-apply with `modus-operandi edit` (dev: re-run install.py).
+
+backend: opencode          # active backend: opencode or cursor (per-run override: modus-operandi --backend cursor)
+
+opencode:                  # models for the opencode backend (legacy top-level `models:` is read as this section)
+  models:
+    planner:
+      provider: opencode-go          # opencode provider id
+      model: deepseek-v4-pro         # strong model for planning and review
+      reasoning: max                 # reasoning effort passed to the provider (e.g. minimal, low, high, max)
+    executor:
+      provider: opencode-go
+      model: deepseek-v4-flash       # cheap/fast model for implementation
+      reasoning: max                 # reasoning effort passed to the provider
+
+cursor:                    # models for the cursor backend (passed to cursor-agent as --model <slug>)
+  models:
+    planner:
+      model: composer-2              # strong model for planning and review (Cursor model slug)
+    executor:
+      model: composer-2              # cheap/fast model for implementation (Cursor model slug)
+
+workflow:
+  state_dir: .workflow           # task artifact directory inside a project
+  max_fix_iterations: 5          # ceiling for the unified parallel review-fix loop (SRP, bugs, general review, comments, ADR-0009)
+  max_srp_iterations: 5          # legacy: no longer binds a separate SRP loop (kept for backward compatibility)
+  max_bug_iterations: 5          # legacy: no longer binds a separate bug loop (kept for backward compatibility)
+  max_comment_iterations: 5      # legacy: no longer binds a separate comment loop (kept for backward compatibility)
+  max_implement_iterations: 2    # ceiling for the implement verify/retry loop (guard against an empty implementation)
+  max_questions_iterations: 3    # ceiling for the task-pipeline executor questions loop
+  shell_timeout: 7200            # per-step timeout in seconds for agent steps (2h)
+  adr_dir: architecture          # directory (repo-relative) where approved ADRs are saved
+  human_gates: true              # false = gates auto-approve (non-interactive runs)
+  use_serve: false               # true = run-agent.sh passes --attach http://localhost:4096

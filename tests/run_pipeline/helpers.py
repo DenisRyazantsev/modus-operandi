@@ -12,10 +12,12 @@ import json
 import sys
 import tempfile
 import types
+from collections.abc import Iterable
 from pathlib import Path
+from typing import Any, cast
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-_SRC_DIR = REPO_ROOT / "src/spec_run/data/pipeline_scripts"
+_SRC_DIR = REPO_ROOT / "src/modus_operandi/data/pipeline_scripts"
 
 # The modules that make up the run-pipeline wrapper: the entry plus the
 # one-class-per-file modules, the shared helpers module and the
@@ -61,11 +63,11 @@ DEFAULT_CONFIG = {
 class FakeProc:
     """Stands in for a subprocess.Popen handle in main()-driven tests."""
 
-    def __init__(self, lines, returncode=0, **kwargs):
+    def __init__(self, lines: Iterable[str], returncode: int = 0, **kwargs: object) -> None:
         self.stdout = iter(lines)
         self.returncode = returncode
 
-    def wait(self):
+    def wait(self) -> int:
         return self.returncode
 
 
@@ -93,7 +95,7 @@ def load_run_pipeline() -> types.ModuleType:
     return module
 
 
-def point_config_at(mod: types.ModuleType, tmp: str, **workflow_overrides) -> Path:
+def point_config_at(mod: types.ModuleType, tmp: str, **workflow_overrides: object) -> Path:
     """Write a config.yml into tmp and point the module's CONFIG_PATH at it.
 
     Returns the config path. main() reads the installed config through
@@ -105,5 +107,5 @@ def point_config_at(mod: types.ModuleType, tmp: str, **workflow_overrides) -> Pa
     cfg["workflow"].update(workflow_overrides)
     path = Path(tmp) / "config.yml"
     path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
-    mod.CONFIG_PATH = path
+    cast(Any, mod).CONFIG_PATH = path
     return path

@@ -20,7 +20,7 @@ class RunIdDiscoveryTest(unittest.TestCase):
         runs.mkdir(parents=True)
         return Path(tmp)
 
-    def test_new_run_dir_is_discovered_and_polled(self):
+    def test_new_run_dir_is_discovered_and_polled(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             state = self._state(tmp)
@@ -50,7 +50,7 @@ class RunIdDiscoveryTest(unittest.TestCase):
             self.assertIn("write-adr", captured.getvalue())
             self.assertIn("done", captured.getvalue())
 
-    def test_preexisting_run_is_not_discovered(self):
+    def test_preexisting_run_is_not_discovered(self) -> None:
         # A run directory that existed before the wrapper started (e.g. a
         # resumed or concurrent run) must not be mistaken for the current run.
         mod = load_run_pipeline()
@@ -67,7 +67,7 @@ class RunIdDiscoveryTest(unittest.TestCase):
             self.assertEqual(monitor.run_id, "")
             self.assertEqual(captured.getvalue(), "")
 
-    def test_explicit_run_id_wins_over_discovery(self):
+    def test_explicit_run_id_wins_over_discovery(self) -> None:
         # Once the "Run ID:" line is parsed from stdout it is authoritative;
         # discovery must not replace it with a different directory.
         mod = load_run_pipeline()

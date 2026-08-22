@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Install the spec-run planner/executor pipeline (dev flow).
+"""Install the modus-operandi planner/executor pipeline (dev flow).
 
 Usage:
   python3 install.py [--uninstall] [--home DIR] [--yes]
 
 Installs the global opencode agents (planner, executor), the pipeline
 scripts and the task/review workflows from the package sources in src/ into
-~/.config/spec-run/ and ~/.config/opencode/. See README.md for usage.
+~/.config/modus-operandi/ and ~/.config/opencode/. See README.md for usage.
 
 Options:
   --uninstall    remove the installed files (asks for confirmation)
@@ -21,7 +21,7 @@ from pathlib import Path
 # checkout so `python3 install.py` works without an editable install.
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from spec_run.installer_cli import main
+from modus_operandi.installer_cli import main
 
 if __name__ == "__main__":
     sys.exit(main())

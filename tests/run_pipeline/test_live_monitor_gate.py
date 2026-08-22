@@ -64,7 +64,7 @@ class LiveMonitorGateTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def test_buffers_events_while_gate_open(self):
+    def test_buffers_events_while_gate_open(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             state = self._prepare(tmp)
@@ -87,7 +87,7 @@ class LiveMonitorGateTest(unittest.TestCase):
             self.assertIn("cache 4", monitor._emitter.buffered_fixed[0])
             self.assertIn("[harness]", monitor._emitter.buffered_fixed[1])
 
-    def test_flushes_buffer_when_engine_moves_past_gate(self):
+    def test_flushes_buffer_when_engine_moves_past_gate(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
             state = self._prepare(tmp)
@@ -112,7 +112,7 @@ class LiveMonitorGateTest(unittest.TestCase):
             self.assertIn("done", captured.getvalue())
             self.assertIn("cache 4", captured.getvalue())
 
-    def test_gate_stays_open_while_step_id_unchanged(self):
+    def test_gate_stays_open_while_step_id_unchanged(self) -> None:
         # The user answered invalidly ("Invalid choice. …"): the gate remains
         # open and current_step_id does not move, so buffering must continue.
         mod = load_run_pipeline()
@@ -132,7 +132,7 @@ class LiveMonitorGateTest(unittest.TestCase):
             self.assertEqual(captured.getvalue(), "")
             self.assertEqual(monitor.gate._gate_step_id, "adr-gate")
 
-    def test_flushes_buffer_when_wrapper_stops(self):
+    def test_flushes_buffer_when_wrapper_stops(self) -> None:
         # An aborted/rejected run may leave current_step_id on the gate, so
         # the gate never closes on its own: stopping the wrapper must close
         # it and flush whatever was buffered.
@@ -157,7 +157,7 @@ class LiveMonitorGateTest(unittest.TestCase):
             self.assertIn("done", captured.getvalue())
             self.assertIn("cache 4", captured.getvalue())
 
-    def test_gate_id_captured_synchronously_at_open(self):
+    def test_gate_id_captured_synchronously_at_open(self) -> None:
         # Regression: the id must be captured at menu-open time (from the
         # state read by main()) — not on the monitor's next tick, when a
         # fast answer could already have moved current_step_id and the
@@ -172,7 +172,7 @@ class LiveMonitorGateTest(unittest.TestCase):
         self.assertTrue(gate.update({"current_step_id": "next-step"}))
         self.assertFalse(gate.is_open)
 
-    def test_open_without_readable_state_captures_on_first_readable_tick(self):
+    def test_open_without_readable_state_captures_on_first_readable_tick(self) -> None:
         # The open-moment state read can fail (transiently): the id is then
         # captured by update() on the first readable tick instead.
         mod = load_run_pipeline()
@@ -187,7 +187,7 @@ class LiveMonitorGateTest(unittest.TestCase):
         self.assertTrue(gate.update({"current_step_id": "next-step"}))
         self.assertFalse(gate.is_open)
 
-    def test_unreadable_state_skips_tick_and_keeps_gate_open(self):
+    def test_unreadable_state_skips_tick_and_keeps_gate_open(self) -> None:
         # Regression: a failed state.json read (None) must NOT close the
         # gate — "state unreadable" is not "run ended". Closing on it would
         # print straight over the still-open menu (ADR Acceptance Criteria 1).
@@ -204,7 +204,7 @@ class LiveMonitorGateTest(unittest.TestCase):
         self.assertTrue(gate.update({"current_step_id": "next-step"}))
         self.assertFalse(gate.is_open)
 
-    def test_readable_empty_current_step_id_closes_gate(self):
+    def test_readable_empty_current_step_id_closes_gate(self) -> None:
         # A READABLE state with an empty/null current_step_id means the
         # engine finished the run — that may close the gate, unlike a failed
         # read (None).
