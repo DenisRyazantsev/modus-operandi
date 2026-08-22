@@ -1,4 +1,4 @@
-# Modus Operandi
+# Modus Operandi 🤌
 
 Automate spec-driven "planner -> executor" workflows in LLM clients (opencode
 and cursor): task planning, task implementing and code review.
