@@ -5,7 +5,8 @@ import io
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
+
+from tests.env_sandbox import stdout
 
 from .helpers import save_adr
 
@@ -60,7 +61,7 @@ class CmdSyncTest(unittest.TestCase):
         # on the raw string, before the Path is constructed.
         (self.task_dir / "adr-saved.txt").write_text("", encoding="utf-8")
         captured = io.StringIO()
-        with mock.patch("sys.stdout", captured):
+        with stdout(captured):
             save_adr.cmd_sync(
                 argparse.Namespace(state_dir=str(self.root / ".workflow"), task_id="t1")
             )

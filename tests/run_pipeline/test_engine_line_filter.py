@@ -10,12 +10,12 @@ main().
 """
 
 import io
-import sys
 import tempfile
 import unittest
-from pathlib import Path
 from typing import Any
 from unittest import mock
+
+from tests.env_sandbox import argv, cwd, stdin, stdout
 
 from .helpers import FakeProc, load_run_pipeline, point_config_at
 
@@ -71,12 +71,11 @@ class ConsumeOutputEchoPolicyTest(unittest.TestCase):
         point_config_at(mod, tmp)
         out = io.StringIO()
         with (
-            mock.patch.object(Path, "cwd", return_value=Path(tmp)),
+            cwd(tmp),
             mock.patch("subprocess.Popen", return_value=FakeProc(lines, returncode)),
-            mock.patch.object(sys, "argv", ["run-pipeline.py", "adr-pipeline"]),
-            mock.patch("sys.stdout", out),
-            mock.patch("sys.stdin.isatty", return_value=False),
-            mock.patch.object(mod, "notify"),
+            argv(["run-pipeline.py", "adr-pipeline"]),
+            stdout(out),
+            stdin(io.StringIO()),
         ):
             rc = mod.main()
         return rc, out

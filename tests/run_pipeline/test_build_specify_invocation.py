@@ -5,7 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
-from unittest import mock
+
+from tests.env_sandbox import cwd
 
 from .helpers import DEFAULT_CONFIG, load_run_pipeline
 
@@ -30,7 +31,7 @@ class BuildSpecifyInvocationTest(unittest.TestCase):
         source: str = "adr-pipeline",
         extra: list[str] | None = None,
     ) -> Any:
-        with mock.patch.object(Path, "cwd", return_value=Path(tmp)):
+        with cwd(tmp):
             return mod.build_specify_invocation(cfg, source, extra or [])
 
     def test_defaults_map_to_inputs_and_env(self) -> None:

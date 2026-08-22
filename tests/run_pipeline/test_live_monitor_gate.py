@@ -5,7 +5,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
+
+from tests.env_sandbox import cwd, stdout
 
 from .helpers import load_run_pipeline
 
@@ -69,13 +70,13 @@ class LiveMonitorGateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             state = self._prepare(tmp)
             self._open_state(state)
-            with mock.patch.object(Path, "cwd", return_value=state):
+            with cwd(state):
                 monitor = mod.LiveMonitor(state, set())
                 self._append_log(state)
                 monitor.run_id = "abc12345"
                 monitor.gate.open({"current_step_id": "adr-gate"})
                 captured = io.StringIO()
-                with mock.patch("sys.stdout", captured):
+                with stdout(captured):
                     monitor._poll_once()
             # Nothing printed while the gate is open; the step result, the
             # gate step id, the live line and the step-start harness line
@@ -93,7 +94,7 @@ class LiveMonitorGateTest(unittest.TestCase):
             state = self._prepare(tmp)
             self._open_state(state)
             state_file = state / "workflows" / "runs" / "abc12345" / "state.json"
-            with mock.patch.object(Path, "cwd", return_value=state):
+            with cwd(state):
                 monitor = mod.LiveMonitor(state, set())
                 self._append_log(state)
                 monitor.run_id = "abc12345"
@@ -104,7 +105,7 @@ class LiveMonitorGateTest(unittest.TestCase):
                     json.dumps({"current_step_id": "next-step"}), encoding="utf-8"
                 )
                 captured = io.StringIO()
-                with mock.patch("sys.stdout", captured):
+                with stdout(captured):
                     monitor._poll_once()
             self.assertFalse(monitor.gate.is_open)
             self.assertEqual(monitor._emitter.buffered_steps, [])
@@ -119,13 +120,13 @@ class LiveMonitorGateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             state = self._prepare(tmp)
             self._open_state(state)
-            with mock.patch.object(Path, "cwd", return_value=state):
+            with cwd(state):
                 monitor = mod.LiveMonitor(state, set())
                 self._append_log(state)
                 monitor.run_id = "abc12345"
                 monitor.gate.open({"current_step_id": "adr-gate"})
                 captured = io.StringIO()
-                with mock.patch("sys.stdout", captured):
+                with stdout(captured):
                     monitor._poll_once()
                     monitor._poll_once()
             self.assertTrue(monitor.gate.is_open)
@@ -140,7 +141,7 @@ class LiveMonitorGateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             state = self._prepare(tmp)
             self._open_state(state)
-            with mock.patch.object(Path, "cwd", return_value=state):
+            with cwd(state):
                 monitor = mod.LiveMonitor(state, set())
                 self._append_log(state)
                 monitor.run_id = "abc12345"
@@ -148,7 +149,7 @@ class LiveMonitorGateTest(unittest.TestCase):
                 monitor._poll_once()  # fill the buffer while the gate is open
                 monitor.start()
                 captured = io.StringIO()
-                with mock.patch("sys.stdout", captured):
+                with stdout(captured):
                     monitor.stop()
                     monitor.join()
             self.assertFalse(monitor.gate.is_open)

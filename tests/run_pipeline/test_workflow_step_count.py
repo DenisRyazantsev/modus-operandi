@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from tests.env_sandbox import cwd, stdout
+
 from .helpers import load_run_pipeline
 
 
@@ -25,29 +27,21 @@ class WorkflowStepIdsTest(unittest.TestCase):
             self.assertEqual(mod.workflow_step_ids(str(path)), ["a", "b", "c"])
 
     def test_resolves_bare_id_from_installed_config_dir(self) -> None:
+        # The module copy lives in a temp dir (helpers.load_run_pipeline), so
+        # its CONFIG_DIR already points at a writable temp location: the
+        # workflow file is created there for real.
         mod = load_run_pipeline()
-        with tempfile.TemporaryDirectory() as tmp:
-            config_dir = Path(tmp) / "modus-operandi"
-            config_dir.mkdir(parents=True)
-            (config_dir / "task-pipeline.yml").write_text(
-                "steps:\n  - id: a\n  - id: b\n", encoding="utf-8"
-            )
-            with mock.patch.object(mod._run_pipeline_common, "CONFIG_DIR", config_dir):
-                self.assertEqual(mod.workflow_step_ids("task-pipeline"), ["a", "b"])
+        assert mod.__file__ is not None
+        config_dir = Path(mod.__file__).resolve().parent.parent.parent / "modus-operandi"
+        config_dir.mkdir(parents=True)
+        (config_dir / "task-pipeline.yml").write_text(
+            "steps:\n  - id: a\n  - id: b\n", encoding="utf-8"
+        )
+        self.assertEqual(mod.workflow_step_ids("task-pipeline"), ["a", "b"])
 
     def test_missing_file_degrades_to_none(self) -> None:
         mod = load_run_pipeline()
-        with (
-            tempfile.TemporaryDirectory() as tmp,
-            mock.patch.object(Path, "cwd", return_value=Path(tmp)),
-            (
-                mock.patch.object(
-                    mod._run_pipeline_common,
-                    "CONFIG_DIR",
-                    Path(tmp) / "no-such-dir",
-                )
-            ),
-        ):
+        with tempfile.TemporaryDirectory() as tmp, cwd(tmp):
             self.assertIsNone(mod.workflow_step_ids("no-such-pipeline"))
 
     def test_unparseable_yaml_degrades_to_none(self) -> None:
@@ -102,7 +96,7 @@ class StepMarkerTest(unittest.TestCase):
         mod = load_run_pipeline()
         captured = io.StringIO()
         with (
-            mock.patch("sys.stdout", captured),
+            stdout(captured),
             mock.patch.object(mod._run_pipeline_common, "stamp", return_value="07:51:37"),
         ):
             mod.print_step_result("study", {"status": "completed", "output": {"stdout": ""}}, 3, 15)
@@ -111,7 +105,7 @@ class StepMarkerTest(unittest.TestCase):
     def test_step_marker_without_progress(self) -> None:
         mod = load_run_pipeline()
         captured = io.StringIO()
-        with mock.patch("sys.stdout", captured):
+        with stdout(captured):
             mod.print_step_result("study", {"status": "completed", "output": {"stdout": ""}})
         self.assertIn("--- step study (completed)", captured.getvalue())
         self.assertNotIn("]", captured.getvalue().split("(completed)")[1])

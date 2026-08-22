@@ -3,7 +3,6 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 from .helpers import load_run_pipeline
 
@@ -83,12 +82,18 @@ class AgentLogTailerTest(unittest.TestCase):
         lines, pos = tailer._read_appended(log)
         self.assertEqual(lines, ["first line"])
         log.write_text("first line\nsecond line\n", encoding="utf-8")
-        # A transient read failure must not advance the recorded position.
-        with mock.patch.object(Path, "open", side_effect=OSError("boom")):
+        # A transient read failure (the path replaced by a directory: open
+        # raises IsADirectoryError) must not advance the recorded position.
+        log.unlink()
+        log.mkdir()
+        try:
             lines, pos = tailer._read_appended(log)
+        finally:
+            log.rmdir()
         self.assertEqual(lines, [])
         self.assertEqual(pos, len("first line\n"))
         # The chunk is retried on the next poll, not permanently skipped.
+        log.write_text("first line\nsecond line\n", encoding="utf-8")
         lines, pos = tailer._read_appended(log)
         self.assertEqual(lines, ["second line"])
 

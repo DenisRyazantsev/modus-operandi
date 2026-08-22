@@ -3,6 +3,8 @@
 import io
 from unittest import mock
 
+from tests.env_sandbox import stdin, stdout
+
 from .installer_test_case import InstallerTestCase
 
 
@@ -13,8 +15,8 @@ class UninstallTest(InstallerTestCase):
 
     def test_uninstall_removes_everything_with_yes(self) -> None:
         self.assertEqual(self.install(), 0)
-        stdout = io.StringIO()
-        with mock.patch("sys.stdout", stdout):
+        sink = io.StringIO()
+        with stdout(sink):
             rc, _ = self.run_main(["--home", str(self.home), "--uninstall", "--yes"])
         self.assertEqual(rc, 0)
         self.assertFalse((self.home / ".config/modus-operandi").exists())
@@ -58,7 +60,7 @@ class UninstallTest(InstallerTestCase):
         ):
             self.assertFalse((self.home / rel).exists(), rel)
         # The pip hint is printed.
-        self.assertIn("pip uninstall modus-operandi", stdout.getvalue())
+        self.assertIn("pip uninstall modus-operandi", sink.getvalue())
 
     def test_uninstall_removes_step_scripts_and_legacy_bin(self) -> None:
         # The step scripts (one per shell step) and the legacy launcher
@@ -106,23 +108,23 @@ class UninstallTest(InstallerTestCase):
         recorded.locate.return_value = str(launcher)
         dist = mock.Mock()
         dist.files = [recorded]
-        stdout = io.StringIO()
+        sink = io.StringIO()
         with (
             mock.patch(
                 "modus_operandi.uninstall.importlib.metadata.distribution", return_value=dist
             ),
-            mock.patch("sys.stdout", stdout),
+            stdout(sink),
         ):
             rc, _ = self.run_main(["--home", str(self.home), "--uninstall", "--yes"])
         self.assertEqual(rc, 0)
         self.assertTrue(launcher.exists())
         self.assertFalse((bin_dir / "editor.py").exists())
-        self.assertIn("kept the pip console scripts", stdout.getvalue())
-        self.assertIn("pip uninstall modus-operandi", stdout.getvalue())
+        self.assertIn("kept the pip console scripts", sink.getvalue())
+        self.assertIn("pip uninstall modus-operandi", sink.getvalue())
 
     def test_uninstall_prompt_declined_removes_nothing(self) -> None:
         self.assertEqual(self.install(), 0)
-        with mock.patch("builtins.input", return_value="n"):
+        with stdin(io.StringIO("n\n")):
             rc, _ = self.run_main(["--home", str(self.home), "--uninstall"])
         self.assertEqual(rc, 1)
         self.assertTrue((self.home / ".config/modus-operandi/config.yml").exists())
@@ -130,14 +132,14 @@ class UninstallTest(InstallerTestCase):
 
     def test_uninstall_prompt_declined_on_eof(self) -> None:
         self.assertEqual(self.install(), 0)
-        with mock.patch("builtins.input", side_effect=EOFError):
+        with stdin(io.StringIO("")):
             rc, _ = self.run_main(["--home", str(self.home), "--uninstall"])
         self.assertEqual(rc, 1)
         self.assertTrue((self.home / ".config/modus-operandi").exists())
 
     def test_uninstall_accepted_via_prompt(self) -> None:
         self.assertEqual(self.install(), 0)
-        with mock.patch("builtins.input", return_value="y"):
+        with stdin(io.StringIO("y\n")):
             rc, _ = self.run_main(["--home", str(self.home), "--uninstall"])
         self.assertEqual(rc, 0)
         self.assertFalse((self.home / ".config/modus-operandi").exists())

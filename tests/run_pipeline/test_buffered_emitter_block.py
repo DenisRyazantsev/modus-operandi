@@ -1,10 +1,12 @@
 """Unit tests for the BufferedEmitter live-block drawing (ADR-0011)."""
 
 import io
+import pty
 import unittest
 from collections.abc import Callable
 from typing import Any
-from unittest import mock
+
+from tests.env_sandbox import stdout
 
 from .helpers import load_run_pipeline
 
@@ -22,7 +24,7 @@ class BufferedEmitterBlockTest(unittest.TestCase):
 
     def _capture(self, emitter: Any, fn: Callable[[], object]) -> str:
         captured = io.StringIO()
-        with mock.patch("sys.stdout", captured):
+        with stdout(captured):
             fn()
         return captured.getvalue()
 
@@ -95,14 +97,30 @@ class BufferedEmitterBlockTest(unittest.TestCase):
         # A line wider than the terminal would wrap onto a second physical
         # row and break the height arithmetic (ghost rows, drifting block):
         # every drawn row is clamped to the terminal width minus one column.
+        # The terminal size is read from a real pty whose size is set via
+        # TIOCSWINSZ (fd 1 temporarily points at the pty slave).
         mod = load_run_pipeline()
         _, emitter = self._emitter(mod)
+        import fcntl
         import os
+        import struct
+        import sys
+        import termios
 
-        with mock.patch(
-            "shutil.get_terminal_size",
-            return_value=os.terminal_size((10, 24)),
-        ):
-            out = self._capture(emitter, lambda: emitter.emit_live(["x" * 50]))
+        master, slave = pty.openpty()
+        try:
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 10, 0, 0))
+            assert sys.__stdout__ is not None
+            real_out = sys.__stdout__.fileno()
+            old_fd = os.dup(real_out)
+            os.dup2(slave, real_out)
+            try:
+                out = self._capture(emitter, lambda: emitter.emit_live(["x" * 50]))
+            finally:
+                os.dup2(old_fd, real_out)
+                os.close(old_fd)
+        finally:
+            os.close(master)
+            os.close(slave)
         # 9 columns = width 10 - 1 margin.
         self.assertEqual(out, "\r" + "x" * 9 + "\x1b[K\n")

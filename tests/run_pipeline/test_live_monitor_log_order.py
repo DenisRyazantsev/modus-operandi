@@ -5,7 +5,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
+
+from tests.env_sandbox import cwd, stdout
 
 from .helpers import load_run_pipeline
 
@@ -37,7 +38,7 @@ class LiveMonitorLogOrderTest(unittest.TestCase):
             logs_dir = state / ".workflow" / "logs"
             logs_dir.mkdir(parents=True)
             log = logs_dir / "sessions-planner.jsonl"
-            with mock.patch.object(Path, "cwd", return_value=state):
+            with cwd(state):
                 monitor = mod.LiveMonitor(state, set())
                 monitor.run_id = "abc12345"
                 # The agent event is appended after the tailer's baseline,
@@ -61,7 +62,7 @@ class LiveMonitorLogOrderTest(unittest.TestCase):
                     encoding="utf-8",
                 )
                 captured = io.StringIO()
-                with mock.patch("sys.stdout", captured):
+                with stdout(captured):
                     monitor._poll_once()
             out = captured.getvalue()
             self.assertLess(
@@ -95,7 +96,7 @@ class LiveMonitorLogOrderTest(unittest.TestCase):
             logs_dir = state / ".workflow" / "logs"
             logs_dir.mkdir(parents=True)
             log = logs_dir / "sessions-planner.jsonl"
-            with mock.patch.object(Path, "cwd", return_value=state):
+            with cwd(state):
                 monitor = mod.LiveMonitor(state, set(), step_ids=["study", "write-adr"])
                 monitor.run_id = "abc12345"
                 log.write_text(
@@ -117,7 +118,7 @@ class LiveMonitorLogOrderTest(unittest.TestCase):
                     encoding="utf-8",
                 )
                 captured = io.StringIO()
-                with mock.patch("sys.stdout", captured):
+                with stdout(captured):
                     monitor._poll_once()
             out = captured.getvalue()
             # The marker shows the completed step's OWN position (index 1 of
@@ -149,7 +150,7 @@ class LiveMonitorLogOrderTest(unittest.TestCase):
             logs_dir = state / ".workflow" / "logs"
             logs_dir.mkdir(parents=True)
             log = logs_dir / "sessions-planner.jsonl"
-            with mock.patch.object(Path, "cwd", return_value=state):
+            with cwd(state):
                 monitor = mod.LiveMonitor(state, set(), step_ids=["write-adr"])
                 monitor.run_id = "abc12345"
                 log.write_text(
@@ -171,7 +172,7 @@ class LiveMonitorLogOrderTest(unittest.TestCase):
                     encoding="utf-8",
                 )
                 captured = io.StringIO()
-                with mock.patch("sys.stdout", captured):
+                with stdout(captured):
                     monitor._poll_once()
             out = captured.getvalue()
             self.assertIn("[planner] [write-adr]", out)

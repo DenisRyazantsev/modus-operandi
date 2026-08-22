@@ -8,9 +8,9 @@ backend and which per-role model to use.
 import json
 import tempfile
 import unittest
-from pathlib import Path
 from typing import Any
-from unittest import mock
+
+from tests.env_sandbox import cwd
 
 from .helpers import load_run_pipeline
 
@@ -39,7 +39,7 @@ class BuildSpecifyInvocationBackendTest(unittest.TestCase):
     def _invoke(
         self, mod: Any, tmp: str, cfg: dict[str, Any], cli_backend: str | None = None
     ) -> Any:
-        with mock.patch.object(Path, "cwd", return_value=Path(tmp)):
+        with cwd(tmp):
             return mod.build_specify_invocation(cfg, "adr-pipeline", [], cli_backend=cli_backend)
 
     def _cfg(self, **extra: object) -> dict[str, Any]:

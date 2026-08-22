@@ -4,6 +4,8 @@ import io
 import unittest
 from unittest import mock
 
+from tests.env_sandbox import stdout
+
 from .helpers import load_run_pipeline
 
 
@@ -20,7 +22,7 @@ class LogAlignmentTest(unittest.TestCase):
         mod = load_run_pipeline()
         captured = io.StringIO()
         with (
-            mock.patch("sys.stdout", captured),
+            stdout(captured),
             # print_log_event lives in _run_pipeline_common, so the timestamp
             # patch must target that module (not the entry module).
             mock.patch.object(mod._run_pipeline_common, "stamp", return_value="07:51:37"),

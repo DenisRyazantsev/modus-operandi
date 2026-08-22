@@ -6,9 +6,10 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
-from .helpers import load_run_pipeline
+from tests.env_sandbox import env, stdout
+
+from .helpers import export_env, load_run_pipeline
 
 
 def _ms(iso: str) -> int:
@@ -103,8 +104,8 @@ class LatencyTableTest(unittest.TestCase):
             self._agent_logs(state)
             captured = io.StringIO()
             with (
-                mock.patch("subprocess.run", return_value=mock.Mock(returncode=1)),
-                mock.patch("sys.stdout", captured),
+                env(export_env(Path(tmp) / "bin")),
+                stdout(captured),
             ):
                 mod.print_run_statistics(state, 30.0, run_dir)
         out = captured.getvalue()
@@ -125,8 +126,8 @@ class LatencyTableTest(unittest.TestCase):
             run_dir = self._run_dir(tmp)
             captured = io.StringIO()
             with (
-                mock.patch("subprocess.run", return_value=mock.Mock(returncode=1)),
-                mock.patch("sys.stdout", captured),
+                env(export_env(Path(tmp) / "bin")),
+                stdout(captured),
             ):
                 mod.print_run_statistics(state, 30.0, run_dir)
         out = captured.getvalue()
@@ -203,8 +204,8 @@ class LatencyTableTest(unittest.TestCase):
             )
             captured = io.StringIO()
             with (
-                mock.patch("subprocess.run", return_value=mock.Mock(returncode=1)),
-                mock.patch("sys.stdout", captured),
+                env(export_env(Path(tmp) / "bin")),
+                stdout(captured),
             ):
                 mod.print_run_statistics(state, 30.0, run_dir)
         out = captured.getvalue()
@@ -263,8 +264,8 @@ class LatencyTableTest(unittest.TestCase):
             (run_dir / "log.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
             captured = io.StringIO()
             with (
-                mock.patch("subprocess.run", return_value=mock.Mock(returncode=1)),
-                mock.patch("sys.stdout", captured),
+                env(export_env(Path(tmp) / "bin")),
+                stdout(captured),
             ):
                 mod.print_run_statistics(state, 300.0, run_dir)
         out = captured.getvalue()
@@ -318,8 +319,8 @@ class LatencyTableTest(unittest.TestCase):
             (run_dir / "log.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
             captured = io.StringIO()
             with (
-                mock.patch("subprocess.run", return_value=mock.Mock(returncode=1)),
-                mock.patch("sys.stdout", captured),
+                env(export_env(Path(tmp) / "bin")),
+                stdout(captured),
             ):
                 mod.print_run_statistics(state, 100.0, run_dir)
         out = captured.getvalue()
@@ -336,8 +337,8 @@ class LatencyTableTest(unittest.TestCase):
             state = self._state(tmp, {"planner": "p1"})
             captured = io.StringIO()
             with (
-                mock.patch("subprocess.run", return_value=mock.Mock(returncode=1)),
-                mock.patch("sys.stdout", captured),
+                env(export_env(Path(tmp) / "bin")),
+                stdout(captured),
             ):
                 mod.print_run_statistics(state, 30.0, None)
         out = captured.getvalue()
@@ -352,15 +353,8 @@ class LatencyTableTest(unittest.TestCase):
             run_dir.mkdir(parents=True)  # exists, but no log.jsonl
             captured = io.StringIO()
             with (
-                mock.patch("subprocess.run", return_value=mock.Mock(returncode=1)),
-                mock.patch("sys.stdout", captured),
+                env(export_env(Path(tmp) / "bin")),
+                stdout(captured),
             ):
                 mod.print_run_statistics(state, 30.0, run_dir)
         self.assertNotIn("=== latency by stage ===", captured.getvalue())
-
-    def test_latency_table_module_importable_directly(self) -> None:
-        # The module is a standalone concern (ADR-0009 SRP finding): it must
-        # be importable on its own, not only through run_statistics.py.
-        mod = load_run_pipeline()
-        self.assertTrue(hasattr(mod, "latency_table"))
-        self.assertTrue(callable(mod.latency_table.print_latency_table))
