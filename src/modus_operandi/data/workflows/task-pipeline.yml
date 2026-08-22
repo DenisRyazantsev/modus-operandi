@@ -4,11 +4,12 @@
 # modus_operandi/render.py `_patch_workflow_numbers` overwrites every `timeout`
 # with workflow.shell_timeout and each loop's `max_iterations` with its
 # max_*_iterations config value at install/`--apply` time — editing the
-# numbers here silently has no effect on installed workflows. Exception:
+# numbers here silently has no effect on installed workflows. Exceptions:
 # `motivation-loop` is deliberately absent from `_LOOP_ITERATION_KEYS`
-# (ADR-0011), so its `max_iterations: 100` literal IS the operative ceiling —
-# the engine silently falls back to 10 on an invalid value, which is why the
-# loop is not "infinite". Everything
+# (ADR-0011) — its `max_iterations: 100` literal IS the operative ceiling
+# (the engine silently falls back to 10 on an invalid value, which is why the
+# loop is not "infinite") — and `plan-deviation-loop` is likewise absent
+# (ADR-0015), so its `max_iterations: 3` literal is operative. Everything
 # else is delivered at runtime: state_dir and adr_dir arrive as -i inputs,
 # and the script paths come from the MO_SCRIPTS_DIR env var (defaulting to
 # $HOME/.config/opencode/scripts for direct `specify workflow run`).
@@ -158,13 +159,14 @@ steps:
       planner
       task/write-adr.md
 
-  - id: save-adr
+  - id: write-plan
     type: shell
     timeout: 7200
     run: >-
-      python3 "${MO_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/save_adr.py"
-      save "{{ inputs.state_dir }}" "{{ inputs.task_id }}" "{{ inputs.adr_dir }}"
-      "${MO_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/run-agent.sh"
+      "${MO_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/agent-step.sh"
+      "{{ inputs.state_dir }}"
+      planner
+      task/write-plan.md
 
   - id: executor-questions-loop
     type: do-while
@@ -206,6 +208,46 @@ steps:
       "{{ inputs.state_dir }}"
       executor
       adr/implement.md
+
+  # Fires only when the executor could not follow plan.md and recorded
+  # plan-deviation.md: the deviation-check shell step exits non-zero, the
+  # planner resolves the deviation (appends amendments to plan.md, rewrites
+  # adr.md if the decision changed, deletes plan-deviation.md), and the
+  # executor continues from its warm session without re-reading the plan.
+  # max_iterations is a literal: the loop is deliberately absent from
+  # render.py's _LOOP_ITERATION_KEYS (like motivation-loop), so
+  # _patch_workflow_numbers does not overwrite it.
+  - id: plan-deviation-loop
+    type: do-while
+    max_iterations: 3
+    condition: "{{ steps.deviation-check.output.exit_code != 0 }}"
+    steps:
+      - id: deviation-check
+        type: shell
+        continue_on_error: true
+        run: >-
+          python3 "${MO_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/check_plan_deviation.py"
+          check "{{ inputs.state_dir }}" "{{ inputs.task_id }}"
+      - id: deviation-branch
+        type: if
+        condition: "{{ steps.deviation-check.output.exit_code != 0 }}"
+        then:
+          - id: planner-agreement
+            type: shell
+            timeout: 7200
+            run: >-
+              "${MO_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/agent-step.sh"
+              "{{ inputs.state_dir }}"
+              planner
+              adr/planner-agreement.md
+          - id: implement-continue
+            type: shell
+            timeout: 7200
+            run: >-
+              "${MO_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/agent-step.sh"
+              "{{ inputs.state_dir }}"
+              executor
+              adr/implement-continue.md
 
   - id: implement-loop
     type: do-while
@@ -283,13 +325,13 @@ steps:
               executor
               fix-all.md
 
-  - id: sync-adr
+  - id: save-adr
     type: shell
     timeout: 7200
     run: >-
-      "${MO_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/sync-adr.sh"
-      "{{ inputs.state_dir }}"
-      "{{ inputs.task_id }}"
+      python3 "${MO_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/save_adr.py"
+      save "{{ inputs.state_dir }}" "{{ inputs.task_id }}" "{{ inputs.adr_dir }}"
+      "${MO_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/run-agent.sh"
 
   - id: pass-check
     type: shell

@@ -271,13 +271,20 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertIn('save_adr.py" save', workflow)
         self.assertIn('"{{ inputs.adr_dir }}"', workflow)
         self.assertIn("save_adr.py", workflow)
+        # ADR-0015: the ADR is released once, at the END of the pipeline
+        # (after the review loop, before the final pass-check), so the saved
+        # file is the final version incorporating every agreed clarification.
         save_index = workflow.index("- id: save-adr")
-        questions_index = workflow.index("- id: executor-questions-loop")
-        self.assertLess(save_index, questions_index)
+        review_loop_index = workflow.index("- id: review-fix-loop")
+        pass_index = workflow.index("- id: pass-check")
+        self.assertLess(review_loop_index, save_index)
+        self.assertLess(save_index, pass_index)
         save_adr = (self.home / ".config/opencode/scripts/save_adr.py").read_text(encoding="utf-8")
         self.assertIn("read_slug", save_adr)
         self.assertIn("has no 'slug' field", save_adr)
         self.assertNotIn("translit", save_adr.lower().replace("transliteration", ""))
+        # The sync subcommand is gone (ADR-0015): the release runs once.
+        self.assertNotIn("cmd_sync", save_adr)
         # The slug/numbering/heading text rules live in adr_utils.py.
         adr_utils = (self.home / ".config/opencode/scripts/adr_utils.py").read_text(
             encoding="utf-8"
@@ -285,34 +292,52 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertIn("must contain ASCII letters", adr_utils)
         self.assertIn("w[:60]", adr_utils)
 
-    def test_workflow_deviation_sync(self) -> None:
+    def test_workflow_plan_deviation_loop(self) -> None:
+        # ADR-0015: the executor's deviation from plan.md is resolved inside
+        # the plan-deviation-loop (check_plan_deviation.py -> planner
+        # agreement -> executor continue); the sync-adr step is gone.
         self.assertEqual(self.install(), 0)
         workflow = (self.home / TASK_WF).read_text(encoding="utf-8")
-        self.assertIn("- id: sync-adr", workflow)
-        sync_prompt = (self.home / ".config/modus-operandi/prompts/adr/sync-adr.md").read_text()
-        self.assertIn("## Amendments", sync_prompt)
-        # CONTRIBUTING.md: the deviation check and the sync live in sync-adr.sh.
-        sync_step = self.find_step(self.parsed_workflow(TASK_WF)["steps"], "sync-adr")
-        self.assertIn("sync-adr.sh", sync_step["run"])
-        self.assertIn('"{{ inputs.state_dir }}"', sync_step["run"])
-        self.assertIn('"{{ inputs.task_id }}"', sync_step["run"])
-        self.assertEqual(sync_step.get("timeout"), 7200)
-        sync_script = (self.home / ".config/opencode/scripts/sync-adr.sh").read_text(
+        self.assertIn("- id: plan-deviation-loop", workflow)
+        self.assertNotIn("- id: sync-adr", workflow)
+        # CONTRIBUTING.md: the deviation check and the agreement steps live
+        # in check_plan_deviation.py and the adr/ prompts.
+        loop = self.find_step(self.parsed_workflow(TASK_WF)["steps"], "plan-deviation-loop")
+        self.assertEqual(loop["type"], "do-while")
+        # The ceiling is a literal: the loop is deliberately absent from
+        # render.py's _LOOP_ITERATION_KEYS (like motivation-loop), so
+        # _patch_workflow_numbers does not overwrite it.
+        self.assertEqual(loop["max_iterations"], 3)
+        self.assertIn("steps.deviation-check.output.exit_code", loop["condition"])
+        check = self.find_step(self.parsed_workflow(TASK_WF)["steps"], "deviation-check")
+        self.assertIn("check_plan_deviation.py", check["run"])
+        self.assertIn('"{{ inputs.state_dir }}"', check["run"])
+        self.assertIn('"{{ inputs.task_id }}"', check["run"])
+        check_script = (self.home / ".config/opencode/scripts/check_plan_deviation.py").read_text(
             encoding="utf-8"
         )
-        self.assertIn("set -euo pipefail", sync_script)
-        self.assertIn("deviation.md", sync_script)
-        self.assertIn("no deviation recorded", sync_script)
-        self.assertIn('save_adr.py" sync', sync_script)
-        self.assertIn("rm -f", sync_script)
-        self.assertLess(sync_script.index('save_adr.py" sync'), sync_script.index("rm -f"))
-        save_adr = (self.home / ".config/opencode/scripts/save_adr.py").read_text(encoding="utf-8")
-        self.assertIn("adr-saved.txt", save_adr)
-        sync_index = workflow.index("- id: sync-adr")
+        self.assertIn("plan-deviation.md", check_script)
+        self.assertIn("resolve_task_dir", check_script)
+        agreement = self.find_step(self.parsed_workflow(TASK_WF)["steps"], "planner-agreement")
+        self.assertEqual(agreement.get("timeout"), 7200)
+        self.assertIn("agent-step.sh", agreement["run"])
+        self.assertIn("planner", agreement["run"])
+        continue_step = self.find_step(self.parsed_workflow(TASK_WF)["steps"], "implement-continue")
+        self.assertEqual(continue_step.get("timeout"), 7200)
+        self.assertIn("agent-step.sh", continue_step["run"])
+        self.assertIn("executor", continue_step["run"])
+        # The loop sits between implement and implement-loop.
+        implement_index = workflow.index("- id: implement")
+        loop_index = workflow.index("- id: plan-deviation-loop")
+        implement_loop_index = workflow.index("- id: implement-loop")
+        self.assertLess(implement_index, loop_index)
+        self.assertLess(loop_index, implement_loop_index)
+        # The saved ADR is released at the very end of the pipeline.
+        save_index = workflow.index("- id: save-adr")
         pass_index = workflow.index("- id: pass-check")
         review_loop_index = workflow.index("- id: review-fix-loop")
-        self.assertLess(review_loop_index, sync_index)
-        self.assertLess(sync_index, pass_index)
+        self.assertLess(review_loop_index, save_index)
+        self.assertLess(save_index, pass_index)
 
     def test_workflow_validate_task_id(self) -> None:
         self.assertEqual(self.install(), 0)
@@ -429,11 +454,11 @@ class WorkflowStructureTest(InstallerTestCase):
             self.assertNotIn(old_fix, workflow)
         implement_index = workflow.index("- id: implement-pass-check")
         loop_index = workflow.index("- id: review-fix-loop")
-        sync_index = workflow.index("- id: sync-adr")
+        save_index = workflow.index("- id: save-adr")
         pass_index = workflow.index("- id: pass-check")
         self.assertLess(implement_index, loop_index)
-        self.assertLess(loop_index, sync_index)
-        self.assertLess(sync_index, pass_index)
+        self.assertLess(loop_index, save_index)
+        self.assertLess(save_index, pass_index)
 
     def test_workflow_implement_loop_structure(self) -> None:
         # ADR-0007: after implement, a verify loop guards against an executor

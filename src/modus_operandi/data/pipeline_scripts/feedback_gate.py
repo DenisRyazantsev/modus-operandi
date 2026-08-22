@@ -39,15 +39,11 @@ def questions_source_file(step_id: str) -> str | None:
 
     Selected by the gate step id substring (ADR-0012): a gate id containing
     `motivation` seeds from study.md (the motivation clarify gate — the only
-    feedback gate the installed workflows ship); the `adr` branch is a
-    legacy fallback of the removed ADR pipeline and seeds from adr.md for
-    any id containing `adr`; anything else — no seeding, the file stays
-    empty. Pure function for unit tests.
+    feedback gate the installed workflows ship); anything else — no seeding,
+    the file stays empty. Pure function for unit tests.
     """
     if "motivation" in step_id:
         return "study.md"
-    if "adr" in step_id:
-        return "adr.md"
     return None
 
 

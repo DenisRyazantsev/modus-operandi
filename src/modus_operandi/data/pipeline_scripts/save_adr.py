@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""save_adr.py - release or sync an ADR for the task-pipeline workflow.
+"""save_adr.py - release the final ADR for the task-pipeline workflow.
 
 Usage:
   save_adr.py save <state_dir> <task_id> <adr_dir> <run_agent>
-  save_adr.py sync <state_dir> <task_id>
 
 <task_id> may be empty: it is then resolved through the
 <state_dir>/tasks/current symlink (see generate-task-id in the workflow).
@@ -12,10 +11,9 @@ save reads <state_dir>/tasks/<task_id>/adr.md, ensures its frontmatter has an
 English 'slug', and writes <adr_dir>/ADR-<XXXX>-<slug>.md with the next free
 number. If the slug is missing it asks the planner agent to add one (via the
 agent_call.py helper) and only fails if the planner still refuses. The saved
-path is written to <state_dir>/tasks/<task_id>/adr-saved.txt.
-
-sync rewrites the saved ADR's heading to the number already in its filename
-(used after the review loop amends adr.md).
+path is written to <state_dir>/tasks/<task_id>/adr-saved.txt. The released
+file is the final version of the ADR: save runs at the end of the pipeline,
+after the planner has incorporated every agreed clarification.
 
 The review-loop verdict gate lives in check_review.py; the scripts share
 task_utils.py (task-dir resolution) and agent_call.py (agent invocation),
@@ -25,7 +23,6 @@ and the text rules (slug, numbering, heading rewrite) live in adr_utils.py.
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from pathlib import Path
 
@@ -54,9 +51,9 @@ def release_adr(task_dir: Path, adr_dir: Path, slug: str, text: str) -> Path:
 
     Single job: release bookkeeping + file write. Idempotent per task
     (adr-saved.txt): a rerun of the same task keeps its number. A matching
-    file without an own record belongs to a different task using the same
-    slug — reusing it would silently overwrite that task's ADR on the next
-    sync, so fail loudly instead.
+    file without an own record belongs to a different task that already took
+    the same slug — a second record with the same slug would make the two
+    ADRs indistinguishable, so fail loudly instead.
     """
     saved_file = task_dir / "adr-saved.txt"
     own = saved_file.read_text(encoding="utf-8").strip() if saved_file.exists() else ""
@@ -67,8 +64,9 @@ def release_adr(task_dir: Path, adr_dir: Path, slug: str, text: str) -> Path:
         print("adr already saved: " + own)
     else:
         # No own release on record. A matching file can only belong to a
-        # DIFFERENT task that happens to use the same slug — reusing it would
-        # silently overwrite that task's ADR on the next sync. Fail loudly.
+        # DIFFERENT task that already took the same slug — releasing again
+        # would publish a second ADR with the same slug and make the two
+        # records indistinguishable. Fail loudly.
         colliding = sorted(adr_dir.glob(f"ADR-*-{slug}.md"))
         if colliding:
             sys.exit(
@@ -114,29 +112,6 @@ def cmd_save(args: argparse.Namespace) -> None:
     release_adr(task_dir, Path(args.adr_dir), slug, text)
 
 
-def cmd_sync(args: argparse.Namespace) -> None:
-    task_dir = resolve_task_dir(args.state_dir, args.task_id)
-    saved_file = task_dir / "adr-saved.txt"
-    if not saved_file.exists():
-        sys.exit("no adr-saved.txt")
-    saved = saved_file.read_text(encoding="utf-8").strip()
-    # The emptiness guard must run on the RAW string, before constructing the
-    # Path: Path("") normalizes to "." (always truthy), so `not str(Path(...))`
-    # never fires and an empty adr-saved.txt would fall through to the number
-    # regex and exit with the cryptic "cannot extract ADR number from .".
-    if not saved or not Path(saved).exists():
-        print("warning: saved adr not found at " + str(saved))
-        return
-    target = Path(saved)
-    m = re.search(r"ADR-(\d{4})-", str(target))
-    if not m:
-        sys.exit(f"error: cannot extract ADR number from {target}; expected ADR-<number>-<slug>.md")
-    num = m.group(1)
-    text = (task_dir / "adr.md").read_text(encoding="utf-8")
-    target.write_text(rewrite_heading(text, num), encoding="utf-8")
-    print("adr synced: " + str(target))
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -145,14 +120,9 @@ def main(argv: list[str] | None = None) -> int:
     p_save.add_argument("task_id")
     p_save.add_argument("adr_dir")
     p_save.add_argument("run_agent")
-    p_sync = sub.add_parser("sync")
-    p_sync.add_argument("state_dir")
-    p_sync.add_argument("task_id")
     args = parser.parse_args(argv)
     if args.command == "save":
         cmd_save(args)
-    else:
-        cmd_sync(args)
     return 0
 
 

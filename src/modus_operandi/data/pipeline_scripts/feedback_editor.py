@@ -58,9 +58,9 @@ def open_feedback_editor(
     for all of them. Pauses
     stdin forwarding, creates feedback.md in the current task dir (never
     overwriting; a NEW file is seeded with the numbered open questions of
-    the gate's document — study.md for a `motivation` gate, adr.md for an
-    `adr` gate — so the questions are in front of the user while writing,
-    ADR-0012), opens it in the platform editor and, on editor close,
+    the gate's document — study.md for a `motivation` gate — so the
+    questions are in front of the user while writing, ADR-0012), opens it
+    in the platform editor and, on editor close,
     answers the gate with `continue` so the workflow continues (the revise
     step reads feedback.md).
     The editor resolution (editor.py) returns a mode: "waited" (macOS

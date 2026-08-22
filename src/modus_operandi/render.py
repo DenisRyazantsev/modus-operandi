@@ -193,12 +193,12 @@ _STEP_SCRIPTS = {
     "review_task_id": ("review-task-id.sh", True),
     "adr_task_id": ("adr-task-id.sh", True),
     "implement_retry": ("implement-retry.sh", True),
-    "sync_adr_step": ("sync-adr.sh", True),
     "clear_feedback": ("clear-feedback.sh", True),
     "implement_pass_check": ("implement-pass-check.sh", True),
     "pass_check": ("pass-check.sh", True),
     "show_file": ("show-file.sh", True),
     "validate_inputs": ("validate_inputs.py", False),
+    "check_plan_deviation": ("check_plan_deviation.py", False),
 }
 
 
