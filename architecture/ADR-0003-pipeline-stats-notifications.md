@@ -4,142 +4,98 @@ status: accepted
 date: 2026-08-14
 ---
 
-# ADR-0003: Статистика токенов/времени и звуковые уведомления в run-pipeline.py
+# ADR-0003: Token/Time Statistics and Sound Notifications in run-pipeline.py
 
 ## Context
 
-Пользователь хочет, чтобы по завершении любого прогона — сейчас это `adr-pipeline` и `review-pipeline`, а по сути
-любой workflow, запускаемый через обёртку, — выводилась статистика использования токенов (input, output, reasoning,
-cache) и времени работы. Отдельно нужен звуковой сигнал, когда требуется участие человека: когда spec-kit ждёт
-интерактивного ввода (human-гейт — согласование ADR), когда pipeline падает с ошибкой и когда он просто завершает
-работу.
+Upon completion of any run — currently `adr-pipeline` and `review-pipeline`, but effectively any workflow launched
+through the common wrapper — the user wants statistics on token usage (input, output, reasoning, cache) and wall time.
+A sound signal is also needed when human participation is required: when spec-kit waits for interactive input (a human
+gate — ADR approval), when the pipeline fails with an error, and when it simply finishes.
 
-Проверенные факты о текущей реализации:
+Verified facts about the current implementation:
 
-- Оба workflow запускаются через общую обёртку `run-pipeline.py` (генерируется из `templates/run_pipeline.py.tpl`):
-  `run-pipeline.py adr-pipeline …` и `run-pipeline.py review-pipeline …`. Она уже стримит stdout `specify` с
-  таймстампами, поллит `state.json`, хвостит агент-логи и печатает финальный статус (код возврата + команда resume).
-  Это единая точка входа — добавленная сюда функциональность становится дефолтной для обоих (и любых будущих)
-  pipeline.
-- Session id планера и экзекутора уже сохраняются `run-agent.sh` в `<state_dir>/sessions-<task-id>.json` (task id
-  берётся из симлинка `<state_dir>/tasks/current`). Значит, отслеживать токены в процессе не нужно — достаточно этих
-  сохранённых id.
-- opencode умеет отдавать статистику сессии по её id: `opencode export <sessionID>` печатает JSON в stdout (строка
-  `Exporting session: …` идёт в stderr). В поле `info` этого JSON лежат нужные числа: `info.tokens` =
-  `{input, output, reasoning, cache: {read, write}}`, `info.cost`, а также `info.time = {created, updated}` и
-  `info.agent`.
-- Открытие human-гейта обёртка уже распознаёт по первой строке меню (начинается с `┌─ Gate`, функция
-  `is_gate_menu_opener`); код возврата известен после `proc.wait()`.
-- Пользователь предоставил звуковой файл `victory.wav` (сейчас лежит в `architecture/assets/victory.wav`).
+- All pipelines run through a single common wrapper: `adr-pipeline …` and `review-pipeline …`. It already streams live
+  output with timestamps, tracks the run state, tails agent logs, and prints the final status (exit code + resume
+  command). This is the single entry point — functionality added there becomes the default for both (and any future)
+  pipelines.
+- The planner and executor session ids are already saved by the run scripts into a per-task sessions file (the task id
+  comes from the current-task symlink). So there is no need to track tokens during the run — these saved ids are enough.
+- opencode can return session statistics by id: `opencode export <sessionID>` prints session JSON to stdout (a status
+  line goes to stderr). The `info` field of that JSON holds the needed numbers: `info.tokens` = `{input, output,
+  reasoning, cache: {read, write}}`, `info.cost`, and also `info.time = {created, updated}` and `info.agent`.
+- The wrapper already detects a human gate opening by the menu's first line (starts with `┌─ Gate`); the exit code is
+  known after the run ends.
+- The user provided the sound file `victory.wav`.
+
+One caveat discovered during implementation: pipe capture of `opencode export` output truncates large exports — a
+known upstream bug causes the export to exit before its stdout is fully flushed into the pipe once the export exceeds
+the pipe buffer (the JSON is silently cut to a multiple of 65536 bytes). The export output is therefore captured via a
+temporary file instead.
 
 ## Decision
 
-Реализовать обе возможности в общей обёртке `run-pipeline.py`, а не в workflow-файлах:
+Implement both capabilities in the common wrapper, not in the individual workflows:
 
-1. **Статистика токенов через `opencode export`, без накопления в процессе.** После `proc.wait()` обёртка:
-   резолвит task id из `<state_dir>/tasks/current`, читает planner/executor session id из
-   `<state_dir>/sessions-<task-id>.json`, для каждой роли выполняет `opencode export <sessionID>`, парсит stdout как
-   JSON и берёт `info.tokens.input`, `info.tokens.output`, `info.tokens.reasoning`,
-   `info.tokens.cache.read`, `info.tokens.cache.write` (и `info.cost`). Значения двух ролей суммируются. Никакого
-   live-аккумулятора не нужно.
-2. **Время работы.** Обёртка фиксирует `time.monotonic()` сразу перед `Popen` и сразу после `proc.wait()`; разность —
-   wall-clock время прогона. Корректно для всех путей завершения (успех, ошибка, abort/отмена на гейте). Выводится в
-   формате `HH:MM:SS` (например `01:45:01`).
-3. **Формат финального блока.** После `proc.wait()` (и после запроса статистики) печатается блок; все числа токенов —
-   с пробельными разделителями тысяч (`321 213`, а не `321213`), cache показывается отдельной строкой:
-
-   ```
-   === run statistics ===
-   wall time: 01:45:01
-   tokens: input 321 213 · output 12 345 · reasoning 5 678
-   cache: read 9 032 013 · write 0
-   cost: $0.03
-   ```
-
-   Блок печатается во всех путях завершения: успех, ошибка (`rc != 0`), abort. Если session id не найден или
-   `opencode export` не удался — строка/значение помечается недоступным (нулём/прочерком), но обёртка не падает.
-4. **Один звук на все события.** Добавляется helper `notify()`, воспроизводящий один и тот же звук `victory.wav` во
-   всех трёх точках: открытие human-гейта (в `main()` при `is_gate_menu_opener(line) === True`), успешное завершение
-   (`rc == 0`), ошибка/abort (`rc != 0`). Разные звуки для разных событий не нужны.
-5. **Доставка звукового файла.** `victory.wav` поставляется вместе с установкой: копируется инсталлером рядом с
-   установленным `run-pipeline.py`, и сгенерированная обёртка ссылается на этот путь (абсолютный путь, переданный при
-   рендере). Воспроизведение — системный плеер (macOS `afplay`, Linux `paplay`/`aplay`, Windows `winsound`),
-   неблокирующее (subprocess не дожидается) и с тихой деградацией: нет файла/плеера или не-TTY — просто пропустить,
-   код возврата и вывод не меняются.
+1. **Token statistics via `opencode export`, without in-process accumulation.** After the run ends, the wrapper
+   resolves the saved session ids for both roles (planner and executor), runs `opencode export <sessionID>` for each,
+   parses the returned JSON, and takes `info.tokens.input`, `info.tokens.output`, `info.tokens.reasoning`,
+   `info.tokens.cache.read`, `info.tokens.cache.write` (and `info.cost`). The values of the two roles are summed.
+   Because opencode itself knows each session's full usage, no live token accumulator is needed.
+2. **Wall time.** The wrapper measures the run's wall-clock time itself, from launch until the run ends — this is the
+   honest measure for all termination paths (success, error, abort/cancel at a gate), including human wait time.
+   Printed in `HH:MM:SS` format (e.g. `01:45:01`).
+3. **Final statistics block.** After the run, on all termination paths — success, error, abort — a block is printed:
+   wall time, token sums (input, output, reasoning), cache on its own line (read/write), and cost. All token numbers
+   use space thousands separators (`321 213`, not `321213`). If a session id is not found or `opencode export` fails —
+   the affected line/value is marked unavailable (zero/dash), but the wrapper does not crash.
+4. **One sound for all events.** The same `victory.wav` sound plays at all three moments: human gate opening (detected
+   in the live output), successful completion (`rc == 0`), and error/abort (`rc != 0`). Different sounds for different
+   events are not needed. Playback uses the system player, is non-blocking, and degrades silently: without the file or
+   a player, or in a non-TTY run — the sound is just skipped.
+5. **Sound file delivery.** `victory.wav` ships with the installation, deployed next to the installed wrapper, and the
+   wrapper references it by the path resolved at install time.
 
 ## Alternatives
 
-* **Live-накопление токенов из событий `step_finish` в агент-логах (первоначальный вариант).** Отклонено в пользу
-  `opencode export`: требует парсить JSON-поток `opencode run`, аккумулятор и скоупинг на текущий прогон (логи
-  прошлых задач остаются в `<state_dir>/logs/`, а `run-agent.sh` перезаписывает файл на каждом шаге). Запрос
-  статистики у opencode по сохранённому session id проще и точнее — opencode сам знает полный usage сессии.
-* **Финальный shell-шаг `report-statistics` в концах `adr-pipeline.yml.tpl` и `review-pipeline.yml.tpl`.** Отклонено:
-  требует правки каждого workflow и не покрывает «любой pipeline»; звук по-прежнему нужен в обёртке (детект гейта по
-  stdout и код возврата), так что разнесение статистики и звука по разным местам усложнило бы реализацию.
-* **Время как разность `info.time.updated - info.time.created` сессий.** Отклонено: это активное время сессий без
-  простоев (в т.ч. ожидания человека на гейте); пользователь просил «статистику по времени работы» — честнее общий
-  wall-clock всего прогона, который обёртка меряет напрямую.
-* **Разные звуки для разных событий (attention/success/error).** Отклонено по фидбеку: достаточно одного сигнала;
-  `victory.wav` воспроизводится для всех трёх событий.
-* **Звук через стороннюю библиотеку (`playsound`, `pygame`) или системные уведомления.** Отклонено: добавляет
-  зависимости; системного плеера для локального `.wav` достаточно, а для headless-прогонов звук и не нужен.
-* **Настраиваемый звук/статистика через `config.yml` (вкл/выкл, выбор звука).** Отложено: пользователь не просил
-  конфигурацию; default-on с тихой деградацией достаточно. При необходимости добавить опцию позже, не меняя контракт.
+* **Live token accumulation from agent step events (initial variant).** Rejected in favor of `opencode export`:
+  requires parsing the run's JSON event stream, an accumulator, and scoping to the current run (logs of past tasks
+  remain on disk). Requesting statistics from opencode by saved session id is simpler and more accurate — opencode
+  itself knows the session's full usage.
+* **A final reporting step appended to each workflow.** Rejected: requires editing every workflow and does not cover
+  "any pipeline"; the sound still needs the wrapper (gate detection via output and exit code), so splitting statistics
+  and sound across different places would complicate the implementation.
+* **Session timestamps (`updated - created`) as run time.** Rejected: that is the sessions' active time without idle
+  periods (including human wait at a gate); the user asked for run-time statistics — the honest measure is the overall
+  wall-clock of the run, which the wrapper measures directly.
+* **Different sounds for different events (attention/success/error).** Rejected by user feedback: one signal is
+  enough; `victory.wav` is played for all three events.
+* **Sound via a third-party library or system notifications.** Rejected: adds dependencies; a system player for a
+  local `.wav` is enough, and for headless runs sound is not needed anyway.
+* **Configurable sound/statistics (on/off, sound selection).** Deferred: the user did not ask for configuration;
+  default-on with silent degradation is enough. An option can be added later without changing the contract.
 
 ## Consequences
 
-* Положительно: единая реализация в обёртке — статистика и звук становятся дефолтными для `adr-pipeline`,
-  `review-pipeline` и любых будущих workflow без правки каждого YAML.
-* Положительно: статистика точная и полная — берётся напрямую у opencode по session id (`info.tokens`/`info.cost`),
-  покрывает все шаги обеих ролей без собственного аккумулятора и без скоупинга на прошлые прогоны.
-* Положительно: изменения аддитивны и локализованы в `run-pipeline.py` + копирование звукового файла при установке;
-  workflow, `run-agent.sh`, сессии и контракт шагов не меняются.
-* Положительно: звук и статистика не влияют на код возврата и вывод; в CI/headless ничего не ломается.
-* Отрицательно: статистика зависит от наличия `opencode` в PATH и работоспособности `opencode export <sessionID>` в
-  конце прогона (если команда недоступна — деградация к прочеркам/нулям).
-* Отрицательно: работает только при запуске через `run-pipeline.py`; прямой `specify workflow run adr-pipeline …`
-  не даёт ни статистики, ни звука (обёртка — рекомендованный путь запуска, см. README).
-* Отрицательно: `opencode export` отдаёт весь экспорт сессии (включая сообщения), хотя нужен только `info`; на больших
-  сессиях это медленнее/тяжелее минимально необходимого.
-* Отрицательно: воспроизведение звука зависит от окружения (наличие `afplay`/`paplay`/`aplay`, включённый звук
-  терминала); на некоторых системах сигнал может не прозвучать — деградация тихая.
+- Positive: a single implementation in the wrapper — statistics and sound become the default for `adr-pipeline`,
+  `review-pipeline`, and any future workflows without editing each workflow.
+- Positive: statistics are accurate and complete — taken directly from opencode by session id, covering all steps of
+  both roles without a custom accumulator and without scoping to past runs.
+- Positive: changes are additive and localized to the wrapper plus copying the sound file at install time; workflows,
+  run scripts, sessions, and the step contract do not change.
+- Positive: sound and statistics do not affect the exit code or output; nothing breaks in CI/headless.
+- Negative: statistics depend on `opencode` being in PATH and `opencode export <sessionID>` working at the end of the
+  run (if the command is unavailable — degrades to dashes/zeros).
+- Negative: works only when launched via the wrapper; a direct workflow launch gives neither statistics nor sound.
+- Negative: `opencode export` returns the whole session export (including messages) although only `info` is needed; on
+  large sessions this is slower/heavier than the minimum necessary.
+- Negative: sound playback depends on the environment (presence of a system player, terminal sound enabled); on some
+  systems the signal may not play — silent degradation.
 
 ## Acceptance Criteria
 
-* При запуске `run-pipeline.py adr-pipeline …` и `run-pipeline.py review-pipeline …` после завершения печатается блок
-  `=== run statistics ===`, содержащий `wall time` в формате `HH:MM:SS` и `tokens: input … · output … · reasoning …`
-  плюс строку `cache: read … · write …` (и `cost`), независимо от успеха/падения/abort.
-* Суммы берутся из `opencode export <sessionID>` для planner и executor session id, прочитанных из
-  `<state_dir>/sessions-<task-id>.json` (task id — из `<state_dir>/tasks/current`); собственный live-аккумулятор
-  токенов не используется.
-* Все числа токенов выводятся с пробельными разделителями тысяч (`321 213`), время — строго `HH:MM:SS`.
-* При открытии human-гейта (строка `┌─ Gate` в stdout), при `rc == 0` и при `rc != 0` воспроизводится один и тот же
-  звук `victory.wav` (один сигнал на все события, без различий).
-* `victory.wav` поставляется с установкой и доступен по пути, на который ссылается сгенерированная обёртка.
-* Звук и статистика не меняют код возврата: при отсутствии файла/плеера или в не-TTY прогон завершается так же, как
-  без них.
-* Существующие тесты `tests/test_run_pipeline.py` проходят; добавлены юнит-тесты: парсинг/суммирование JSON от
-  `opencode export` в итоговый блок (включая форматирование тысяч и `HH:MM:SS`) и выбор момента воспроизведения звука
-  (gate-open / rc==0 / rc!=0 — всегда один и тот же `victory.wav`).
-
-## Amendments
-
-### 2026-08-14: Захват вывода `opencode export` через временный файл вместо pipe
-
-**Что было зафиксировано:** п. 1 Decision («Статистика токенов через `opencode export`, без накопления в процессе»)
-описывал чтение JSON из pipe-потока stdout команды `opencode export <sessionID>`
-(`subprocess.run(..., stdout=subprocess.PIPE)` и `json.loads(result.stdout)`).
-
-**Что изменилось в реализации:** `export_session_info()` в `templates/run_pipeline.py.tpl` по-прежнему запускает ровно
-`opencode export <sessionID>`, но JSON захватывается во временный файл (`tempfile.TemporaryFile`, переданный как
-`stdout=` в `subprocess.run`) и парсится из него после завершения. Если захваченный JSON не распарсился, экспорт
-повторяется один раз, прежде чем деградировать к предусмотренным ADR нулевым/прочерковым значениям.
-
-**Почему:** при установленном opencode 1.18.18 pipe-захват сломан — известный апстрим-баг (sst/opencode issues #14948,
-#2803, #29330) приводит к тому, что `opencode export` завершается раньше, чем его stdout полностью сброшен в pipe,
-когда экспорт сессии превышает буфер пайпа; JSON молча обрезается до кратного 65536 байт (код возврата при этом 0).
-Воспроизведено на сессии текущей задачи: полный экспорт 619 887 байт, через pipe `subprocess.run` вернул только
-65 536/131 072 байта, и `json.loads` падал; прямой редирект в файл надёжно возвращает полный вывод. Без изменения
-статистика печатала бы нули/прочерки для любой сессии больше 64 КБ, что противоречит следствию «статистика точная и
-полная» и критерию о суммировании по session id. Всё остальное в ADR (источник session id, суммирование по ролям,
-печать блока на всех путях завершения, деградация без влияния на код возврата) не меняется.
+- After any run, the wrapper prints a statistics block with wall time and token/cache/cost sums for both roles, on all
+  termination paths (success, error, abort), with space thousands separators for tokens and `HH:MM:SS` wall time.
+- The same `victory.wav` sound plays at gate-open, on success, and on failure.
+- Sound and statistics never change the exit code: missing file/player or a non-TTY run terminates exactly as without
+  them.

@@ -3,72 +3,68 @@ slug: comment-review-step
 status: proposed
 ---
 
-# ADR-0001: Шаг ревью читаемости кода (комментарии «почему») после цикла review → fix
+# ADR-0001: Code Readability Review Step (Why-Comments) After the Review → Fix Loop
 
 ## Context
 
-В конвейере `adr-pipeline` после реализации выполняется цикл `review-loop` (review bugs → fix bugs), который проверяет
-соответствие кода ADR и исправляет найденные дефекты. Однако даже после устранения багов в коде остаются места, которые
-корректны, но неочевидны: будущий читатель (senior-разработчик, впервые открывший файл) может сделать неверное
-предположение о том, что код делает и почему он написан именно так.
+The pipeline runs a review → fix loop after implementation that checks the code against the ADR and fixes found
+defects. However, even after bugs are fixed, the code still contains places that are correct but non-obvious: a
+future reader (a senior developer opening the file for the first time) may make a wrong assumption about what the
+code does and why it was written that way.
 
-Речь идёт не о поиске ошибок, а о «ловушках понимания»: magic-числа без видимого происхождения, воркэраунды и хаки,
-нестандартное использование API, намеренно проглоченные исключения, граничные случаи, бизнес-правила внутри условий,
-неявные инварианты, странные оптимизации и осознанный технический долг. Всё это — кандидаты на поясняющий комментарий о
-причине (`why`), а не о том, что код делает (`what`).
+This is not about finding errors, but about "comprehension traps": magic numbers with no visible origin,
+workarounds and hacks, non-standard API usage, deliberately swallowed exceptions, edge cases, business rules inside
+conditions, implicit invariants, odd optimizations, and conscious technical debt. All of these are candidates for an
+explanatory comment about the reason (`why`), not about what the code does (`what`).
 
 ## Decision
 
-Добавить после цикла `review-loop` отдельный шаг ревью читаемости кода (`comment-review`), который:
+Add a separate code readability review step (`comment-review`) after the review → fix loop. Its task is to find
+only places that mislead the reader — not bugs. The reviewer runs in the same session and context as the other
+steps to save tokens; no separate fresh context is created.
 
-1. Запускает ревьюера с промтом «senior code reviewer», задача которого — найти только места, вводящие читателя в
-   заблуждение, а не баги. Ревьюер работает в той же сессии и контексте, что и остальные шаги, чтобы экономить токены (
-   отдельный «свежий» контекст не заводится).
-2. Руководствуется жёсткими правилами: комментировать только `why`, применять тест «забора Честертона», предлагать
-   переименование/рефакторинг вместо комментария, оценивать относительно типичного читателя кодовой базы, а при
-   отсутствии находок возвращать пустой список (шум хуже тишины).
-3. Проверяет триггеры неочевидности по порядку: magic-числа/константы, воркэраунды/хаки, нестандартный API, проглоченные
-   исключения, граничные случаи, бизнес-правила в условиях, неявные инварианты, странные оптимизации, внешние
-   ограничения, известные ограничения/технический долг.
-4. Выдаёт строго структурированный результат без преамбулы:
-   ```
-   <file:line>
-   Why a reader would be misled: <one sentence>
-   Comment: <1-2 lines, WHY only, in the language of this codebase's commits>
-   Verdict: COMMENT | REFACTOR
-   ```
-5. Замыкает шаг в цикл `comment-review → fix` (аналогично существующим `srp-loop` и `review-loop`) с порогом итераций и
-   итоговым проходным вердиктом, а найденные комментарии применяются к коду исполнителем.
+The reviewer follows strict rules:
+
+- Comment only on `why`, never on `what`; apply the Chesterton's fence test; suggest a rename or refactoring
+  instead of a comment when that is the better cure; evaluate relative to the typical reader of the codebase.
+- Check the non-obviousness triggers in order: magic numbers/constants, workarounds/hacks, non-standard API,
+  swallowed exceptions, edge cases, business rules in conditions, implicit invariants, odd optimizations, external
+  constraints, known limitations/technical debt.
+- Return an empty list when there are no findings — noise is worse than silence.
+- Produce a strictly structured result without preamble: for each finding the location, one sentence on why a
+  reader would be misled, a 1–2 line comment (WHY only, in the language of the codebase's commits), and a verdict
+  of `COMMENT` or `REFACTOR`.
+
+The step closes into a `comment-review → fix` loop (similar to the existing loops) with an iteration cap and a
+final passing verdict; found comments are applied to the code.
 
 ## Alternatives
 
-* **Не добавлять отдельный шаг, а расширить существующий `review-loop`.** Отклонено: смешивает две разные цели (
-  корректность и читаемость), усложняет промт и размывает критерии `VERDICT: PASS/FIX`.
-* **Добавлять комментарии прямо в процессе реализации.** Отклонено: автор кода «слеп» к собственным неочевидным местам;
-  нужен отдельный этап ревью, а не правка в процессе написания.
-* **Использовать сторонний инструмент (линтер/docs-генератор) вместо LLM-ревьюера.** Отклонено: такие инструменты не
-  улавливают семантику «почему» — только «что», что прямо запрещено правилами.
-* **Проводить ревью читаемости вручную без автоматизации.** Отклонено: противоречит цели конвейера — автоматизировать
-  всю цепочку.
+* **Do not add a separate step; extend the existing review → fix loop.** Rejected: mixes two different goals
+  (correctness and readability), complicates the prompt, and blurs the pass/fix criteria.
+* **Add comments directly during implementation.** Rejected: the code author is "blind" to their own non-obvious
+  places; a separate review stage is needed, not edits during writing.
+* **Use a third-party tool (linter/doc generator) instead of an LLM reviewer.** Rejected: such tools do not
+  capture the "why" semantics — only "what", which is explicitly forbidden by the rules.
+* **Do the readability review manually without automation.** Rejected: contradicts the pipeline's goal of
+  automating the whole chain.
 
 ## Consequences
 
-* Положительно: код получает только осмысленные комментарии о причинах решений, а не очевидные описания; снижается риск
-  ошибочных изменений из-за непонимания контекста будущими читателями.
-* Положительно: правило «шум хуже тишины» и запрет на `what`-комментарии минимизируют засорение кодовой базы.
-* Отрицательно: ещё один LLM-шаг и цикл исправлений увеличивают время и стоимость прогона конвейера.
-* Отрицательно: ревьюер работает в том же контексте, в котором писался код, поэтому часть неочевидных мест он может не
-  заметить так же, как автор.
+* Positive: code gets only meaningful comments about the reasons behind decisions, not obvious descriptions; the
+  risk of erroneous changes caused by future readers misunderstanding context decreases.
+* Positive: the "noise is worse than silence" rule and the ban on `what`-comments minimize codebase clutter.
+* Negative: one more LLM step and fix loop increase pipeline runtime and cost.
 
 ## Acceptance Criteria
 
-* В `adr-pipeline` после `review-loop` (и `sync-adr`) присутствует шаг `comment-review` с промтом из «Context»,
-  проверяющим перечисленные триггеры неочевидности.
-* Результат ревью пишется в `${state_dir}/tasks/{{ task_id }}/comment-review-N.md`, первая строка — `VERDICT: PASS` или
-  `VERDICT: FIX`, за ней идут находки в строгом формате `<file:line>` / `Why a reader would be misled:` / `Comment:` /
-  `Verdict: COMMENT | REFACTOR`.
-* При `VERDICT: FIX` запускается шаг исправления, применяющий комментарии из последнего `comment-review-N.md`, после
-  чего цикл повторяется; число итераций ограничено настройкой, как в `srp-loop`/`review-loop`.
-* При отсутствии находок ревьюер возвращает пустой список (только `VERDICT: PASS`), и шаг завершается без правок.
-* Комментарии добавляются только о причине (`why`), на языке коммитов кодовой базы, без `what`-описаний; рекомендации
-  вида `REFACTOR` реализуются как переименование/рефакторинг, а не как комментарий.
+* After the review → fix loop, a readability review step runs that checks only the listed non-obviousness triggers
+  and reports no findings when there are none.
+* The review produces a strictly structured result without preamble: for each finding a location, one sentence on
+  why a reader would be misled, a 1–2 line WHY-only comment in the language of the codebase's commits, and a
+  verdict of `COMMENT` or `REFACTOR`.
+* On a `FIX` verdict, a fix step applies the comments from the latest review and the loop repeats until `PASS`;
+  the number of iterations is capped by a setting, as in the existing loops.
+* Comments are added only about the reason (`why`); `REFACTOR` recommendations are implemented as a rename or
+  refactoring, not as a comment.
+* The step runs in the same session and context as the other pipeline steps.

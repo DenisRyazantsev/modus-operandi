@@ -4,107 +4,31 @@ status: accepted
 date: 2026-08-15
 ---
 
-# Избавиться от `templates/`: применять конфиг обычными аргументами, а не вставкой
+# Drop `templates/`: Apply the Config via Ordinary Arguments Instead of Insertion
 
 ## Context
 
-При `install.py` (и `--apply`/`--update`) устанавливаемые артефакты — агенты (`planner.md`, `executor.md`), оба
-workflow (`adr-pipeline.yml`, `review-pipeline.yml`), shell-обвязку (`run-agent.sh`, `name-task.sh`), обёртку
-`run-pipeline.py` и лаунчер `spec-run` — генерируются из файлов `templates/*.tpl` через `string.Template`
-(подстановка `${placeholder}`). При этом в том же каталоге `templates/` лежат шесть обычных `.py`-скриптов
-(`task_utils.py`, `adr_utils.py`, `agent_call.py`, `save_adr.py`, `check_review.py`, `check_implementation.py`), которые
-вообще не рендерятся, а просто копируются через `shutil.copy2`. То есть «шаблон» — это смесь двух разных механик.
-
-Это усложнение раздражает на практике:
-
-- каждый литеральный `$` в shell-скриптах и YAML (переменные bash, `$()`-подстановки, доллары в сообщениях) надо
-  экранировать как `$$`, иначе `Template.substitute` падает с «Invalid placeholder»;
-- то же касается `{`/`}` в workflow (jinja-подстановки `{{ inputs.feature }}` и `{{ context.run_id }}` specify-движка)
-  — их нельзя отличить от плейсхолдеров шаблонизатора;
-- ошибки подстановки видны только после рендера, не в исходнике;
-- тесты (`test_spec_run.py`, `test_run_pipeline.py`) вынуждены вручную читать `.tpl` и рендерить его, а
-  `test_task_utils.py`, `test_check_review.py`, `test_save_adr.py`, `test_check_implementation.py` — импортировать
-  скрипты прямо из `templates/` через `sys.path.insert`.
-
-Хочется убрать весь этот слой и писать обычный Python-код. Ключевое требование: конфиг должен применяться через
-обычные аргументы (командной строки и/или окружение), а не через «вставку» значений в текст файла при установке.
+Installed artifacts — the agents, both workflows, the shell wrappers, the pipeline wrapper, and the modus-operandi launcher — were generated from template files via placeholder substitution, while other files in the same directory were plain scripts that were only copied, not rendered. The directory was thus a mixture of two mechanisms. This was painful in practice: every literal `$` in shell scripts and YAML (bash variables, command substitutions, dollars in messages) had to be escaped, otherwise substitution failed; the curly braces used by the engine's own templating could not be distinguished from the substitution placeholders; substitution errors surfaced only at render time, not in the source; and tests had to manually render template files while other scripts were imported from the directory directly. The goal was to remove this whole layer and write plain code, delivering the config via ordinary arguments rather than by inserting values into file text at install time. During implementation it was also learned that embedding the numeric iteration limit into the pass-check warning text was itself the kind of value-into-text substitution being prohibited, so the number was dropped from the human-readable warning while the limit itself continued to be written and enforced as data.
 
 ## Decision
 
-1. **Удалить систему шаблонов целиком.** Убираются каталог `templates/`, константа `TEMPLATES_DIR` в
-   `spec_utils/__init__.py`, все файлы `*.tpl` и любое использование `string.Template`. Никаких `.tpl`, никаких
-   `${placeholder}` и экранирования `$$` больше не остаётся.
-
-2. **Применять конфиг через обычные аргументы, а не через вставку.** Никакой машинерии с подстановкой значений в
-   текст файла не остаётся: устанавливаемые скрипты — обычный Python/bash-код, который получает настройки во время
-   выполнения, а не запекает их при установке.
-   - Скрипты (`run-agent.sh`, `name-task.sh`, `run-pipeline.py`, `spec-run`, `save_adr.py`, `check_review.py`,
-     `check_implementation.py`) читают изменяемые параметры (`state_dir`, `adr_dir`, `use_serve`/`--attach`, пути к
-     workflow и к самим скриптам) как аргументы командной строки и/или переменные окружения (`SKLC_STATE_DIR` и
-     т.п.), а не из запечённого текста.
-   - Workflow передаёт настройки shell-шагам через `-i` inputs и переменные окружения; пути к скриптам не вшиваются в
-     YAML, а разрешаются в шаге (например, из переменной окружения или `command -v`).
-   - Значения, которые физически обязаны быть в файле (модель/`reasoningEffort` во frontmatter агентов
-     `planner.md`/`executor.md`), записываются обычным Python-кодом как данные (структура → текст), без механизма
-     текстовой подстановки и без `$`/`{}`-экранирования.
-
-3. **Вынести runtime-скрипты из `templates/` в обычную исходную директорию.** Шесть `.py`-скриптов переносятся в новый
-   каталог с исходным кодом (например, `pipeline_scripts/`) и остаются обычными импортируемыми модулями; инсталлятор
-   по-прежнему копирует их все вместе в `~/.config/opencode/scripts/`, чтобы сохранить их взаимный импорт по имени.
-   Статический `gitignore.snippet` превращается в Python-константу (обычную строку) в установщике.
-
-4. **Не менять наблюдаемое runtime-поведение.** Инсталляционный layout (`spec_utils/paths.py`) и видимое поведение
-   пайплайна (шаги workflow, тёплые сессии, разрешение task-id, review-циклы, gates) остаются без изменений: меняется
-   только то, *как* настройки доставляются до скриптов (аргументы/окружение вместо вшитых значений), а не *что*
-   пайплайн делает.
+Remove the template system and the placeholder-substitution mechanism entirely: no template files, no placeholders, and no escaping remain. The config is applied via ordinary arguments and environment variables (such as `MO_STATE_DIR`): installed scripts are plain code that receive their settings (state and artifact locations, attach behavior, workflow paths, their own locations) at execution time rather than having them baked in at install. Values that physically must live in a file — the model and reasoning settings in the agent frontmatter — are written by plain code as data (structure to text), without any text-substitution machinery and without escaping. Runtime scripts move out of the templates directory into a regular source directory and remain ordinary importable modules; the installer still copies them together so their mutual imports keep working. Observable runtime behavior does not change: the install layout and the pipeline's visible behavior (warm sessions, task-id resolution, review loops, gates) stay the same — only *how* settings are delivered changes, not *what* the pipeline does.
 
 ## Alternatives
 
-- **Оставить как есть** — отвергнуто: боль от `$$`-экранирования и смешанной механики (рендер vs копирование) в одном
-  каталоге остаётся.
-- **Перейти на другой шаблонизатор (Jinja2 и т.п.)** — отвергнуто: добавляет внешнюю зависимость и не убирает слой
-  «шаблон → файл», а лишь меняет синтаксис плейсхолдеров (появляется конфликт с `{{ }}` самого specify-движка).
-- **Передавать конфиг обычными аргументами (выбрано)** — единственный вариант, который реально убирает слой шаблонов
-  и саму «машинерию вставки»: скрипты получают настройки как аргументы/окружение во время выполнения, остаётся один
-  язык в проекте, а runtime-скрипты становятся честными импортируемыми модулями.
+- **Keep the current setup** — rejected: the escaping pain and the mixed render-vs-copy mechanism remain.
+- **Switch to another templater (e.g. Jinja2)** — rejected: adds an external dependency, keeps the template-to-file layer, and only changes the placeholder syntax, creating a conflict with the curly braces of the engine's own templating.
+- **Apply the config via ordinary arguments** — chosen: the only option that removes the insertion machinery itself, leaves one language in the project, and makes runtime scripts honest importable modules.
 
 ## Consequences
 
-- **Хорошо:** один язык для всего репозитория; исчезают `$$`/`${}`-экранирования, вся «вставка» значений в текст и
-  связанные с ней ошибки; скрипты получают конфиг как обычные аргументы/окружение и импортируются и тестируются как
-  нормальные модули без `sys.path.insert` в `templates/`; ошибки сборки видны прямо в Python-коде.
-- **Плохо:** большой механический рефакторинг (`render.py`, `installer.py`, workflow YAML, тесты); workflow-файлы и
-  скрипты перестают содержать вшитые значения — нужно аккуратно прокинуть настройки через `-i` inputs/переменные
-  окружения, иначе шаги потеряют `state_dir`/`adr_dir`/пути; тесты, читающие `.tpl`, придётся переписать на импорт
-  новых Python-модулей.
+- One language across the project; escaping, value-into-text insertion, and their related errors disappear.
+- Scripts receive config as ordinary arguments/environment and are imported and tested as normal modules; build errors become visible directly in the code.
+- A large mechanical refactor touching the installer, the rendering logic, the workflows, and the tests.
+- Settings must be carefully forwarded through the pipeline via inputs and environment variables, otherwise steps lose their state and artifact locations.
 
 ## Acceptance Criteria
 
-1. Каталог `templates/`, все `*.tpl`, константа `TEMPLATES_DIR` и любой вызов `string.Template` удалены из репозитория.
-2. Шесть runtime-скриптов (`task_utils.py`, `adr_utils.py`, `agent_call.py`, `save_adr.py`, `check_review.py`,
-   `check_implementation.py`) лежат в обычной исходной директории (не в `templates/`), устанавливаются в
-   `~/.config/opencode/scripts/` и импортируются друг другом, как раньше.
-3. `python3 install.py`, `--apply`, `--update` и `--uninstall` дают те же установленные артефакты (агенты, оба
-   workflow, `run-agent.sh`, `name-task.sh`, `run-pipeline.py`, `spec-run`, `victory.wav`); `verify.verify_install` и
-   smoke-тесты через `--home` проходят.
-4. Конфиг применяется через обычные аргументы/окружение, а не через вставку: в установленных скриптах и workflow нет
-   вшитых значений `state_dir`/`adr_dir`/путей — они приходят как аргументы командной строки или переменные окружения
-   (`SKLC_STATE_DIR` и т.п.), и workflow передаёт их shell-шагам через `-i` inputs/окружение. Значения из `config.yml`
-   (модели planner/executor, `state_dir`, `adr_dir`, `human_gates`, `use_serve`, лимиты `max_*_iterations`,
-   `shell_timeout`) по-прежнему учитываются; workflow принимается движком specify.
-5. Все существующие тесты проходят после перевода импортов с `templates/` на новые Python-модули и перевода рендера
-   `.tpl` на проверку передачи аргументов; ни одно runtime-поведение (разрешение task-id, тёплые сессии, review-циклы,
-   gates) не изменено.
-
-## Amendments
-
-1. **Сообщения pass-check-шагов не содержат число лимита.** Раньше сгенерированные pass-check-шаги обоих workflow
-   встраивали значение лимита в текст предупреждения (например, `WARNING: SRP review loop exhausted 5 iterations
-   without 'SRP: PASS' (...)`). Теперь сообщение не содержит число: `WARNING: SRP review loop exhausted all iterations
-   without 'SRP: PASS' (...)` (аналогично для bug/review/comment pass-check в обоих workflow); текст до
-   `exhausted ... without` и весь остальной вывод шага не изменены.
-   - **Почему:** встраивание `${max_*_iterations}` в текст — это та самая подстановка значения в текст файла, которую
-     запрещает Decision 2. Движок specify принимает `max_iterations` только как литеральное число, поэтому сами лимиты
-     по-прежнему записываются из `config.yml` как данные (в поле `max_iterations` — AC4 соблюдён), а числовая константа
-     внутри человекочитаемого текста предупреждения опущена. Изменение косметическое: предел из `config.yml`
-     продолжает записываться и применяться, exit-код шага не меняется.
+- Installation, update, and uninstall produce the same artifacts as before.
+- All config values are delivered at runtime via arguments/environment and are honored.
+- Observable pipeline behavior is unchanged.

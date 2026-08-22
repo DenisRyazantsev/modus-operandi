@@ -4,75 +4,99 @@ status: accepted
 date: 2026-08-17
 ---
 
-# Новый пайплайн `task`: мотивация → ресерч → предложение → согласование → ADR без повторного гейта
+# New `task` Pipeline: Motivation → Research → Proposal → Approval → ADR Without a Second Gate
 
 ## Context
 
-Сейчас есть два пайплайна: `adr-pipeline.yml` (человек формулирует фичу → planner пишет ADR → гейт approve/revise/reject → executor-вопросы → реализация → ревью-фикс-цикл) и `review-pipeline.yml` (только ревью). Точка входа `adr-pipeline` сразу пишет ADR по сырой формулировке: мотивация задачи не выясняется, ресерч не проводится, а выбор решения и его плюсы/минусы человек видит только внутри ADR на гейте.
+There are currently two pipelines: `adr-pipeline` (a human formulates a feature → the planner writes an ADR →
+approve/revise/reject gate → executor questions → implementation → review-fix loop) and `review-pipeline` (review
+only). The `adr-pipeline` entry point immediately writes an ADR from the raw formulation: the task motivation is not
+clarified, no research is done, and the human sees the chosen solution and its pros and cons only inside the ADR at
+the gate.
 
-Нужен третий пайплайн `task`, в котором человек формулирует задачу, а LLM до написания ADR проходит фазы: (1) изучить проект и понять мотивацию; если мотивация не ясна — задать вопросы про мотивацию в цикле, максимум 3 раунда; (2) провести ресерч с использованием Интернета, сделать предположение о решении, написать плюсы и минусы; (3) показать человеку, получить замечания, исправить, показать снова — максимум 3 раунда; (4) после апрува написать ADR и дальше идти по существующему adr-пайплайну, но вопросы executor'а — тоже в цикле: после ответов planner'а executor решает, всё ли он понял, и если из ответов возникли новые вопросы, задаёт их снова; максимум 3 раунда. Отдельно согласовывать ADR не нужно — согласование уже произошло на шаге 3.
-
-Установленные факты:
-- Workflow-файлы декларативны (CONTRIBUTING.md): каждый `shell`-шаг вызывает ровно один установленный скрипт из `pipeline_scripts/`, вся логика — в скриптах.
-- Рендер/установка: `spec_utils/render.py` (`_generate_workflow`, `render_workflow`, `render_review_workflow`, `_patch_workflow_numbers`, `_LOOP_ITERATION_KEYS` — привязка id циклов к ключам конфига), `spec_utils/paths.py`, `spec_utils/verify.py`; промпты из `prompts/` копируются целиком (`render_prompts`, rglob), агентные шаги резолвят их через `agent-step.sh <state_dir> <role> <prompt-file>` (SKLC_PROMPTS_DIR).
-- Гейт+фидбек-механика уже есть в `adr-loop`: gate [approve/revise/reject] с `verdict_input`, ветка revise → `adr-feedback-gate` → `adr-revise` → `clear-feedback.sh`; финальный `adr-unapproved`-гейт (approve/abort), если раунды исчерпаны. Обёртка `run_pipeline.py` автоматически открывает редактор для `feedback.md` у любого гейта, чей id шага содержит `feedback-gate` (`FEEDBACK_GATE_MARKER` в `_run_pipeline_common.py`).
-- `config_invocation.py` передаёт `-i adr_verdict=` при `human_gates: true` и опускает при `false` (дефолт `approve` авто-проходит гейт).
-- Тёплые сессии: `run-agent.sh` держит одну сессию на роль на задачу (`sessions-<task_id>.json`); id задачи создаёт `adr-task-id.sh <state_dir> <task_id> <текст>`, валидация входов — `validate_inputs.py` (команды `task-id`, `feature`).
-- `save_adr.py save` выпускает ADR в `adr_dir/ADR-NNNN-slug.md` (номер — следующий свободный, slug — из фронтматтера), хвост пайплайна завершают `sync-adr.sh` и `pass-check.sh`.
-- Контракт вопросов (сейчас одноразовый): `executor-questions` всегда пишет `questions.md` с первой строкой `QUESTIONS: PRESENT` (нумерованные вопросы) или `QUESTIONS: NONE`; `planner-answers` пишет `answers.md` только при PRESENT. Повторных раундов нет — вопросы, возникшие из ответов, остаются без ответа до реализации.
-- Лаунчер `spec_run.py` (`build_command`): подкоманды `adr`/`review`/`edit`, константы `ADR_WORKFLOW`/`REVIEW_WORKFLOW`; не-флаговые аргументы склеиваются в `-i feature=...`.
+A third `task` pipeline is needed where the human formulates a task and the LLM, before writing the ADR, goes
+through phases: (1) study the project and understand the motivation — if unclear, ask motivation questions in a loop
+of at most 3 rounds; (2) research how such a task is usually solved and produce a proposal with pros and cons; (3)
+show the proposal to the human, get comments, revise, show again — at most 3 rounds; (4) after approval, write the
+ADR and continue along the existing adr pipeline, but the executor's questions are also a loop: after the planner's
+answers the executor decides whether it understood everything, and if the answers spawn new questions it asks again —
+at most 3 rounds. There is no separate ADR approval: approval already happened at the proposal stage.
 
 ## Decision
 
-1. **Отдельный workflow `spec_utils/workflows/task-pipeline.yml`** (id `task-pipeline`), а не модификация `adr-pipeline.yml`. Структура: task-фазы (мотивация → ресерч → цикл согласования предложения → write-adr) + хвост adr-пайплайна от `save-adr` до `pass-check`, причём ADR-гейта в нём нет. Входы: `task` (string, required), `task_id` (optional), `state_dir` (default `.workflow`), `adr_dir` (default `architecture`), `motivation_verdict` (enum `["", clear, clarify]`, default `clear`), `proposal_verdict` (enum `["", approve, revise, reject]`, default `approve`).
+A separate workflow `task-pipeline` is added rather than modifying `adr-pipeline`.
 
-2. **Все task-фазы исполняет planner** в тёплой сессии (исследование и планирование — работа сильной модели; контекст study → proposal → adr.md сохраняется в одной сессии). Executor подключается только на `executor-questions`, как сейчас.
+1. **Inputs and roles.** Inputs: `task` (required), optional task id, state directory, adr directory,
+   `motivation_verdict`, and `proposal_verdict`. All task phases are executed by the planner in one warm session, so
+   the study → proposal → ADR context is kept together; the executor connects only at the question stage.
 
-3. **Фаза мотивации.** `study` (planner, промпт `task/study.md`): изучить проект (README, архитектура, структура) и записать `tasks/current/study.md` — понимание проекта, переформулированная задача, предполагаемая мотивация, пронумерованные открытые вопросы. Затем `motivation-loop` (do-while, ceiling `max_motivation_iterations`): `motivation-gate` [clear/clarify] с `on_reject: skip` (reject/abort-выбора нет по дизайну — реальная точка согласования это гейт предложения, а выход из цикла дают condition и ceiling; явный `on_reject: skip` обязателен, иначе движок требует reject/abort в options), `verdict_input: motivation_verdict` и `show_file: study.md`; ветка clarify — `motivation-feedback-gate` (continue/abort; id содержит `feedback-gate`, поэтому обёртка сама открывает редактор `feedback.md`) → `study-revise` (planner, `task/study-revise.md`: прочитать feedback.md, уточнить мотивацию/ответить на вопросы в study.md) → `clear-feedback.sh`. Цикл выходит по `clear` либо по исчерпанию 3 раундов; финального гейта для мотивации нет — исследование продолжается с текущим study.md, реальная точка согласования — гейт предложения.
+2. **Motivation phase.** The planner studies the project and writes a study document — project understanding,
+   reformulated task, assumed motivation, and numbered open questions. A human gate offers `clear`/`clarify` (no
+   reject choice by design — the real approval point is the proposal gate); on `clarify`, the human writes feedback
+   and the planner revises the study. The loop exits on `clear` or after 3 rounds, without a final gate.
 
-4. **Фаза ресерча.** `research` (planner, промпт `task/research.md`): использовать веб-поиск, изучить, как такую задачу обычно решают, и записать `tasks/current/proposal.md` с секциями: мотивация (из study.md), предполагаемое решение, плюсы, минусы, рассмотренные альтернативы, план внедрения, ссылки на источники. Это документ, который показывается человеку.
+3. **Research phase.** The planner researches how such a task is usually solved (web search) and writes a proposal
+   document with sections: motivation, proposed solution, pros, cons, considered alternatives, implementation plan,
+   and source references. This is the document shown to the human.
 
-5. **Цикл согласования предложения.** `proposal-loop` (do-while, ceiling `max_proposal_iterations`): `proposal-gate` [approve/revise/reject] с `on_reject: abort`, `verdict_input: proposal_verdict`, `show_file: proposal.md`; ветка revise — `proposal-feedback-gate` (continue/abort, id с `feedback-gate`) → `proposal-revise` (planner, `task/proposal-revise.md`) → `clear-feedback.sh`. После цикла, если approve так и не получен, — финальный `proposal-unapproved`-гейт [approve/abort] (зеркало `adr-unapproved`): несогласованное предложение не превращается в ADR.
+4. **Proposal approval loop.** A human gate offers `approve`/`revise`/`reject`; on `revise`, the human writes
+   feedback and the planner revises the proposal. The loop exits on approval or after 3 rounds; an unapproved
+   proposal does not become an ADR (a final approve/abort gate fires when rounds are exhausted without approval).
 
-6. **ADR без отдельного согласования.** `write-adr` (planner, промпт `task/write-adr.md`): прочитать study.md и согласованный proposal.md и записать `tasks/current/adr.md` в стандартном формате (фронтматтер со `slug`, секции Context/Decision/Alternatives/Consequences/Acceptance Criteria). Никакого `adr-loop`/`adr-gate` в task-pipeline нет — сразу `save-adr` (выпуск в `adr_dir/` с нумерацией и контролем slug).
+5. **ADR without separate approval.** The planner writes the ADR in the standard format from the study document and
+   the approved proposal, and the ADR is released immediately — there is no `adr-loop`/ADR gate, because approval
+   already happened at the proposal stage.
 
-7. **Хвост adr-pipeline с циклом вопросов executor'а.** После `save-adr` идут те же шаги, что в adr-pipeline, с единственным отличием — одноразовая пара `executor-questions`/`planner-answers` заменена циклом `executor-questions-loop` (do-while, ceiling `max_questions_iterations`):
-   - `executor-questions` (executor, обновлённый промпт `adr/executor-questions.md`): прочитать `adr.md` и, если существует, `answers.md` (ответы прошлого раунда); переписать `questions.md` — все оставшиеся открытые вопросы (нерешённые с прошлых раундов плюс новые, возникшие из ответов) с первой строкой `QUESTIONS: PRESENT`, либо `QUESTIONS: NONE`, если вопросов не осталось;
-   - `questions-check` (новый скрипт `check_questions.py check <state_dir> <task_id>`, `continue_on_error: true`): exit 0 тогда и только тогда, когда `questions.md` существует и его первая строка — ровно `QUESTIONS: NONE`;
-   - ветка при провале проверки: `planner-answers` (planner, неизменный `adr/planner-answers.md`) — переписать `answers.md`, построчно ответив на все вопросы текущего `questions.md` (каждый раунд — полный набор ответов, чтобы `implement` видел всё);
-   - цикл выходит по `QUESTIONS: NONE` либо по исчерпанию 3 раундов; после исчерпания пайплайн продолжается с `implement` — executor работает по `adr.md` + `answers.md`, а расхождения с планом фиксирует через `deviation.md`.
-   Дальше — `implement` → `implement-loop` → `implement-pass-check` → `review-fix-loop` → `sync-adr` → `pass-check` (id шагов и скрипты как в adr-pipeline). Дублирование YAML осознанно: у specify нет импорта/чейнинга workflow, а два раздельных запуска разорвали бы тёплые сессии; тесты структуры фиксируют единственное отличие хвостов — вопросы-цикл в task-pipeline против одноразовых вопросов в adr-pipeline.
+6. **Executor question loop.** The existing one-shot executor-questions/planner-answers pair is replaced by a loop:
+   the executor writes all remaining open questions (unresolved from previous rounds plus new ones arising from the
+   answers); if no questions remain it signals completion; otherwise the planner answers them all line by line. The
+   loop exits when no questions remain or after 3 rounds; the pipeline then continues with implementation, with
+   deviations from the plan recorded as before. The rest of the tail (implementation, review-fix loop, adr sync,
+   pass check) matches `adr-pipeline`. The YAML duplication is deliberate: the engine has no workflow import or
+   chaining, and two separate runs would break the warm sessions.
 
-8. **Инфраструктура.** Новые промпты — `prompts/task/{study,study-revise,research,proposal-revise,write-adr}.md` (устанавливаются `render_prompts` без изменений); обновляется только `prompts/adr/executor-questions.md` (перечитывание `answers.md` и переспрос оставшихся вопросов), `planner-answers.md` не меняется. Новый скрипт `check_questions.py` кладётся в `pipeline_scripts/` и регистрируется в списке копируемых python-скриптов `render.py` (как `check_review.py`) и в `paths.py`/`verify.py`. `validate_inputs.py` получает команду `task` с теми же правилами отклонения, что у `feature`; `generate-task-id` зовёт `adr-task-id.sh` с текстом задачи третьим аргументом. Конфиг: `workflow.max_motivation_iterations: 3`, `workflow.max_proposal_iterations: 3` и `workflow.max_questions_iterations: 3` (дефолты в `spec_utils/config.py`, запись в `config.example.yml`), `_LOOP_ITERATION_KEYS` += `{"motivation-loop": "max_motivation_iterations", "proposal-loop": "max_proposal_iterations", "executor-questions-loop": "max_questions_iterations"}` — `_patch_workflow_numbers` проставит их при установке. `config_invocation.py` для task-pipeline передаёт `-i motivation_verdict=` и `-i proposal_verdict=` при `human_gates: true` и опускает при `false` (дефолты авто-проходят оба гейта).
-
-9. **Лаунчер.** `spec_run.py`: константа `TASK_WORKFLOW` (установленный `task-pipeline.yml`), подкоманда `task` в `build_command` — `_build_task_command` зеркалит `_build_adr_command`: не-флаговые аргументы склеиваются в `-i task=...`, `-i key=value` и `--backend` пробрасываются; usage-текст обновлён. Установка: `paths.py` (путь `task_workflow`), `render.py` (`render_task_workflow`), `verify.py` (парсинг и проверка required-входа, как для adr-pipeline); README документирует `spec-run task`.
+7. **Infrastructure.** New prompts for the task phases (study, research, proposal revision, ADR writing) and an
+   updated executor-questions prompt that re-reads the previous round's answers; the planner-answers prompt is
+   unchanged. A new script checks whether questions remain. Three config iteration caps, each defaulting to 3,
+   govern the motivation, proposal, and question loops. When human gates are disabled, the two verdict inputs are
+   omitted and both gates auto-pass by default. A `task` subcommand is added to the launcher so the pipeline starts
+   with `modus-operandi task "<description>"`.
 
 ## Alternatives
 
-- **Расширить `adr-pipeline.yml` опциональным префиксом под флагом.** Отклонено: условный пропуск ADR-гейта усложняет граф шагов и plumbing `verdict_input`, размывает семантику существующего пайплайна.
-- **Два последовательных запуска (task-фазы, затем adr-pipeline с тем же task_id).** Отклонено: две команды вместо одной, сессии между раздельными запусками не гарантированно прогреваются, а второй запуск заново открыл бы ADR-гейт (или потребовал бы ручного `-i adr_verdict=approve`).
-- **Ресерч и предложение исполняет executor.** Отклонено: дешёвая модель для исследования и планирования снижает качество; сессия planner, написавшая proposal, сразу пишет ADR без передачи контекста.
-- **Мотивацию оценивает только LLM, без человеческого гейта.** Отклонено: подтверждение ясности человеком согласуется с существующим UX гейтов и не требует новой механики.
-- **Одноразовые вопросы executor'а, как в adr-pipeline (status quo).** Отклонено: вопросы, возникшие из ответов planner'а, остались бы без ответа до этапа реализации — ровно то, что устраняет вопросы-цикл.
+- **Extend `adr-pipeline` with an optional prefix under a flag.** Rejected: conditionally skipping the ADR gate
+  complicates the step graph and verdict plumbing and blurs the existing pipeline's semantics.
+- **Two sequential runs (task phases, then adr-pipeline with the same task id).** Rejected: two commands instead of
+  one, sessions between separate runs are not guaranteed warm, and the second run would reopen the ADR gate.
+- **The executor runs research and the proposal.** Rejected: a cheap model for research and planning lowers quality,
+  and the planner session that wrote the proposal immediately writes the ADR without context handover.
+- **Only the LLM assesses motivation, without a human gate.** Rejected: human confirmation of clarity matches the
+  existing gate UX and requires no new mechanics.
+- **One-shot executor questions, as in adr-pipeline (status quo).** Rejected: questions arising from the planner's
+  answers would remain unanswered until the implementation stage — exactly what the question loop eliminates.
 
 ## Consequences
 
-- **Хорошо:** один запуск и одна пара тёплых сессий на весь путь от задачи до ревью; мотивация выясняется до ресерча, предложение согласуется до ADR, и двойного согласования (proposal + ADR) нет; вопросы executor'а закрываются до реализации (до 3 раундов переспроса), а не всплывают на этапе кода; вся инфраструктура переиспользуется — гейты, авто-редактор feedback.md (`feedback-gate`-маркер), `clear-feedback.sh`, `save_adr.py`, ревью-циклы, обёртка и статистика.
-- **Хорошо:** человеческие точки касания остаются только на гейтах мотивации и предложения; в режиме `human_gates: false` оба цикла авто-проходят, и пайплайн работает без человека.
-- **Плохо:** хвост adr-pipeline продублирован в `task-pipeline.yml` и намеренно расходится в шаге вопросов (цикл против одноразового раунда) — синхронизацию остальных шагов и само расхождение контролируют тесты структуры; до начала реализации добавляются фазы изучения/ресерча — прогон длиннее; фаза ресерча зависит от наличия у planner веб-инструментов; цикл вопросов добавляет до двух лишних раундов планирования, когда ответы порождают новые вопросы.
+- One run and one pair of warm sessions cover the whole path from task to review; motivation is clarified before
+  research, the proposal is approved before the ADR, and there is no double approval (proposal + ADR); executor
+  questions are closed before implementation instead of surfacing at the code stage; all existing infrastructure is
+  reused — gates, feedback editing, ADR release, review loops, the wrapper, and statistics.
+- Human touch points remain only at the motivation and proposal gates; with human gates disabled both loops
+  auto-pass and the pipeline runs without a human.
+- The adr-pipeline tail is duplicated in the new workflow and deliberately diverges in the question step (loop vs
+  one-shot round) — tests control the synchronization of the remaining steps and the divergence itself; the
+  study/research phases make the run longer; the research phase depends on the planner having web tools; the
+  question loop adds up to two extra planning rounds when answers spawn new questions.
 
 ## Acceptance Criteria
 
-1. `spec_utils/workflows/task-pipeline.yml` существует с id `task-pipeline`, входами `task` (required), `task_id`, `state_dir`, `adr_dir`, `motivation_verdict`, `proposal_verdict`; установщик рендерит/ставит его (`paths.py`/`render.py`/`verify.py`), и `python3 -m pytest tests -q` проходит с новыми тестами структуры и лаунчера.
-2. Шаги `study`, `study-revise`, `research`, `proposal-revise`, `write-adr` исполняются planner'ом через `agent-step.sh` с промптами из `prompts/task/`; `study` пишет `tasks/current/study.md` (понимание проекта, переформулированная задача, предполагаемая мотивация, пронумерованные открытые вопросы).
-3. `motivation-loop` — do-while с ceiling из `max_motivation_iterations` (default 3); `motivation-gate` [clear/clarify] с `on_reject: skip` (reject/abort-выбора нет; явное значение нужно, иначе движок отклоняет валидацию гейта), `verdict_input: motivation_verdict` и `show_file: study.md`; ветка clarify: `motivation-feedback-gate` (continue/abort, id содержит `feedback-gate`) → `study-revise` → `clear-feedback.sh`; выход по `clear` или исчерпанию раундов без финального гейта.
-4. `research` пишет `tasks/current/proposal.md` с секциями мотивация, предполагаемое решение, плюсы, минусы, альтернативы, план и ссылки на источники; промпт требует веб-поиска.
-5. `proposal-loop` — do-while с ceiling из `max_proposal_iterations` (default 3); `proposal-gate` [approve/revise/reject], `on_reject: abort`, `verdict_input: proposal_verdict`, `show_file: proposal.md`; ветка revise зеркалит adr-loop; финальный `proposal-unapproved`-гейт [approve/abort] при исчерпании без approve.
-6. `write-adr` пишет `tasks/current/adr.md` в стандартном формате (slug-фронтматтер и 5 секций) из study.md + proposal.md; `adr-loop`/`adr-gate` в task-pipeline отсутствуют, сразу после `write-adr` идёт `save-adr`.
-7. Хвост от `save-adr` до `pass-check` повторяет id шагов и скрипты `adr-pipeline.yml`, кроме вопросов: вместо одноразовой пары `executor-questions`/`planner-answers` — `executor-questions-loop` (do-while, ceiling `max_questions_iterations`, default 3) из шагов `executor-questions` → `questions-check` (`check_questions.py check`, `continue_on_error: true`, exit 0 iff первая строка `questions.md` ровно `QUESTIONS: NONE`) → ветка `planner-answers` при провале проверки; остальные шаги (`implement`, `implement-loop`, `implement-pass-check`, `review-fix-loop`, `sync-adr`, `pass-check`) и промпты `prompts/adr/*` — как в adr-pipeline.
-8. Семантика вопросов-цикла: обновлённый `prompts/adr/executor-questions.md` каждый раунд переписывает `questions.md` со всеми оставшимися вопросами (нерешённые с прошлых раундов + новые из ответов) либо с `QUESTIONS: NONE`; `planner-answers` переписывает `answers.md` построчными ответами на все вопросы текущего раунда; по исчерпании 3 раундов пайплайн продолжается с `implement` без гейта; `check_questions.py` зарегистрирован в `paths.py`/`render.py`/`verify.py`.
-9. `validate_inputs.py` получает команду `task` с правилами `feature`; `generate-task-id` вызывает `adr-task-id.sh` с текстом задачи.
-10. Конфиг: `max_motivation_iterations`, `max_proposal_iterations` и `max_questions_iterations` (default 3) в дефолтах и `config.example.yml`; `_LOOP_ITERATION_KEYS` привязывает `motivation-loop`/`proposal-loop`/`executor-questions-loop`; `_patch_workflow_numbers` проставляет значения при установке.
-11. `spec-run task "<описание>"` запускает task-pipeline через `run-pipeline.py`: не-флаговые аргументы склеиваются в `-i task=...`, `-i`-пары и `--backend` пробрасываются; usage обновлён.
-12. Режим без человека: при `human_gates: false` `config_invocation.py` не передаёт `motivation_verdict`/`proposal_verdict` — оба гейта авто-проходят дефолтами; при `true` передаёт их пустыми (интерактивные гейты).
-13. CONTRIBUTING соблюдён: в YAML нет bash-логики, каждый shell-шаг зовёт один установленный скрипт; README документирует новый пайплайн и подкоманду `spec-run task`.
+- The task pipeline moves from motivation (with up to 3 clarify rounds) through research and an approved proposal
+  to the ADR — with no second approval gate; an unapproved proposal does not become an ADR.
+- Executor questions are closed in up to 3 rounds before implementation: remaining questions and new ones arising
+  from the planner's answers are re-asked until none remain, and the pipeline then continues with implementation
+  without a gate.
+- With human gates disabled, both the motivation and proposal gates auto-pass by default and the whole pipeline
+  runs unattended.
+- The planner executes all task phases in one warm session; the executor connects only at the question stage.
+- The config exposes the three iteration caps (motivation, proposal, questions), each defaulting to 3; the new
+  `modus-operandi task "<description>"` command starts the pipeline; existing pipelines are unaffected.

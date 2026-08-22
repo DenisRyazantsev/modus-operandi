@@ -4,205 +4,83 @@ status: accepted
 date: 2026-08-15
 ---
 
-# ADR-0005: Команда `spec-run edit` (редактирование и применение конфига) и удаление устаревшего `--register`
+# ADR-0005: `modus-operandi edit` Command (Config Editing and Application) and Removal of the Obsolete `--register`
 
 ## Context
 
-Сейчас, чтобы поменять настройки (модели, лимиты итераций, `state_dir` и т.д.), пользователь должен сам найти и открыть
-файл `~/.config/spec-kit-llm-client/config.yml` и отредактировать его, после чего переустановить конвейер через
-`python3 install.py`. Путь к конфигу описан в README и в подсказке после установки, но пользователю всё равно нужно
-помнить/искать его вручную. Пользователь хочет делать это «из самого бинарника»: ввести в терминале команду
-`spec-run edit`, чтобы конфиг открылся в терминальном редакторе, и он мог отредактировать его как захочет — не ища,
-где файл «валяется». Требование: правка должна сразу применяться, то есть следующий вызов `spec-run` уже должен
-работать с обновлённым конфигом (без отдельного ручного `install.py`).
+Changing settings (models, iteration limits, state directory, etc.) requires the user to locate the installed config
+file, edit it by hand, and then re-run the installer before changes take effect. The config path is documented, but the
+user must remember or search for it, and every config change requires a separate manual reinstall. The user requirement
+is a command "from the binary itself": type `modus-operandi edit` so the config opens in a terminal editor, and have the
+edit take effect immediately — the next `modus-operandi` invocation must already work with the updated settings, without a
+separate manual reinstall step.
 
-Проверенные факты о текущей реализации:
+In addition, with launching now happening only through the global `modus-operandi` binary, the per-project registration mode
+(installing workflows by id into a specific project) became unused: it survives only as dead code, documentation, and
+tests, which the user asked to clean up.
 
-- `spec-run` — глобальный лаунчер, устанавливаемый в `~/.local/bin/spec-run` из шаблона `templates/spec_run.py.tpl`
-  (см. ADR-0004). При рендере в него зашиваются абсолютные пути (`run_pipeline`, `adr_workflow`, `review_workflow`), а
-  диспетчеризация подкоманд (`adr`, `review`) и маппинг аргументов живут в чистой функции `build_command`, не печатающей
-  ничего и сигналящей об ошибках исключениями `HelpRequested`/`InvalidInvocation`.
-- Конфиг лежит в `~/.config/spec-kit-llm-client/config.yml`; в `spec_utils/paths.py` путь уже есть как `paths["config"]`
-  (ключ `"config"`), но в `render_spec_run` (`spec_utils/render.py`) он пока не пробрасывается в шаблон лаунчера.
-- Правки конфига вступают в силу только после повторного `python3 install.py` (рендер агентов и workflow) — это уже
-  задокументировано в README («rerun after editing config.yml»). `render_spec_run` при рендере может зашить и путь к
-  `install.py` репозитория (`REPO_ROOT / "install.py"`), чтобы лаунчер умел применять конфиг сам.
-- Дополнительный запрос (фидбек): почистить проект от того, что больше не нужно. С переходом на «только бинарник»
-  (`spec-run`) режим `--register` (установка workflow по id в конкретный Spec Kit проект через `specify init` +
-  `specify workflow add`) стал невостребованным. Проверка показала, что всё, что относится к `--register`, живёт в
-  `spec_utils/register.py` (`do_register`) и в `spec_utils/cli.py` (флаг `--register`, `print_register_usage`, правила
-  `validate_args`, ветка `dispatch` и строки в `print_instructions`), плюс упоминания в `install.py`, README и тестах
-  `tests/test_install.py`; остальные модули (`deps`, `verify`, `config_diff`, `versions`, `environment`, `proc`,
-  `prompt`, `tool_discovery`, `yaml_loader`, `uninstall`) используются и остаются.
+After adoption, a review reworked how the `edit` subcommand is wired internally: editor resolution and launching moved
+out of the pure command-mapping function into the execution path, so "subcommand → execution path" lives in one place.
+The observed behavior is unchanged; only the internal split of responsibilities was adjusted.
 
 ## Decision
 
-Добавить в глобальный лаунчер новую подкоманду `spec-run edit`, которая открывает установленный конфиг в терминальном
-редакторе и после выхода из редактора применяет конфиг (перегенерирует все рендеренные артефакты), чтобы следующий
-вызов `spec-run` уже работал с обновлёнными настройками. Реализация:
+Add a new `modus-operandi edit` subcommand that opens the installed config in a terminal editor and, after the editor exits,
+applies the config so the next `modus-operandi` invocation already works with the updated settings. The config path is baked
+in at install time, so the user never passes or searches for it. The editor is resolved from the environment
+(`$VISUAL`, then `$EDITOR`, both allowed to contain arguments) with `nano`/`vi` as fallback, and is launched as a child
+process inheriting the terminal; if it cannot be launched, the command errors out with a non-zero exit code.
 
-1. **Новая подкоманда в лаунчере.** В `templates/spec_run.py.tpl` добавляется ветка `edit` в `build_command` (по той же
-   схеме, что `adr`/`review`): она возвращает команду запуска редактора с путём к конфигу. Подкоманда не принимает
-   аргументов — лишние аргументы после `edit` игнорируются.
+Applying the config revalidates it and regenerates all rendered artifacts through a lightweight `--apply` mode of the
+installer that skips prerequisite and dependency checks and next-steps hints — a full re-install is unnecessary when
+only the config changed. An invalid config is never silently applied: validation errors surface and the command exits
+with a non-zero code.
 
-2. **Путь к конфигу зашивается при установке.** В `render_spec_run` (`spec_utils/render.py`) в шаблон дополнительно
-   пробрасывается новый плейсхолдер `config` = `paths["config"]` (ключ уже существует в `paths.py`), по аналогии с
-   остальными зашитыми путями. `spec-run edit` открывает именно этот файл; пользователю не нужно указывать путь.
-
-3. **Выбор редактора.** Редактор определяется в порядке: `$VISUAL`, затем `$EDITOR`, затем `nano`, затем `vi`. Значение
-   `$VISUAL`/`$EDITOR` может содержать аргументы (например `code --wait`) — оно разбивается через `shlex.split`. Если
-   ни `$VISUAL`, ни `$EDITOR` не заданы, берётся `nano`, если он есть на PATH (`shutil.which`), иначе `vi`.
-
-4. **Запуск редактора.** Редактор запускается как дочерний процесс, наследующий stdin/stdout (чтобы работали
-   полноэкранные редакторы), и `spec-run` ждёт его завершения. Если редактор не удаётся запустить, печатается ошибка и
-   команда завершается ненулевым кодом.
-
-5. **Применение конфига после редактирования.** После выхода из редактора `spec-run edit` применяет конфиг, запуская
-   инсталлер в новом «тихом» режиме `--apply`, который заново грузит и валидирует `config.yml` и перегенерирует все
-   рендеренные артефакты (агенты `planner.md`/`executor.md`, `run-agent.sh`, `name-task.sh`, `run-pipeline.py`,
-   `victory.wav`, adr-скрипты, оба workflow и сам лаунчер), после чего проверяет результат:
-   - В `install.py` добавляется флаг `--apply`: он выполняет только `mkdir` каталогов, `ensure_config`, загрузку/валидацию
-     конфига, рендер всех артефактов и `verify_install` — без повторных проверок предпосылок (`python3`/`opencode`) и
-     зависимостей (`specify`/PyYAML) и без печати подсказок next-steps. `--apply` несовместим с
-     `--uninstall`/`--update` (отклоняется в `validate_args`).
-   - В лаунчер при рендере дополнительно зашивается путь к `install.py` репозитория через новый плейсхолдер `install_py`
-     (= `REPO_ROOT / "install.py"`).
-   - `edit` выполняет `[sys.executable, install_py, "--apply"]`, транслирует его вывод и завершается с кодом инсталлера.
-     При валидном конфиге печатается подтверждение применения; при невалидном — ошибки валидации всплывают, и `edit`
-     завершается ненулевым кодом (невалидный конфиг не применяется молча).
-
-6. **Usage и документация.** В `USAGE` лаунчера и в вывод `spec-run --help`/`-h` добавляется строка про `edit`; в
-   подсказке после установки (`spec_utils/cli.py` `print_instructions`) `edit` упоминается рядом с остальными
-   подкомандами. Никакие workflow, агенты и шаги конвейера не меняются.
-
-### Удаление устаревшего `--register`
-
-Так как запуск теперь идёт только через глобальный бинарник `spec-run`, режим `--register` (установка workflow по id в
-конкретный Spec Kit проект) удаляется полностью:
-
-1. **Код.** Удаляется модуль `spec_utils/register.py`. Из `spec_utils/cli.py` убираются: импорт `register`, функция
-   `print_register_usage`, правила `--register` в `validate_args`, ветка `dispatch` для `register`, аргумент `--register`
-   в `parse_args`, а также строки про `--register` и `specify workflow run adr-pipeline/review-pipeline` из
-   `print_instructions` (next-steps теперь упоминают только `spec-run adr`/`review`/`edit`). Из docstring `install.py`
-   убираются упоминания `--register` в строке Usage и в описании опций.
-
-2. **Тесты.** Из `tests/test_install.py` удаляются тесты `test_register_is_idempotent`,
-   `test_register_requires_project`, `test_register_conflicts_with_home`, ветка фейка `["workflow", "add"]` в `make_run`
-   и `--register`-кейсы из `test_flag_conflicts_rejected`.
-
-3. **Документация.** Из `README.md` удаляются секция «Optional per-project registration», замечание про проекты с
-   `--register` в секции Uninstall, строка `register.py` в Layout, а упоминание `--register` в описании `spec-run`
-   («no `specify init` or `--register` required») сокращается до «no `specify init` required»; то же касается строки в
-   docstring `templates/spec_run.py.tpl`.
-
-4. **Не трогаем.** `.specify/workflows/` в `templates/gitignore.snippet` и `state_root = .specify` в
-   `run_pipeline.py.tpl` остаются — `.specify/` по-прежнему создаётся движком specify при прогоне workflow (в т.ч. через
-   `spec-run`). Модули `deps`, `verify`, `config_diff`, `versions`, `environment`, `proc`, `prompt`, `tool_discovery`,
-   `yaml_loader`, `uninstall` используются и остаются.
+Remove the obsolete per-project registration mode (`--register`) entirely — code, documentation, and tests — since
+launching happens only through the global `modus-operandi` binary.
 
 ## Alternatives
 
-- **Оставить как есть: документировать путь к конфигу и править вручную.** Отклонено: путь уже задокументирован
-  (README, подсказка после установки), но пользователь явно просит команду, которая открывает файл из бинарника, не
-  заставляя его искать `~/.config/...`.
-- **Сделать `edit` флагом `install.py` (например `python3 install.py --edit-config`) или отдельным скриптом.**
-  Отклонено: пользователь хочет команду в глобальном бинарнике `spec-run` (он уже на PATH и вызывается из любого
-  проекта), а `install.py` — не глобальная команда и требует путь к репозиторию.
-- **Жёстко открывать конфиг в `vi`/`nano`, игнорируя переменные окружения.** Отклонено: не уважает предпочтения
-  пользователя (`$EDITOR`/`$VISUAL`); стандартное разрешение редактора из окружения — ожидаемое поведение.
-- **Только открывать файл, а применять конфиг оставить ручным (`python3 install.py`).** Отклонено: пользователь явно
-  требует, чтобы после `edit` следующий вызов `spec-run` уже работал с обновлённым конфигом; ручной шаг это ломает.
-- **Применять конфиг полным повторным `install.py` (с проверками предпосылок/зависимостей и печатью next-steps).**
-  Отклонено: шумно и повторяет ненужные проверки (`opencode`, сеть/зависимости), которые при apply не меняют результат;
-  выбран лёгкий режим `--apply`.
-- **Применять конфиг, встроив ререндер в сам лаунчер (без обращения к `install.py`).** Отклонено: потребовало бы
-  копировать шаблоны и логику рендера (`spec_utils`) в `~/.config`, дублируя источник; зашитый путь к `install.py`
-  согласован с моделью «зашитых абсолютных путей» из ADR-0004.
-- **Сделать `edit` полноценным менеджером конфига (валидация, интерактивный выбор опций, применение).** Отклонено:
-  выходит за рамки запроса — пользователь просит «открыть файл в редакторе» и чтобы правки применялись.
-- **Оставить `--register` как «запасной» способ запуска.** Отклонено: это мёртвый путь, который нужно поддерживать и
-  документировать; пользователь явно сказал, что работает только через бинарник, поэтому регистрация по проекту не нужна.
-- **Удалить только документацию про `--register`, оставив код.** Отклонено: оставляет мёртвый код (`register.py`,
-  ветку `dispatch`, флаг) и тесты без пользователя — ровно то, от чего просили избавиться.
+- **Leave as is: document the config path and edit manually.** Rejected: the path is already documented, but the user
+  explicitly asks for a command that opens the file from the binary without making them search for it.
+- **Make `edit` a flag of the installer or a separate script.** Rejected: the user wants a command in the global
+  `modus-operandi` binary, which is already on PATH and callable from any project.
+- **Hardcode opening the config in `vi`/`nano`, ignoring environment variables.** Rejected: does not respect user
+  editor preferences; standard resolution from `$EDITOR`/`$VISUAL` is the expected behavior.
+- **Only open the file, leaving config application manual.** Rejected: the user explicitly requires that the next
+  `modus-operandi` call works with the updated config; a manual step breaks this.
+- **Apply the config with a full re-run of the installer.** Rejected: noisy and repeats prerequisite and dependency
+  checks that do not change the result on apply; the lightweight `--apply` mode was chosen.
+- **Apply the config by embedding the re-render in the launcher itself.** Rejected: would duplicate templates and
+  render logic outside the source; calling the installer matches the baked-in-paths model already in use.
+- **Make `edit` a full config manager (validation, interactive option selection, application).** Rejected: beyond the
+  scope of the request — the user asks to open the file in an editor and have edits applied.
+- **Keep `--register` as a fallback launch mode.** Rejected: it is a dead path that would need maintaining and
+  documenting; the user works only through the binary, so per-project registration is not needed.
+- **Remove only the `--register` documentation, keeping the code.** Rejected: leaves dead code and tests without a
+  user — exactly what was asked to be removed.
 
 ## Consequences
 
-- Положительно: редактирование и применение конфига теперь в одну команду `spec-run edit` из любого каталога, без поиска
-  `~/.config/spec-kit-llm-client/config.yml`; следующий вызов `spec-run adr`/`review` сразу работает с обновлёнными
-  настройками (требование фидбека).
-- Положительно: невалидный конфиг всплывает сразу в момент применения (валидация/верификация из `--apply`), а не при
-  следующем запуске конвейера.
-- Положительно: изменения аддитивны и локализованы (ветка `edit` в лаунчере + `--apply` в `install.py` + новые
-  плейсхолдеры `config`/`install_py`); workflow, агенты и шаги конвейера не затрагиваются.
-- Положительно: уважается пользовательский редактор (`$VISUAL`/`$EDITOR`), с разумным фолбэком для систем без них.
-- Отрицательно: `edit` теперь зависит от репозитория — путь к `install.py` зашивается при установке, и если клон
-  перемещён/удалён, редактор откроется, но применение упадёт до повторного `install.py` (тот же класс ограничений, что и
-  у остальных зашитых путей в ADR-0004).
-- Отрицательно: применение после каждого `edit` перегенерирует артефакты и запускает верификацию (в т.ч. подпроцессы
-  `specify workflow info`/`opencode agent list`) — добавляет задержку после выхода из редактора.
-- Отрицательно: если конфиг отредактирован в невалидное состояние, он не применяется (остаётся «как написан») до
-  исправления; это ожидаемо, но пользователь должен ещё раз открыть `edit` и поправить.
-- Положительно (чистка): удаление `--register` сокращает код и документацию (модуль `register.py`, флаг, ветку
-  `dispatch`, подсказки, секцию README и тесты), а поверхность `install.py` сводится к одному способу запуска —
-  глобальному `spec-run`.
-- Отрицательно (чистка): ломающее изменение — `python3 install.py --register` и `specify workflow run adr-pipeline`
-  (по id) больше не поддерживаются; пользователям, у которых проекты зарегистрированы по id, нужно перейти на
-  `spec-run`.
+- Positive: editing and applying the config is now one command, `modus-operandi edit`, runnable from any directory, and the
+  next `modus-operandi` invocation immediately works with the updated settings.
+- Positive: an invalid config surfaces right at application time, not at the next pipeline run.
+- Positive: the change is additive — workflows, agents, and pipeline steps are untouched — and the user's editor is
+  respected (`$VISUAL`/`$EDITOR`) with a sensible fallback.
+- Negative: `edit` depends on the repository still being present (the installer path is baked in at install time); if
+  the clone is moved or deleted, the editor will open but application will fail until the next install.
+- Negative: applying after every `edit` regenerates artifacts and runs verification, adding delay after exiting the
+  editor.
+- Negative: a config edited into an invalid state is not applied and stays "as written" until fixed via another
+  `modus-operandi edit`.
+- Positive (cleanup): removing `--register` reduces code, documentation, and tests, and the installer surface reduces
+  to a single launch method — the global `modus-operandi`.
+- Negative (cleanup): breaking change — `--register` and running workflows by id are no longer supported; users with
+  per-project registrations must switch to `modus-operandi`.
 
 ## Acceptance Criteria
 
-- `spec-run edit`, запущенная из любого каталога, открывает `~/.config/spec-kit-llm-client/config.yml` (путь зашит при
-  установке) в терминальном редакторе; пользователь не передаёт и не ищет путь к файлу.
-- Редактор выбирается в порядке `$VISUAL` → `$EDITOR` → `nano` → `vi`; значение `$VISUAL`/`$EDITOR` разбивается через
-  `shlex.split` (может содержать аргументы).
-- Редактор запускается как дочерний процесс, наследующий stdin/stdout, и `spec-run edit` ждёт его завершения; если
-  редактор не удаётся запустить, печатается ошибка и команда завершается ненулевым кодом.
-- После выхода из редактора `spec-run edit` применяет конфиг: запускает `[sys.executable, <install.py>, "--apply"]`
-  (путь зашит при установке) и ждёт завершения. При валидном конфиге перегенерированные агенты/скрипты/workflow отражают
-  правки (например, смена модели или лимита итераций видна в `planner.md`/`executor.md` и в workflow), и следующий
-  `spec-run adr`/`review` использует обновлённые настройки; команда завершается с кодом инсталлера.
-- При невалидном конфиге применение падает: `spec-run edit` транслирует ошибки валидации и завершается ненулевым кодом
-  (конфиг не применяется молча).
-- `install.py --apply` перегенерирует артефакты без повторных проверок предпосылок/зависимостей и без печати next-steps;
-  `--apply` несовместим с `--uninstall`/`--update`.
-- `spec-run --help` и `-h` печатают usage, включающий подкоманду `edit`; в шаблон лаунчера при рендере пробрасываются
-  плейсхолдеры `config` (= `paths["config"]`) и `install_py` (= `REPO_ROOT / "install.py"`) из `render_spec_run`.
-- `python3 install.py` по-прежнему рендерит валидный `~/.local/bin/spec-run`, а существующие тесты
-  (`tests/test_spec_run.py`, `tests/test_install.py`) проходят; добавлены юнит-тесты на маппинг `edit` (команда = редактор
-  + путь к конфигу), на порядок разрешения/фолбэк редактора, на то, что `main(["edit"])` после редактора запускает
-  `[sys.executable, install_py, "--apply"]` и пробрасывает его код возврата, и на `--apply` в `install.py` (не печатает
-  next-steps, отклоняет комбинации с `--uninstall`/`--update`).
-- Режим `--register` полностью удалён: `spec_utils/register.py` не существует; `python3 install.py --register`
-  завершается с ошибкой «unrecognized arguments» (аргумент не объявлен), а `spec_utils/cli.py` больше не содержит
-  `print_register_usage`, правил `--register` в `validate_args`, ветки `dispatch` и строк про `--register` в
-  `print_instructions`.
-- Из `install.py` (docstring), `README.md` (секция «Optional per-project registration», замечание в Uninstall, строка
-  `register.py` в Layout, упоминание `--register` в описании `spec-run`) и docstring `templates/spec_run.py.tpl`
-  убраны все упоминания `--register`.
-- Из `tests/test_install.py` удалены регистрационные тесты (`test_register_is_idempotent`,
-  `test_register_requires_project`, `test_register_conflicts_with_home`), фейк `["workflow", "add"]` в `make_run` и
-  `--register`-кейсы из `test_flag_conflicts_rejected`; весь набор тестов проходит.
-- `.specify/workflows/` в `templates/gitignore.snippet` и использование `.specify` как `state_root` в
-  `run_pipeline.py.tpl` сохранены — они относятся к рантайм-состоянию specify, а не к `--register`.
-
-## Amendments
-
-Пункт 1 Decision (ветка `edit` в `build_command`, «возвращает команду запуска редактора») изменён по итогам
-SRP-ревью (`srp-review-1.md`) — см. `deviation.md`:
-
-- `build_command` остаётся чистой функцией «argv → команда для exec». Для `edit` она больше не разрешает редактор и не
-  возвращает argv редактора, а выбрасывает специальный сигнал `EditRequested` (по образцу
-  `HelpRequested`/`InvalidInvocation`); `main` ловит его и передаёт управление в `_run_edit()`. Решение «подкоманда →
-  путь исполнения» теперь живёт в одном месте.
-- Разрешение редактора (`_resolve_editor`) перенесено в путь исполнения `edit`: `_run_edit()` сам резолвит редактор и
-  последовательно вызывает `_launch_editor` (запуск редактора, ошибка старта → сообщение + код 1, иначе код редактора)
-  и `_apply_config()` (запуск `[sys.executable, install_py, "--apply"]`, подтверждение при успехе, код инсталлера).
-- Юнит-тест маппинга теперь проверяет, что `build_command(["edit"])` выбрасывает `EditRequested`; контракт «редактор +
-  путь к конфигу» покрыт на уровне `main(["edit"])` (вызовы subprocess == `[editor, CONFIG]`, затем
-  `[sys.executable, install_py, "--apply"]`).
-
-Почему: SRP-ревью указало, что прежняя ветка `edit` смешивала в `build_command` две обязанности — выполняла
-environment-зависимое разрешение редактора (`os.environ`, `shutil.which`) и возвращала argv, который никогда не
-передаётся в `exec`, тогда как `main` отдельно повторял диспетчеризацию по `argv[0]`. Наблюдаемое поведение (`spec-run
-edit` открывает конфиг в редакторе и применяет его после выхода) не изменилось. Все остальные пункты Decision и
-Acceptance Criteria остаются в силе без изменений.
+- `modus-operandi edit` opens the installed config in the user's editor and applies it on exit so the next run uses the
+  updated settings.
+- An invalid config fails loudly without silent application.
+- The obsolete per-project registration mode no longer exists.

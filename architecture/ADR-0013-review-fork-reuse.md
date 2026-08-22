@@ -4,154 +4,79 @@ status: accepted
 date: 2026-08-18
 ---
 
-# ADR-0013: Переиспользование форк-сессий ревью, строго свой формат логов, удаление --reset, спиннер 4 к/с
+# ADR-0013: Reusing Review Fork Sessions, Strictly Our Log Format, Removing --reset, 4 fps Spinner
 
 ## Context
 
-`review-fix-loop` (ADR-0009) на каждой итерации запускает проваленные виды проверок (`srp`, `bugs`,
-`review`, `comment`) параллельным `fan-out`; каждый чек исполняется в **новом** форке тёплой сессии
-planner (`run-agent.sh planner --fork`), и id форка нигде не сохраняется — контекст форка прошлой
-итерации выбрасывается, каждая итерация заново «прогревается» и перечитывает скоуп/код, а ревьюер не
-помнит своих прошлых находок. Требование пользователя: сессия planner форкуется **однократно — по
-одному форку на вид проверки**, дальше в цикле каждый вид **переиспользует** свою форк-сессию.
+The review loop (ADR-0009) runs each failed check kind (`srp`, `bugs`, `review`, `comment`) in a **new** fork of the
+warm planner session on every iteration, and the fork id is never recorded — so each iteration re-reads the scope and
+code from scratch and the reviewer does not remember its previous findings. The user requires: the planner session is
+forked **once per check kind**, and each kind **reuses** its fork session for the rest of the loop. At the same time
+the user requires: the engine's progress lines are removed from the output and logging happens strictly in our format —
+engine errors and diagnostics are not dropped but converted to our format; gate menus remain as UI, not logs. Also
+required: removal of the `--reset` flag, used by neither the workflow nor the user, and a livelier spinner (4 fps
+instead of 1 fps).
 
-Одновременно пользователь требует: убрать из вывода строки прогресса движка spec-kit
-(`[hh:mm:ss]   ▸ [review-fix-loop:…] shell/fan-out …`) — логирование только нашим форматом (маркеры
-`--- step … (completed) [N/M]`, живые строки `[harness]`/`[role]`), причём **строго**: ошибки и
-диагностика движка не выбрасываются, а приводятся к нашему формату; меню гейтов остаётся (это UI,
-не лог). Также: удалить флаг `--reset` (не используется ни workflow, ни пользователем) и ускорить
-спиннер живой строки с 1 кадра/с до 4 кадров/с (0.25 с).
-
-Проверенные факты (study.md): (1) `opencode run --session <id>` продолжает сессию без `--fork`;
-`--fork` — «fork the session before continuing (requires --continue or --session)». (2) Форк-лог несёт
-собственный `sessionID` форка (`extract_session_id` умеет его извлечь); сейчас в форк-режиме он не
-сохраняется. (3) opencode при `--session <несуществующий-id>` завершается с «Session not found»
-(исходник `run.ts`: `sdk.session.get` → `UI.error("Session not found")`). (4) `session_store.sh`
-читает/пишет JSON-файл целиком; четыре параллельных чека, пишущих в один файл, теряли бы обновления
-— по фидбеку выбран **отдельный файл на вид**. (5) Tailer извлекает fork-id regex-ом `-fork-(\d+)$`
-из имени лога; стабильные per-kind имена дадут лейбл `[planner#srp]` и продолжающиеся между
-итерациями суммы токенов (по фидбеку выбран этот вариант). (6) Блок живых строк перерисовывается
-каждый тик монитора (0.5 с), поэтому каденса 0.25 с не добиться одной сменой константы. (7) cursor
-не имеет fork-примитива; форк-вызов = свежий чат, id не сохраняется; у cursor есть `create-chat` и
-`--resume <chatId>`.
+Verified facts: `opencode run --session <id>` continues a session without `--fork`, while `--fork` creates an
+isolated fork; a nonexistent session id fails with "Session not found". cursor-agent has no fork primitive — a fork
+call is a fresh chat whose id is not saved; it offers chat creation and `--resume <chatId>`. The live-output block is
+redrawn on a fixed monitor tick, so the effective spinner cadence is limited by that tick as well as by the heartbeat.
 
 ## Decision
 
-1. **`--review-fork <kind>` вместо `--fork`.** В `run-agent.sh` флаг `--fork` заменяется флагом
-   `--review-fork <kind>` (аргумент валидируется как `^[A-Za-z0-9_-]+$`, как `--task`). Промпты и
-   снапшоты не меняются. Алгоритм:
-   - прочитать id из per-kind файла `<state_dir>/sessions-<task-id>-review-<kind>.json` (при пустом
-     `task_id` — `sessions-review-<kind>.json`; файл содержит `{"planner": "<id>"}`, переиспользуя
-     формат ролевых файлов);
-   - id есть → **продолжить форк** без `--fork`: `opencode run --session <id> --agent <role> --auto
-     $ATTACH_FLAG --format json "<prompt>"`; id после этого не пересохраняется (он не меняется);
-   - id нет, или continue упал, а в логе есть «Session not found» (тогда per-kind id очищается) →
-     **форк родителя**: потребовать родительскую тёплую сессию (иначе ошибка «no warm session to
-     fork; run the warm-up step first», exit 2), `opencode run --session <parent-id> --fork …`,
-     после успеха извлечь id форка (`extract_session_id` из LOG_FILE); пустой id — ошибка и exit 2,
-     иначе сохранить в per-kind файл;
-   - `SESSION:<id>` в конце печатается как раньше; родительская сессия не мутируется.
-2. **Пути логов/pid — стабильные per-kind.** При `--review-fork <kind>`:
-   `LOG_FILE=<state_dir>/logs/sessions-<task-id>-<role>-fork-<kind>.jsonl`,
-   `PID_FILE=<state_dir>/pids/sessions-<task-id>-<role>-fork-<kind>.pid` (пустой `task_id` — без
-   него). Внутри итерации вид исполняется один раз, итерации последовательны — гонок нет;
-   `manage_pid_file`/trap удаления pid-файла на EXIT не меняются.
-3. **Cursor: тёплый чат на вид.** В `run-agent-cursor.sh` для `--review-fork <kind>`: id из
-   per-kind файла есть → `--resume <id>` (тело роли не префиксуется); нет → `create-chat`, id
-   сохраняется в per-kind файл (в общий стор — никогда), тело роли префиксуется на первый заход.
-   Родительский тёплый чат роли не резюмится и не мутируется; пре-флайт `warm-planner` не меняется.
-4. **Лейблы живых строк.** В `agent_log_tailer.py` regex `-fork-(\d+)$` заменяется на
-   `-fork-([A-Za-z0-9_-]+)$` (fork_id = kind, роль извлекается как сейчас). `live_lines.py` без
-   изменений: лейбл `[planner#srp]`, накопительные суммы токенов продолжаются между итерациями,
-   т.к. лог-файл вида один и тот же.
-5. **`review-check.sh`** вызывает `run-agent.sh planner --review-fork "$ITEM" --prompt-file …`
-   (обе ветки: rereview/снапшот в неймспейсе `review`, полный промпт в `adr` — промпты не меняются).
-   Вызовов `--fork` не остаётся нигде (workflow-файлы не трогаются: они зовут `review-check.sh`).
-6. **Фильтрация stdout движка.** В `_run_pipeline_common.py` — чистый классификатор строк stdout
-   specify (predicate-функции в духе `is_gate_menu_opener`, юнит-тестируемые). В
-   `run_pipeline.py` `_consume_output` обработка строки: (а) `run_id_from_text` парсится всегда, до
-   фильтрации; (б) строки, начинающиеся с `▸ ` (старт шага), и разовые заголовки
-   `Running workflow:`, `Version:`, `Status:`, `Run ID:` — не печатаются; (в) строки ошибок и
-   диагностики движка (`Error:`, `Workflow failed:`, `Warning:`) — печатаются в нашем формате
-   `[hh:mm:ss] [harness] <текст строки как есть>`; (г) меню гейтов (`┌─ Gate …` и прочие строки) —
-   эхо без изменений, как сейчас; (д) все прочие (неизвестные) строки — эхо как сейчас (fail-open).
-   Правило буферизации при открытом гейте (ADR-0011/0012) не меняется; на не-TTY фильтрация та же.
-7. **Удаление `--reset`.** Из `run-agent.sh` убираются флаг `--reset` (usage, парсинг, переменная
-   RESET, ветка «пропустить `read_session`» — id читается всегда), раздел README «Warm sessions and
-   `--reset`» переоформляется без `--reset` (пример handoff удаляется), удаляется тест
-   `test_cursor_reset_mints_a_new_chat` из `tests/test_run_agent.py`.
-8. **Спиннер 4 кадра/с.** `HEARTBEAT_SECONDS = 1.0` → `0.25` в `_run_pipeline_common.py`. В
-   `live_lines.py` кадр выбирается **по прошедшему времени** (принцип rich):
-   `SPINNER_FRAMES[int((time.monotonic() - t0) / HEARTBEAT_SECONDS) % len(SPINNER_FRAMES)]`, где t0 —
-   `time.monotonic()` при создании `LiveLines`; гейт «не чаще одного раза в секунду»
-   (`_last_spin_ts`) удаляется. Тик монитора в `live_monitor.py` `_run`: `time.sleep(0.5)` →
-   `time.sleep(0.25)` — иначе блок физически перерисовывается лишь 2 раза в секунду. Не-TTY без
-   изменений (спиннера нет, heartbeat-строк в лог не пишется).
-9. **Тесты и документация.** Обновить: `tests/test_run_agent.py` (первый вызов `--review-fork srp`
-   форкует родителя и сохраняет id в per-kind файл; второй вызов продолжает без `--fork`; continue с
-   пропавшей сессией → очистка id и повторный форк; cursor: первый заход create-chat + сохранение,
-   следующий — `--resume` того же id; reset-тест удалён), `tests/install/test_install_layout.py`
-   (`"--fork)"` → `"--review-fork"`), `tests/install/test_workflow_structure.py`
-   (`planner --fork --prompt-file` → `planner --review-fork`), `tests/run_pipeline/test_agent_log_tailer.py`
-   (fork_id = kind), `tests/run_pipeline/test_live_lines.py` (каденс спиннера 0.25 с, time-based кадр);
-   добавить юнит-тесты классификатора строк движка. Обновить README (переиспользование
-   per-kind сессий, строгий формат логов, спиннер 0.25 с, отсутствие `--reset`).
+1. **Per-kind fork reuse.** Each check kind gets one fork of the warm planner session, created on its first use and
+   reused on every subsequent iteration. The recorded id is kept in a separate record per kind, so parallel first
+   writes cannot lose updates. If a recorded session is lost (continue fails with "Session not found"), the record is
+   cleared and the fork is re-created; the parent warm session is never mutated. The CLI flag for this mode is
+   `--review-fork <kind>`; prompts and snapshots do not change.
+2. **Backend parity.** On the cursor backend the same reuse applies via its native mechanisms: a warm chat per kind is
+   created once and resumed afterwards, and the parent's warm role chat is never resumed or mutated.
+3. **Stable per-kind log streams.** Logs are stable per kind, which gives our live lines a per-kind label and lets
+   token sums continue across iterations.
+4. **Strict output format.** Engine progress lines (step-start markers and workflow/version/status/run-id headers) are
+   removed from the output. Engine errors and diagnostics are shown in our format; gate menus and unknown lines are
+   echoed unchanged (fail-open). The run id is still parsed so failure resumption keeps working. The same filtering
+   applies whether or not a terminal is attached.
+5. **Remove `--reset`.** The flag is removed from the CLI and from the documentation.
+6. **4 fps spinner.** The live spinner runs at 4 fps with time-based frame selection, so frames advance by elapsed
+   time without shifting the surrounding text; the monitor redraw cadence matches the new heartbeat.
 
 ## Alternatives
 
-- **Оставить пере-форк на каждой итерации (status quo)** — отклонено: ровно то, что требуется
-  устранить (токены, потеря контекста между итерациями).
-- **Единый sessions-файл с ключами `review.<kind>`** — отклонено фидбеком: lost-update гонки четырёх
-  параллельных первых записей без блокировки; отдельный файл на вид проще и без гонок.
-- **Per-invocation `-fork-$$` лог/pid при переиспользовании** — отклонено фидбеком: стабильные
-  per-kind имена дают лейбл `[planner#srp]` и продолжающиеся суммы токенов.
-- **`opencode export`/пересоздание сессий** — отклонено: тяжелее и медленнее нативного
-  `--session <fork-id>` (continue).
-- **Убрать только `▸`-строки, оставить заголовки/`Status`/`Run ID`** — отклонено фидбеком: строго
-  наш формат.
-- **Библиотека rich/tqdm для спиннера** — отклонено ранее (ADR-0011/0012, лишняя зависимость);
-  заимствуется только принцип rich — time-based выбор кадра.
-- **Оставить `--reset`** — отклонено фидбеком: не используется ни workflow, ни пользователем.
+- **Re-forking every iteration (status quo)** — rejected: exactly the behavior to eliminate (token waste, context
+  loss between iterations).
+- **One shared session record with per-kind keys** — rejected: lost-update races from four parallel first writes
+  without locking; a separate record per kind is simpler and race-free.
+- **Per-invocation unique log names when reusing** — rejected: stable per-kind names give the kind label and
+  continuing token sums.
+- **Session export/recreation instead of continuing** — rejected: heavier and slower than natively continuing the
+  existing session.
+- **Removing only step-start lines, keeping the other headers** — rejected: the requirement is strictly our format.
+- **A spinner library** — rejected earlier as an extra dependency (ADR-0011/0012); only its time-based frame
+  principle is borrowed.
+- **Keeping `--reset`** — rejected: used by neither the workflow nor the user.
 
 ## Consequences
 
-- **Хорошо:** скоуп читается сессией вида один раз за прогон, итерации не переоткрывают контекст
-  (экономия токенов/времени; тот же принцип persist+resume сессий ревьюеров — в mrev); ревьюер
-  помнит свои прошлые находки и проверяет их фикс; cursor получает тёплые per-kind чаты вместо
-  свежего чата на каждый чек; логи идут одним нашим форматом; меньше кода (без `--reset`); спиннер
-  живой.
-- **Плохо:** контекст per-kind сессии растёт с итерациями (ограничено потолком `max_fix_iterations`);
-  сессия вида помнит старое состояние кода (смягчено: промпты `adr` ревьюят текущее состояние,
-  rereview — diff против снапшота); пропавшую сессию (auto-compact/чистка opencode) обрабатывает
-  fallback «Session not found» → повторный форк; резюм чата на cursor зависит от хранения chat id
-  CLI (тот же риск, что уже принят для тёплых чатов ролей); тик 0.25 с удваивает частоту поллинга
-  `state.json`/stat логов (пренебрежимо мало).
-- Частично отменяет ADR-0009 («id форка не записывается») и ADR-0012 («кадр не чаще 1 раза в
-  секунду», `HEARTBEAT_SECONDS = 1.0`) — фиксируется данной ADR; ADR-0008 исторически описывает
-  `--reset`, удаление фиксируется здесь.
+- Positive: the scope is read by a per-kind session once per run; iterations no longer reopen context (token and time
+  savings); the reviewer remembers its previous findings and can check their fix; cursor gets warm per-kind chats
+  instead of a fresh chat per check; logs flow in one our-format stream; less code without `--reset`; the spinner is
+  lively.
+- Negative: a per-kind session's context grows with iterations (bounded by the maximum fix-iteration cap); a
+  per-kind session remembers the old code state (mitigated by prompts that review the current state and the diff
+  against the snapshot); a lost session is handled by the "Session not found" fallback, which re-forks; resuming a
+  chat on cursor depends on the CLI retaining chat ids (the risk already accepted for warm role chats); the faster
+  tick doubles the polling frequency of runtime state (negligible).
+- Partially supersedes ADR-0009 (fork id not recorded) and ADR-0012 (spinner frame at most once per second);
+  ADR-0008 historically describes `--reset`, whose removal is fixed here.
 
 ## Acceptance Criteria
 
-1. Первый вызов `run-agent.sh planner --review-fork <kind>` при наличии родительской сессии
-   форкует её (`--session <parent> --fork`), извлекает id форка и сохраняет его в
-   `sessions-<task-id>-review-<kind>.json`; без родительской сессии — ошибка «no warm session to
-   fork» и exit 2. Второй вызов того же вида продолжает сохранённый id (`--session <id>` **без**
-   `--fork`); continue упавший с «Session not found» очищает id и форкует родителя заново.
-2. Cursor: первый вызов `--review-fork <kind>` делает `create-chat`, сохраняет id в per-kind файл
-   (в общий стор не пишет); следующий вызов резюмит тот же чат (`--resume <id>`) без повторного
-   префикса тела роли.
-3. При `--review-fork <kind>` пишутся лог/pid `…-<role>-fork-<kind>.jsonl`/`.pid`; tailer отдаёт
-   fork_id = kind; живая строка помечена `[planner#<kind>]`; в кодовой базе не осталось вызовов
-   `--fork` (workflow-файлы не содержат shell-логики — они зовут `review-check.sh`, который передаёт
-   `--review-fork "$ITEM"`).
-4. Обёртка не печатает строки `▸ …`, `Running workflow: …`, `Version: …`, `Status: …`, `Run ID: …`
-   движка; строки `Error:`/`Workflow failed:`/`Warning:` печатаются как
-   `[hh:mm:ss] [harness] <текст>`; меню гейтов и прочие строки — эхо без изменений; `Run ID`
-   по-прежнему парсится (сообщение resume при фейле работает).
-5. `run-agent.sh` не содержит `--reset`; README не содержит примера с `--reset`; тест
-   `test_cursor_reset_mints_a_new_chat` удалён.
-6. Спиннер: кадр меняется каждые 0.25 с (time-based выбор кадра, ширина кадра 1 колонка, текст после
-   кадра не сдвигается); тик монитора 0.25 с; не-TTY поведение (одна `[harness]`-строка на смену
-   шага, без heartbeat) не изменилось.
-7. `python3 -m pytest tests -q`, `ruff check .` и `mypy spec_utils pipeline_scripts` проходят;
-   тесты по п. 9 Decision обновлены/добавлены; README обновлён.
+- Each check kind gets one fork of the warm session, created once and reused across loop iterations; a lost session
+  is detected and the fork is re-created, and the parent session is never mutated.
+- Engine progress lines are removed from the output, while engine errors and diagnostics are shown in our format; gate
+  menus and other engine output are still shown as before.
+- The `--reset` flag no longer exists.
+- The spinner runs at 4 fps, advances by elapsed time, and does not shift the surrounding text.
+- On the cursor backend, each kind's chat is created once and resumed afterwards.
+- Live output identifies the check kind, and token counts accumulate across iterations.

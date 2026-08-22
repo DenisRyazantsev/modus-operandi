@@ -4,109 +4,88 @@ status: accepted
 date: 2026-08-14
 ---
 
-# ADR-0004: Глобальная CLI-команда `spec-run` для запуска adr-pipeline и review-pipeline из любого проекта
+# ADR-0004: Global CLI Command `modus-operandi` for Running adr-pipeline and review-pipeline from Any Project
 
 ## Context
 
-Сейчас конвейер запускается одним из двух способов, и оба неудобны: либо длинной командой с полным путём
-`specify workflow run ~/.config/spec-kit-llm-client/adr-pipeline.yml -i feature="..."`, либо — после того как в каждом
-проекте отдельно выполнить `specify init` и `python3 install.py --register` — короткой `specify workflow run
-adr-pipeline`. Пользователь хочет избавиться от этой «регистрации» в каждом проекте и получить один раз
-установленный глобальный бинарник: он вводит в командной строке из любого проекта короткую команду (`spec-run`),
-передаёт описание фичи как аргумент, и нужный пайплайн запускается и работает.
+Currently, the pipeline is launched in one of two ways, and both are inconvenient: either a long command with a full
+path to the workflow file, or — after per-project registration (`specify init` plus a registration step in each
+project) — a short workflow id. The user wants to get rid of this per-project registration and have a globally
+installed command: they type a short command (`modus-operandi`) from any project, pass the feature description as an
+argument, and the right pipeline runs.
 
-Проверенные факты о текущей реализации:
+Verified facts about the current implementation:
 
-- `run-pipeline.py` (устанавливается в `~/.config/opencode/scripts/`) уже принимает первым аргументом полный путь к
-  workflow-файлу и пробрасывает остальные аргументы в `specify workflow run`; именно он даёт таймстампы, живой вывод
-  шагов, статистику токенов/времени и звук (`victory.wav`).
-- `specify workflow run <полный-путь-к-yml>` работает в любом проекте без `.specify/` и без `specify init` — это уже
-  задокументировано в README («In any project (no `specify init` required)»).
-- Оба workflow установлены в `~/.config/spec-kit-llm-client/` (`adr-pipeline.yml`, `review-pipeline.yml`). У
-  `adr-pipeline` вход `feature` обязателен, `task_id` — необязателен. `review-pipeline` опционально принимает
-  `-i branch-diff=true`.
-- Инсталлер рендерит все устанавливаемые файлы из шаблонов `templates/*.tpl` с подстановкой абсолютных путей на
-  этапе установки; всё кладётся под `~/.config/...`. Отдельного каталога для глобального бинарника пока нет.
+- The wrapper (the one providing timestamps, live step output, token/time statistics, and sound) already accepts the
+  full path to the workflow file as its first argument and forwards the remaining arguments to the run command.
+- `specify workflow run <full-path-to-yml>` works in any project without `.specify/` and without `specify init` — this
+  is already documented in the README ("In any project (no `specify init` required)").
+- Both workflows are installed centrally: `adr-pipeline` requires the `feature` input (`task_id` is optional);
+  `review-pipeline` optionally accepts a branch-diff flag.
+- The installer renders all installed files with absolute-path substitution at install time; there is no separate
+  directory for a global binary yet.
 
 ## Decision
 
-Добавить тонкую глобальную команду-лаунчер `spec-run`, которая ставится один раз при `install.py` и вызывается из
-любого проекта; сама она ничего не «регистрирует» и не требует `specify init` в проекте. Реализация:
+Add a thin global launcher command `modus-operandi`, installed once and callable from any project; it does not "register"
+anything itself and does not require `specify init` in the project:
 
-1. **Лаунчер как глобальный бинарник.** Инсталлер рендерит исполняемый файл `spec-run` из нового шаблона
-   (`templates/spec_run.sh.tpl` или `templates/spec_run.py.tpl`) с зашитыми на этапе рендера абсолютными путями к
-   установленным `run-pipeline.py`, `adr-pipeline.yml` и `review-pipeline.yml`, и кладёт его в пользовательский
-   bin-каталог `~/.local/bin/spec-run` (каталог создаётся при необходимости, файл делается executable). В
-   `spec_utils/paths.py` добавляется путь к этому файлу; `--uninstall` его удаляет.
-
-2. **Поверхность команды.** Первым аргументом идёт подкоманда, выбирающая пайплайн. Лаунчер делегирует в уже
-   установленный `run-pipeline.py`, передавая полный путь к workflow (а не его короткий id, требующий регистрации),
-   поэтому сохраняются таймстампы, живой лог, статистика и звук:
-
-   - `spec-run adr "описание фичи"` → `run-pipeline.py ~/.config/spec-kit-llm-client/adr-pipeline.yml -i feature="описание фичи"`
-     (все аргументы после `spec-run adr`, не являющиеся флагами, склеиваются в одну строку `feature`).
-   - `spec-run review` → `run-pipeline.py ~/.config/spec-kit-llm-client/review-pipeline.yml` (дефолт — весь код
-     проекта).
-   - `spec-run review --branch-diff` → то же с `-i branch-diff=true`.
-   - Прочие аргументы вида `-i key=value` (например `-i task_id=my-feature`) пробрасываются как есть.
-   - `spec-run --help` (или `-h`) печатает usage (список подкоманд и примеры) и завершается кодом 0; `spec-run` без
-     аргументов и `spec-run <неизвестная-подкоманда>` печатают usage и завершаются ненулевым кодом.
-
-3. **PATH.** Инсталлер не редактирует shell-конфиги; после установки он проверяет, что `~/.local/bin` присутствует в
-   `$PATH`, и если нет — печатает предупреждение с инструкцией (добавить каталог в PATH или вызвать по полному пути
-   `~/.local/bin/spec-run`). Установка при этом не падает.
-
-4. **Ничего не менять в конвейере.** `adr-pipeline.yml`, `review-pipeline.yml`, `run-agent.sh`, сессии и контракт
-   шагов не затрагиваются; лаунчер — это только новая точка входа над существующей обёрткой.
+1. **Launcher as a global binary.** The installer renders an executable `modus-operandi` with absolute paths to the
+   installed wrapper and both workflow files baked in at install time, and places it in the standard per-user bin
+   directory (created if needed, made executable). Uninstallation removes it.
+2. **Command surface.** The first argument is a subcommand selecting the pipeline. The launcher delegates to the
+   already-installed wrapper, passing the full workflow path (not a short id that would require registration), so
+   timestamps, live log, statistics, and sound are preserved:
+   - `modus-operandi adr "<feature description>"` runs `adr-pipeline` with the feature input; all non-flag arguments after
+     `adr` are joined into a single feature string.
+   - `modus-operandi review` runs `review-pipeline` with the default input (the whole project code);
+     `modus-operandi review --branch-diff` passes the branch-diff flag.
+   - Other `-i key=value` arguments (e.g. `-i task_id=my-feature`) are forwarded unchanged.
+   - `modus-operandi --help` (or `-h`) prints usage (list of subcommands and examples) and exits with code 0; `modus-operandi`
+     without arguments and `modus-operandi <unknown-subcommand>` print usage and exit with a non-zero code.
+3. **PATH.** The installer does not edit shell configs; after installation it checks that the per-user bin directory
+   is present in `$PATH`, and if not — prints a warning with instructions (add the directory to PATH or invoke by full
+   path). The installation does not fail.
+4. **Do not change anything in the pipelines.** The workflows, run scripts, sessions, and the step contract are
+   untouched; the launcher is only a new entry point on top of the existing wrapper.
 
 ## Alternatives
 
-- **Оставить как есть: полный путь или `--register` в каждом проекте.** Отклонено: пользователь явно хочет
-  «один раз установил — и бинарник вызывается откуда угодно», а `--register` требует `specify init` и повторения в
-  каждом проекте.
-- **Документировать shell-алиас/функцию (например `alias spec-run=...` в `.bashrc`).** Отклонено: это не настоящий
-  установленный бинарник, ломается при смене shell/конфига и не «устанавливается один раз»; не решает запрос.
-- **Оформить как настоящий Python-пакет с console-script (`[project.scripts] spec-run = "spec_utils.cli:main"`) и
-  ставить через `uv tool install`/`pipx`.** Рассмотрено и отложено: это более «правильный» глобальный бинарник и
-  автоматически кладёт скрипт в PATH, но меняет модель установки (сейчас — простой `install.py`, копирующий
-  отрендеренные файлы, без pip-пакетизации) и потребует глубокого рефакторинга render/verify. Рендер-лаунчер
-  согласован с текущей моделью; к пакетизации можно вернуться отдельно.
-- **Класть лаунчер только в `~/.config/opencode/scripts/` и добавлять этот каталог в PATH через правку shell-rc.**
-  Отклонено: молчаливое редактирование пользовательских rc-файлов инвазивно; стандартный `~/.local/bin` чище и
-  предсказуемее.
+- **Leave as is: full path or per-project registration.** Rejected: the user explicitly wants "installed once — and
+  the command is callable from anywhere", and registration requires `specify init` and repeating it in every project.
+- **Document a shell alias/function in dotfiles.** Rejected: it is not a real installed binary, breaks on shell/config
+  change, and is not "installed once"; does not solve the request.
+- **Package it as a real Python package with a console script, installed via a package tool.** Considered and
+  deferred: it is the "more proper" global binary and automatically puts the script on PATH, but it changes the
+  installation model (currently — a simple installer copying rendered files, without packaging) and would require deep
+  refactoring. The rendered launcher matches the current model; packaging can be revisited separately.
+- **Put the launcher in a shared scripts directory and add that directory to PATH by editing shell-rc.** Rejected:
+  silently editing user rc files is invasive; the standard per-user bin directory is cleaner and more predictable.
 
 ## Consequences
 
-- Положительно: установка один раз — дальше `spec-run adr "фича"` и `spec-run review` из любого проекта без
-  `specify init`, `--register` и длинного пути; соответствует «идеалу» пользователя.
-- Положительно: лаунчер наследует все возможности `run-pipeline.py` (таймстампы, живой лог, статистика, звук,
-  подсказка `resume`) без дублирования логики.
-- Положительно: изменения аддитивны и локализованы (новый шаблон лаунчера + новая запись в `paths.py` + проверка
-  PATH); workflow, агенты и сессии не меняются.
-- Отрицательно: команда `spec-run` резолвится, только если `~/.local/bin` есть в `$PATH`; на системах, где его нет,
-  нужно один раз добавить каталог в PATH (инсталлер об этом предупреждает).
-- Отрицательно: лаунчер зашивает абсолютные пути установки на этапе рендера; перенос `~/.config/spec-kit-llm-client`
-  или `~/.config/opencode/scripts` сломает его до повторного `install.py`.
-- Отрицательно: появляется ещё одно имя команды, которое нужно помнить и документировать (хотя оно короче старого
-  заклинания).
+- Positive: install once — then `modus-operandi adr "<feature>"` and `modus-operandi review` from any project without `specify
+  init`, registration, or a long path; matches the user's "ideal".
+- Positive: the launcher inherits all wrapper capabilities (timestamps, live log, statistics, sound, resume hint)
+  without duplicating logic.
+- Positive: changes are additive and localized (a new launcher template, a new entry in the paths module, and a PATH
+  check); workflows, agents, and sessions are unchanged.
+- Negative: the `modus-operandi` command resolves only if the per-user bin directory is on `$PATH`; on systems where it is
+  not, the directory must be added to PATH once (the installer warns about this).
+- Negative: the launcher bakes in absolute install paths at install time; moving the installation would break it until
+  the next install.
+- Negative: one more command name to remember and document (though shorter than the old incantation).
 
 ## Acceptance Criteria
 
-- `python3 install.py` создаёт исполняемый `~/.local/bin/spec-run` (каталог создаётся при необходимости); файл
-  содержит зашитые абсолютные пути к `run-pipeline.py`, `adr-pipeline.yml` и `review-pipeline.yml`.
-- `spec-run adr "build a kanban board"`, выполненная из любого каталога без `.specify/` и без `--register`, запускает
-  установленный `adr-pipeline` с входом `feature="build a kanban board"`; артефакты задачи появляются в `.workflow/`
-  этого проекта.
-- `spec-run review` запускает `review-pipeline` (дефолт — весь код проекта), `spec-run review --branch-diff` передаёт
-  `-i branch-diff=true`.
-- `spec-run --help` (и `-h`) печатает usage и завершается кодом 0; `spec-run` без аргументов и `spec-run
-  <неизвестная-подкоманда>` печатают usage и завершаются ненулевым кодом.
-- Лишние аргументы вида `-i task_id=...` пробрасываются в `specify workflow run` без изменений.
-- Запуск идёт через `run-pipeline.py`: в выводе присутствуют таймстампы и блок `=== run statistics ===`, как при
-  прямом вызове обёртки.
-- Если `~/.local/bin` отсутствует в `$PATH`, инсталлер печатает предупреждение с инструкцией, но не падает и не
-  редактирует shell-конфиги.
-- `python3 install.py --uninstall` удаляет `~/.local/bin/spec-run`.
-- Существующие тесты (`tests/test_install.py` и др.) проходят; добавлены юнит-тесты на рендер лаунчера и маппинг
-  аргументов (`spec-run adr "feature"` → `-i feature="feature"`; `spec-run review [--branch-diff]` → правильный
-  workflow и входы; `spec-run --help` → usage и код 0; проброс `-i key=value`).
+- One install produces a global command callable from any project.
+- The subcommands launch the corresponding pipelines with the given inputs: `modus-operandi adr "<feature>"` starts
+  `adr-pipeline` with the feature input, `modus-operandi review` starts `review-pipeline` with the default input, and
+  `--branch-diff` / forwarded `-i key=value` arguments are passed through — all without project initialization or
+  registration.
+- Help exits 0, unknown usage exits non-zero: `modus-operandi --help` (and `-h`) prints usage and exits 0; no arguments or
+  an unknown subcommand print usage and exit non-zero.
+- Launched runs go through the wrapper: timestamps and the statistics block are present in the output, as with a
+  direct wrapper invocation.
+- If the per-user bin directory is absent from `$PATH`, the installer prints a warning with instructions but does not
+  fail and does not edit shell configs; uninstallation removes the command.

@@ -4,61 +4,97 @@ status: accepted
 date: 2026-08-16
 ---
 
-# Параллельный запуск проверок обоих пайплайнов через форки тёплой сессии + таблица латенси по стадиям
+# Parallel Execution of Both Pipelines' Checks via Warm-Session Forks + Stage Latency Table
 
 ## Context
 
-Оба пайплайна — `adr-pipeline.yml` и `review-pipeline.yml` — выполняют четыре проверки строго последовательно, каждая — отдельным `do-while`-циклом: `srp-loop` → `bug-loop` → `review-loop` → `comment-review-loop` (в `review-pipeline` после них идёт финальный `report`). Внутри каждого цикла: шаг ревью (planner), шаг verdict (`check_review.py check-review ... <kind>`), шаг исправления (executor с отдельным промптом `srp-fix.md` / `bug-fix.md` / `fix.md` / `comment-fix.md`), шаг pass-check. Все шаги резюмят одну и ту же тёплую сессию planner (`opencode run --session <id> --agent planner ...`), то есть каждая следующая проверка ждёт окончания предыдущей и мутирует общую сессию. Это даёт суммарное wall-clock-время всех четырёх циклов и размазывает замечания по четырём отдельным фиксам executor'а. Различие: в `adr-pipeline` сессия planner уже прогрета шагами write-adr/questions/answers до проверок, а в `review-pipeline` первой агентной активностью является сама проверка.
+Both pipelines — `adr-pipeline` and `review-pipeline` — run four review checks (SRP, bugs, review, comment) strictly
+sequentially, each in its own loop of review → verdict → fix → pass-check. All steps resume the same warm planner
+session, so each next check waits for the previous one and mutates the shared session. This yields the summed
+wall-clock time of all four loops and spreads the findings across four separate executor fixes.
 
-Установленные факты:
+Established facts:
 
-- Движок `specify workflow` выполняет шаги верхнего уровня последовательно; параллелизм доступен только через `fan-out` (`max_concurrency > 1`) + `fan-in` (`wait_for`). Внутри `fan-out` шаблон `step:` исполняется по одному разу на каждый элемент `items`, `context.item` содержит текущий элемент, результаты возвращаются в порядке элементов.
-- `opencode run` поддерживает `--fork`: «fork the session before continuing (requires --continue or --session)». То есть `opencode run --session <warm-id> --fork --agent planner --auto --format json "<prompt>"` создаёт форк тёплой сессии и исполняет промпт в изолированном форке, не трогая родительскую сессию.
-- Проверки различаются: prompt-файл (`srp-review.md`/`srp-rereview.md`, `bug-review.md`/`bug-rereview.md`, `review.md`/`review-rereview.md`, `comment-review.md`/`comment-rereview.md`), префикс выходного файла и PASS-маркер (`srp-review-N.md` → `SRP: PASS`, `bug-review-N.md` → `BUGS: PASS`, `review-N.md` → `VERDICT: PASS`, `comment-review-N.md` → `VERDICT: PASS`) — всё это уже закодировано в `check_review.py` (`KINDS`).
-- `check_review.py check-review <state_dir> <task_id> <kind>` печатает путь последнего отчёта и выходит 0 только когда его первая строка равна PASS-маркеру; парсинг номера N — по числовому суффиксу.
-- Снапшот-механизм `*-snapshot.sha` (`git stash create`) фиксирует состояние кода до проверки, чтобы `rereview`-промпты видели разницу после фикса.
-- Итоговая статистика уже печатается в `run_statistics.py` (`=== run statistics ===`: wall time, tokens, cache, cost), но без разбивки по стадиям; `step_results` движка `specify` не содержат таймстампов, поэтому замер латенси нужно делать в слое обёртки (`run-pipeline.py` / `live_monitor.py`), который уже наблюдает жизненный цикл шагов.
+- The workflow engine executes top-level steps sequentially; parallelism is only available via fan-out
+  (`max_concurrency > 1`) plus fan-in (`wait_for`).
+- `opencode run --fork` creates an isolated fork of a warm session and runs the prompt in it without touching the
+  parent session.
+- The checks differ per kind in their review prompt, report file prefix, and PASS marker, but share the same
+  verdict mechanics: a report file whose first line must equal the kind's PASS marker.
+- A snapshot mechanism captures the code state before a check so re-reviews see the diff after the fix.
+- Final statistics are already printed without a per-stage breakdown; the engine's step results carry no timestamps,
+  so stage latency must be measured in the wrapper layer, which already observes the step lifecycle.
 
-Цель — распараллелить четыре проверки в обоих пайплайнах, изолировав каждую в форке тёплой сессии, свести все замечания в один документ и отдать его executor'у одним промптом, перезапуская только проваленные проверки до полного pass, а по итогу выводить таблицу латенси по каждой стадии (сколько заняла и на что ушло время).
+The goal is to parallelize the four checks in both pipelines, isolating each in a fork of the warm session, collect
+all findings into a single document, hand them to the executor in one pass, restart only the failed checks until all
+pass, and finally print a per-stage latency table.
 
 ## Decision
 
-1. **Одна тёплая сессия, форки на проверку.** Перед проверками единожды создаётся/резюмится тёплая сессия planner, которая читает `scope.txt` и перечисляет файлы в скоупе. В `adr-pipeline` это уже прогретая сессия шагов планирования (write-adr/questions/answers); в `review-pipeline` добавляется явный шаг прогрева (чтение `scope.txt`, перечисление файлов скоупа — аналог текущего первого шага ревью). Затем каждая из четырёх проверок запускается в форке этой сессии: `opencode run --session <warm-planner-id> --fork --agent planner --auto --format json "<prompt>"`. Форк наследует тёплый контекст родителя, но изолирован: id форка не записывается в общий `sessions-<task>.json`, родительский id сохраняется для следующих форков. Это исключает гонки между четырьмя параллельными проверками за одну сессию.
+1. **One warm session, forks per check.** A warm planner session is created/resumed once before the checks (in
+   `adr-pipeline` it is the already warmed planning session; in `review-pipeline` an explicit warm-up step is added).
+   Each of the four checks then runs in a fork of this session, inheriting the warm context while remaining isolated.
+   This eliminates races between parallel checks over one session.
 
-2. **Параллельный запуск через `fan-out`.** В обоих пайплайнах четыре последовательных `do-while`-цикла (`srp-loop`, `bug-loop`, `review-loop`, `comment-review-loop`) заменяются одним внешним retry-циклом `do-while`, внутри которого `fan-out` с `max_concurrency: 4` по списку видов проверок (`srp`, `bugs`, `review`, `comment`). Вложенный шаблон `step:` диспетчерится по `{{ context.item }}`: выбирает prompt-файл, префикс файла отчёта и PASS-маркер через `check_review.py`. Каждая проверка пишет свой отчёт (`<prefix>-N.md`) с первой строкой-вердиктом, как сегодня.
+2. **Parallel execution.** In both pipelines, the four sequential check loops are replaced with one outer retry loop
+   inside which a fan-out with `max_concurrency: 4` runs all four checks concurrently over the list of check kinds.
+   Each check writes its own report with a verdict first line, as today.
 
-3. **Объединение отчётов.** После проверок четыре последних отчёта детерминированно объединяются в один документ `tasks/current/review-report.md` с секциями по видам проверок, без потери замечаний (не синтез-саммари, а конкатенация с заголовками). Этот документ — единственный вход для executor'а.
+3. **Merging reports.** After the checks, the four latest reports are deterministically merged into one document
+   `review-report.md` with per-kind sections, preserving all findings (concatenation with headings, not a synthesized
+   summary). This document is the executor's only input.
 
-4. **Один промпт исправления.** Executor исправляет всё одним общим промптом (новый `fix-all.md`, читающий `review-report.md`), без разделения по типам. Четыре per-type фикс-промпта (`srp-fix.md`, `bug-fix.md`, `fix.md`, `comment-fix.md`) в обоих пайплайнах больше не вызываются.
+4. **One fix pass.** The executor fixes all findings in one pass with a single common prompt reading the merged
+   report, without per-type separation; the per-type fix prompts are no longer invoked.
 
-5. **Перезапуск только проваленных.** После фикса executor'а вердикты пересчитываются `check_review.py` по каждому виду; на следующей итерации retry-цикла `items` для `fan-out` содержит только виды, чей последний отчёт не начинается с PASS-маркера. Цикл повторяется (проверка → объединение → фикс) до тех пор, пока все четыре вида не покажут pass, либо до исчерпания потолка итераций.
+5. **Restart only the failed ones.** After the fix, verdicts are recomputed per kind; on the next retry-loop
+   iteration, only the kinds whose latest report lacks the PASS marker are re-run. The loop repeats (check → merge →
+   fix) until all four kinds pass or the iteration cap is exhausted.
 
-6. **Итоговый вердикт.** Общий статус run — pass только если все четыре последних отчёта несут свои PASS-маркеры; при исчерпании потолка — WARNING (как текущие pass-check шаги). Потолок retry-цикла берётся из конфига: единственный ceiling вместо четырёх per-check (`max_fix_iterations`), привязка id нового цикла в `render.py` `_LOOP_ITERATION_KEYS` обновляется для обоих workflow; старые per-check ключи (`max_srp_iterations`, `max_bug_iterations`, `max_comment_iterations`) остаются в конфиге для обратной совместимости, но больше не управляют отдельными циклами.
+6. **Final verdict.** The overall run passes only if all four latest reports carry their PASS markers; on cap
+   exhaustion the run ends with a warning. A single retry-loop cap from the config replaces the four per-check caps;
+   the old per-check config keys remain for backward compatibility but no longer govern separate loops.
 
-7. **Таблица латенси по стадиям.** Обёртка фиксирует по каждой стадии пайплайна её начало/конец и по завершении выводит в финальном блоке статистики таблицу латенси: строка на стадию (имя → длительность), плюс разбивка, на что ушло время внутри стадии (агентные вызовы модели vs shell-оверхед; для параллельных проверок — длительность каждой проверки и суммарное wall-время `fan-out`). Замер делается в слое обёртки (`run-pipeline.py` / `live_monitor.py` / `run_statistics.py`), который уже наблюдает жизненный цикл шагов, поскольку `step_results` движка таймстампов не содержат; параллельные проверки учитываются как одна стадия с внутренней разбивкой.
+7. **Per-stage latency table.** The wrapper records each stage's start and end and, on completion, prints a latency
+   table in the final statistics block: one row per stage (name → duration), plus a breakdown of what the time was
+   spent on (agent model calls vs shell overhead; for the parallel checks — each check's duration and the fan-out's
+   total wall time). Measurement happens in the wrapper layer, which already observes the step lifecycle.
 
 ## Alternatives
 
-- **Оставить последовательно (status quo).** Отклонено: суммарное время, общая мутируемая сессия, четыре раздельных фикса — ровно то, что требуется устранить.
-- **Параллельно, но свежие сессии без форка.** Отклонено: теряется тёплый контекст, каждая проверка заново читает скоуп/код (4× расход токенов), и параллельные проверки без изоляции сессии конфликтовали бы за общий id.
-- **Параллельно с форками, но фиксы по типам.** Отклонено: противоречит требованию «один общий промпт исправления без разделения по типам».
-- **Агентный синтез объединённого отчёта (как текущий `report.md`).** Отклонено для входа executor'а: синтез может потерять часть замечаний; для фикса нужен полный, детерминированный список.
-- **Замер латенси внутри shell-шагов workflow (`time` вокруг каждого шага).** Отклонено: шаги движка ≠ стадии (четыре параллельные проверки — один `fan-out`-шаг, но четыре стадии), а `step_results` не имеют таймстампов; замер в обёртке даёт стадии целиком и не плодит обвязку в каждом шаге.
+- **Keep sequential (status quo).** Rejected: summed wall-clock time, a shared mutated session, and four separate
+  fixes — exactly what needs to be eliminated.
+- **Parallel, but fresh sessions without forks.** Rejected: the warm context is lost, each check re-reads the
+  scope and code (higher token spend), and parallel checks without session isolation would race over a shared id.
+- **Parallel with forks, but per-type fixes.** Rejected: contradicts the requirement of one common fix prompt
+  without type separation.
+- **Agent synthesis of the merged report.** Rejected for the executor's input: synthesis may lose findings; the fix
+  needs the full, deterministic list.
+- **Measuring latency inside the workflow's shell steps.** Rejected: engine steps do not equal stages (four parallel
+  checks form one fan-out step but four stages), and step results carry no timestamps; measuring in the wrapper gives
+  whole stages without scaffolding in every step.
 
 ## Consequences
 
-- **Хорошо:** wall-clock падает с суммы четырёх циклов до максимума одной проверки (+ фикс); форки изолируют проверки друг от друга и не засоряют родительскую тёплую сессию; executor видит все замечания сразу и чинит одним заходом.
-- **Хорошо:** перезапуск только проваленных проверок не тратит время/токены на уже пройденные; таблица латенси даёт видимость, какая стадия «ест» время.
-- **Плохо:** четыре форка дублируют чтение скоупа относительно «идеального» общего контекста (но дешевле четырёх свежих сессий); параллельные вызовы упираются в rate-limit провайдера сильнее, чем последовательные.
-- **Плохо:** детерминированная конкатенация объёмнее агентного саммари; снапшот-механизм `*-snapshot.sha` нужно согласовать с новой структурой циклов, чтобы `rereview`-промпты корректно видели diff после общего фикса; замер латенси добавляет обвязку в обёртку (но не меняет поведение при сбое — статистика деградирует к нулям, как сейчас).
+- Wall-clock drops from the sum of four loops to the maximum of one check plus the fix; forks isolate the checks
+  from each other and do not pollute the parent warm session; the executor sees all findings at once and fixes them
+  in one pass.
+- Restarting only the failed checks does not waste time and tokens on already-passed ones; the latency table shows
+  which stage consumes the time.
+- Four forks duplicate scope reading relative to an ideal shared context (though cheaper than four fresh sessions);
+  parallel calls hit the provider's rate limits harder than sequential ones.
+- Deterministic concatenation is bulkier than an agent summary; the snapshot mechanism must be aligned with the new
+  loop structure so re-review prompts correctly see the diff after the common fix; latency measurement adds
+  scaffolding to the wrapper (without changing failure behavior — statistics degrade to zeros, as now).
 
 ## Acceptance Criteria
 
-1. Оба workflow — `adr-pipeline.yml` и `review-pipeline.yml` — запускают проверки SRP, bugs, review и comment параллельно через `fan-out` с `max_concurrency >= 4`; четырёх последовательных `do-while`-циклов проверок ни в одном workflow больше нет.
-2. Каждая проверка исполняется в форке тёплой сессии planner: вызов содержит `opencode run --session <id> --fork --agent planner`, форки изолированы (id форка не пишется в общий session-store), родительский id сохраняется.
-3. Тёплая сессия planner создаётся/используется один раз до проверок (в `review-pipeline` — явный шаг прогрева: читает `scope.txt`, перечисляет файлы скоупа); каждая проверка пишет отчёт `<prefix>-N.md` с первой строкой `SRP: PASS` / `BUGS: PASS` / `VERDICT: PASS` / `VERDICT: PASS`.
-4. Четыре последних отчёта объединяются в один документ `tasks/current/review-report.md` (все замечания сохранены, секции по видам), который передаётся executor'у.
-5. Executor исправляет все замечания одним общим промптом (без разделения по типам); `srp-fix.md`, `bug-fix.md`, `fix.md`, `comment-fix.md` в обоих пайплайнах не вызываются.
-6. На следующей итерации перезапускаются только проваленные проверки (виды без PASS-маркера); цикл завершается только когда все четыре вида показывают pass, либо по потолку итераций с WARNING.
-7. По завершении выводится таблица латенси по стадиям: строка на стадию (имя → длительность) с разбивкой, на что ушло время (агентные вызовы vs shell-оверхед; для параллельных проверок — длительность каждой проверки и wall-время `fan-out`); при отсутствии данных статистика деградирует к нулям и не ломает run.
-8. Конфиг/render-привязка потолка итераций нового retry-цикла актуализирована для обоих workflow; установка и существующие тесты (`tests/`) проходят.
+- The four review checks (SRP, bugs, review, comment) run in parallel in both `adr-pipeline` and `review-pipeline`,
+  each isolated in a fork of the warm planner session; there are no longer four sequential check loops in either
+  workflow.
+- Findings from all checks are merged into one document and fixed by the executor in a single pass with one common
+  prompt.
+- Only the failed checks restart after a fix; the run ends when all four checks pass or the iteration cap is hit
+  (with a warning).
+- A per-stage latency table is printed at the end, with a breakdown of where the time was spent; when data is
+  missing, statistics degrade to zeros and do not break the run.

@@ -4,86 +4,63 @@ status: accepted
 date: 2026-08-15
 ---
 
-# ADR-0006: Лимит вывода executor'а (`OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX`) и проверка реализации после `implement`
+# ADR-0006: Executor Output Limit (`OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX`) and Implementation Check After `implement`
 
 ## Context
 
-В прогоне `adr-pipeline` от 2026-08-15 шаг `implement` не внёс ни одного
-изменения в репозиторий: executor прочитал `answers.md`, исчерпал весь бюджет вывода на рассуждениях (126 864 символа
-reasoning, `step-finish` с `reason: "length"`, 31 999 токенов reasoning и 0 токенов output, ни одного вызова
-инструмента) и завершился, не сделав работу. Причина — внутренний лимит opencode v1: per-step потолок вывода
-обрезается до 32 000 токенов (`Math.min(limit.output, 32000)`), независимо от возможностей провайдера (DeepSeek V4
-допускает до 384K output при контексте 1M). Настройка `limit.output` в конфиге на этот потолок не влияет; единственный
-способ его поднять — переменная окружения `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX` (issue
-anomalyco/opencode#29363).
+In a pipeline run, the `implement` step did not make a single change to the repository: the executor read the task
+brief, exhausted its entire output budget on reasoning, and finished without doing the work — no tool calls at all.
+The cause is an opencode internal limit: opencode caps per-step output at 32 000 tokens regardless of provider
+capabilities (the provider supports far more output with a large context). The configured output limit does not affect
+this cap; the only way to raise it is the `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX` environment variable.
 
-Пустой `implement` не был обнаружен вовремя: `srp-review` и `bug-review` прошли вакуумно («в диффе нет кода — нарушений
-нет»), и только цикл `review` поймал «фича целиком не реализована» (`VERDICT: FIX`), заставив executor'а работать уже
-в шаге `fix`. Пайплайну нужна ранняя и дешёвая защита от сценария «исполнитель не выполнил работу».
+The empty implementation was not detected in time: the review steps passed vacuously over an empty diff, and only a
+later review loop caught that the feature was not implemented at all, making the executor redo the work. The pipeline
+needs an early, cheap guard against the "executor did not do the work" scenario.
 
 ## Decision
 
-1. **Поднять потолок вывода opencode.** В `run-agent.sh.tpl` (скрипт, который непосредственно запускает
-   `opencode run` для шагов пайплайна) перед вызовом opencode экспортируется
-   `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=1000000` (1M токенов). Значение выбрано как практический «потолок
-   отсутствует»: реальный per-response бюджет дальше ограничивает провайдер (DeepSeek V4: максимум 384K output,
-   плюс остаток контекста 1M), поэтому opencode перестаёт обрезать запросы раньше API. Переменная действует на обе
-   роли (planner и executor) — она лишь снимает верхнюю границу, а не заставляет модель тратить больше.
+Raise the opencode per-step output cap by exporting `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=1000000` (1M tokens)
+before launching opencode for pipeline steps. The value is a practical "no cap": the actual per-response budget
+remains bounded by the provider, so opencode stops truncating requests before the API does. The variable applies to
+both roles (planner and executor) and only removes the upper bound — it does not force the model to spend more.
 
-2. **Проверка реализации после `implement`.** В `adr-pipeline.yml.tpl` сразу после шага `implement` (до `srp-loop`)
-   добавляется проверка, что executor действительно изменил репозиторий:
-
-   - проверка проходит, если есть изменения в отслеживаемых файлах (`git diff HEAD`, включая staged) или появились
-     новые неигнорируемые файлы (`git ls-files --others --exclude-standard`); `.workflow/` и `.specify/` игнорируются
-     и не считаются;
-   - если изменений нет — executor повторно вызывается **в той же тёплой сессии** с сообщением ровно
-     «You didn't do changes.»;
-   - после повторного вызова проверка выполняется снова;
-   - если и во второй раз изменений нет — пайплайн завершается ошибкой, сообщение которой объясняет, что executor не
-     внёс изменений в репозиторий за две попытки (вероятные причины: обрыв ответа по лимиту, зависание, неверное
-     понимание задачи) и указывает, где искать причину (лог сессии) и как продолжить (команда resume).
-
-   Оформляется по образцу существующих циклов (`srp-loop` → `srp-pass-check`): цикл из проверки и повтора с порогом
-   итераций (по умолчанию 2), после исчерпания — терминальный шаг, завершающийся с развёрнутым сообщением об ошибке.
+Add an implementation check immediately after the `implement` step, before any review runs: the check passes if
+tracked files changed or new non-ignored files appeared; workflow and state directories do not count as changes. If
+there are no changes, the executor is called again in the same warm session with a short "you didn't do changes"
+message, and the check runs again. If there are still no changes, the pipeline fails with a clear error explaining
+that the executor did not change the repository in two attempts (likely causes: response cut off by the limit, a
+hang, or misunderstanding of the task), pointing to the session log and how to continue (the resume command). The
+check is structured as a bounded check-and-retry loop in the same style as the existing loop steps.
 
 ## Alternatives
 
-* **Довериться существующему циклу `review` (он ловит «ничего не реализовано»).** Отклонено: срабатывает поздно — до
-  него SRP- и bug-проверки прогоняются вхолостую по пустому диффу; пустая реализация должна обнаруживаться сразу после
-  `implement`, а не через три агентных прогона.
-* **Проверять только `git diff HEAD` без учёта untracked-файлов.** Отклонено: новая фича может состоять целиком из
-  новых файлов, и проверка только по diff их пропустит.
-* **Повторять попытку неограниченно или полагаться только на ручной resume.** Отклонено: неограниченный повтор —
-  риск бесконечной стоимости; ручной resume остаётся запасным путём после двух попыток.
-* **Разрешить «легитимно пустую» реализацию (например, через `deviation.md`).** Отклонено: пайплайн предназначен для
-  фич, меняющих код; если фича не требует изменений репозитория, такой прогон не должен начинаться.
+- **Trust the existing review loop (it catches "nothing implemented").** Rejected: it triggers late — before it, the
+  earlier review stages run idle over an empty diff; an empty implementation should be detected right after
+  `implement`, not after several agent runs.
+- **Check only for modifications of tracked files, without accounting for new files.** Rejected: a new feature may
+  consist entirely of new files, and a diff-only check would miss it.
+- **Retry unboundedly or rely only on manual resume.** Rejected: unbounded retry risks endless cost; manual resume
+  remains the fallback path after two attempts.
+- **Allow a "legitimately empty" implementation.** Rejected: the pipeline is for features that change code; if a
+  feature requires no repository changes, such a run should not start.
 
 ## Consequences
 
-* Положительно: обрыв executor'а по лимиту рассуждений перестаёт приводить к пустой реализации — opencode не обрезает
-  запросы раньше провайдера.
-* Положительно: пустая реализация обнаруживается сразу после `implement` (секунды вместо трёх агентных прогонов);
-  SRP- и bug-этапы не тратятся вхолостую.
-* Положительно: повторная попытка идёт через тёплую сессию — контекст задачи сохраняется, сообщение «You didn't do
-  changes.» стоит дёшево.
-* Отрицательно: потолок в 1M токенов повышает максимально возможный расход токенов за один ответ; фактический расход
-  по-прежнему ограничен моделью (384K) и остатком контекста.
-* Отрицательно: `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX` — экспериментальный механизм opencode v1; при обновлении
-  поведение может измениться (в opencode 2.0 кэп 32K убран и лимит уходит в запрос как есть).
-* Отрицательно: повторный вызов executor'а при пустой реализации добавляет время и токены к прогону (ограничено двумя
-  попытками).
+- Positive: an executor cut off by the reasoning limit no longer results in an empty implementation — opencode does
+  not truncate requests before the provider does.
+- Positive: an empty implementation is detected right after `implement` (seconds instead of several agent runs), so
+  the intermediate review stages are not wasted on an empty diff.
+- Positive: the retry goes through the warm session — the task context is preserved and the retry message is cheap.
+- Negative: the 1M-token cap raises the maximum possible token spend per single response; actual spend is still
+  bounded by the provider and the remaining context.
+- Negative: `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX` is an experimental opencode mechanism; behavior may change on
+  update (in a future opencode version the cap is removed and the limit goes into the request as-is).
+- Negative: re-invoking the executor on an empty implementation adds time and tokens to the run (bounded to two
+  attempts).
 
 ## Acceptance Criteria
 
-* В `run-agent.sh.tpl` перед запуском opencode экспортируется `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=1000000`; при
-  выполнении шага переменная присутствует в окружении процесса `opencode run` (проверяется тестом или через
-  `/proc/<pid>/environ`).
-* В `adr-pipeline.yml.tpl` после `implement` присутствует шаг проверки, который завершается успехом при наличии
-  изменений в репозитории (изменённые tracked-файлы или новые неигнорируемые файлы) и неуспехом при их отсутствии.
-* При неуспехе проверки executor вызывается в той же сессии с сообщением ровно «You didn't do changes.», после чего
-  проверка выполняется повторно.
-* При повторном отсутствии изменений пайплайн завершается с ошибкой, объясняющей, что executor не внёс изменений в
-  репозиторий за две попытки, со ссылкой на лог сессии и командой resume.
-* Число попыток ограничено настройкой (по умолчанию 2).
-* Добавлены тесты: логика проверки изменений (юнит-тест), сценарий «executor не сделал изменений» завершается ожидаемой
-  ошибкой (e2e), рендер конфигурации содержит новые шаги.
+- The executor's per-step output budget is not truncated by opencode before the provider limit.
+- After the implementation step, the pipeline verifies the repository actually changed, retries once in the same warm
+  session, and fails with a clear error and resume hint otherwise.
