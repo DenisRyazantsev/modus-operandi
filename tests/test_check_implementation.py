@@ -186,9 +186,7 @@ class HasChangesTest(RealGitCase):
         adr.write_text("x\n", encoding="utf-8")
         (self.repo / "new.py").write_text("x\n", encoding="utf-8")
         with cwd(self.repo):
-            self.assertTrue(
-                check_implementation.has_changes(str(self.repo / "architecture"))[0]
-            )
+            self.assertTrue(check_implementation.has_changes(str(self.repo / "architecture"))[0])
 
     def test_unborn_head_repo_with_untracked_work_passes(self) -> None:
         # A fresh repo (git init, zero commits) has no HEAD: `git diff HEAD`

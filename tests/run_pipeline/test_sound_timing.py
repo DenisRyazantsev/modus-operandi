@@ -42,9 +42,7 @@ class SoundTimingTest(unittest.TestCase):
     def test_gate_open_fires_signal(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
-            rc, play_signal = self._run_main(
-                mod, tmp, ["┌─ Gate ─────────", "Run ID: abc12345"], 0
-            )
+            rc, play_signal = self._run_main(mod, tmp, ["┌─ Gate ─────────", "Run ID: abc12345"], 0)
         self.assertEqual(rc, 0)
         self.assertEqual(play_signal.call_count, 2)  # gate open + successful finish
 

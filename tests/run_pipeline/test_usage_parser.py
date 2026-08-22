@@ -88,9 +88,7 @@ class UsageParserTest(unittest.TestCase):
             parser.event_usage({"type": "result", "usage": {"inputTokens": 5}}, True)["input"],
             5,
         )
-        self.assertIsNone(
-            parser.event_usage(event, disable_step_finish_fallback=True)
-        )
+        self.assertIsNone(parser.event_usage(event, disable_step_finish_fallback=True))
 
     def test_is_result_style_detects_the_modern_shapes(self) -> None:
         parser = self._parser()
