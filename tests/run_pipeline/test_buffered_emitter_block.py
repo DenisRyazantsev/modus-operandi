@@ -98,7 +98,7 @@ class BufferedEmitterBlockTest(unittest.TestCase):
         # row and break the height arithmetic (ghost rows, drifting block):
         # every drawn row is clamped to the terminal width minus one column.
         # The terminal size is read from a real pty whose size is set via
-        # TIOCSWINSZ (sys.__stdout__ points at the real pty slave).
+        # TIOCSWINSZ (fd 1 temporarily points at the pty slave).
         mod = load_run_pipeline()
         _, emitter = self._emitter(mod)
         import fcntl
@@ -110,13 +110,15 @@ class BufferedEmitterBlockTest(unittest.TestCase):
         master, slave = pty.openpty()
         try:
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 10, 0, 0))
-            pty_stdout = os.fdopen(slave, "w", encoding="utf-8", closefd=False)
-            old_stdout = sys.__stdout__
-            sys.__stdout__ = pty_stdout
+            assert sys.__stdout__ is not None
+            real_out = sys.__stdout__.fileno()
+            old_fd = os.dup(real_out)
+            os.dup2(slave, real_out)
             try:
                 out = self._capture(emitter, lambda: emitter.emit_live(["x" * 50]))
             finally:
-                sys.__stdout__ = old_stdout
+                os.dup2(old_fd, real_out)
+                os.close(old_fd)
         finally:
             os.close(master)
             os.close(slave)
