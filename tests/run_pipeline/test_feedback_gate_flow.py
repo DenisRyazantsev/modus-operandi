@@ -20,7 +20,7 @@ from .helpers import FakeProc, load_run_pipeline, point_config_at
 class FeedbackGateFlowTest(unittest.TestCase):
     """main() recognizes the feedback gate: the editor opens and
     no victory sound is played (both for the editor path and the manual
-    fallback); regular gates still notify()."""
+    fallback); regular gates still play_signal()."""
 
     def _run_main(
         self, mod: Any, tmp: str, step_id: str, editor_result: Any
@@ -44,6 +44,11 @@ class FeedbackGateFlowTest(unittest.TestCase):
             return {"abc12345"} if state["calls"] > 1 else set()
 
         try:
+            # The gate handling and the signal calls live in the split
+            # modules (SRP): open_feedback_editor fires in stdout_reader.py
+            # and the victory signal in stdout_reader.py/run_finish.py, so
+            # the mocks replace the names in those namespaces.
+            signal = mock.Mock()
             with (
                 cwd(tmp),
                 mock.patch("sys.stdin", mock.Mock(isatty=lambda: True)),
@@ -54,10 +59,11 @@ class FeedbackGateFlowTest(unittest.TestCase):
                 ),
                 argv(["run-pipeline.py", "adr-pipeline"]),
                 stdout(io.StringIO()),
-                mock.patch.object(mod, "notify") as notify,
                 mock.patch.object(
-                    mod, "open_feedback_editor", return_value=editor_result
+                    mod.stdout_reader, "open_feedback_editor", return_value=editor_result
                 ) as editor,
+                mock.patch.object(mod.stdout_reader, "play_signal", signal),
+                mock.patch.object(mod.run_finish, "play_signal", signal),
                 mock.patch.object(mod, "forward_terminal_input"),
                 # main() resolves existing_run_ids in the entry module; the
                 # discoverer resolves its own copy in run_id_discoverer.py.
@@ -71,12 +77,14 @@ class FeedbackGateFlowTest(unittest.TestCase):
             for fd in (real_master, real_slave):
                 with contextlib.suppress(OSError):
                     os.close(fd)
-        return rc, notify, editor
+        return rc, signal, editor
 
     def test_feedback_gate_opens_editor_without_sound(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
-            rc, notify, editor = self._run_main(mod, tmp, "adr-feedback-gate", editor_result=True)
+            rc, play_signal, editor = self._run_main(
+                mod, tmp, "adr-feedback-gate", editor_result=True
+            )
         self.assertEqual(rc, 0)
         editor.assert_called_once()
         state_dir, pause, master_fd, step_id = editor.call_args.args
@@ -86,33 +94,35 @@ class FeedbackGateFlowTest(unittest.TestCase):
         self.assertIsInstance(pause, threading.Event)
         # No victory sound for the feedback gate itself: only the final
         # success signal fires.
-        self.assertEqual(notify.call_count, 1)
+        self.assertEqual(play_signal.call_count, 1)
 
     def test_feedback_gate_loop_iteration_without_sound(self) -> None:
         # The loop-iteration form of the feedback gate id is recognized too.
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
-            rc, notify, editor = self._run_main(
+            rc, play_signal, editor = self._run_main(
                 mod, tmp, "adr-loop:adr-feedback-gate:1", editor_result=True
             )
         self.assertEqual(rc, 0)
         editor.assert_called_once()
         self.assertEqual(editor.call_args.args[3], "adr-loop:adr-feedback-gate:1")
-        self.assertEqual(notify.call_count, 1)
+        self.assertEqual(play_signal.call_count, 1)
 
     def test_feedback_gate_fallback_without_sound(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
-            rc, notify, editor = self._run_main(mod, tmp, "adr-feedback-gate", editor_result=False)
+            rc, play_signal, editor = self._run_main(
+                mod, tmp, "adr-feedback-gate", editor_result=False
+            )
         self.assertEqual(rc, 0)
         editor.assert_called_once()
-        self.assertEqual(notify.call_count, 1)
+        self.assertEqual(play_signal.call_count, 1)
 
-    def test_regular_gate_still_notifies(self) -> None:
+    def test_regular_gate_still_plays_signal(self) -> None:
         mod = load_run_pipeline()
         with tempfile.TemporaryDirectory() as tmp:
-            rc, notify, editor = self._run_main(mod, tmp, "adr-gate", editor_result=True)
+            rc, play_signal, editor = self._run_main(mod, tmp, "adr-gate", editor_result=True)
         self.assertEqual(rc, 0)
         editor.assert_not_called()
         # gate open + successful finish
-        self.assertEqual(notify.call_count, 2)
+        self.assertEqual(play_signal.call_count, 2)

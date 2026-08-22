@@ -48,6 +48,9 @@ _MODULES = (
     "notify",
     "feedback_editor",
     "pty_spawn",
+    "wrapper_cli",
+    "stdout_reader",
+    "run_finish",
     "editor",
 )
 
@@ -99,8 +102,9 @@ def load_run_pipeline() -> types.ModuleType:
     spec.loader.exec_module(module)
     for name in _SUBMODULE_NAMES:
         # Skip names the entry module already defines: the wrapper
-        # re-exports e.g. the `notify` function, which must not be shadowed
-        # by the `notify` submodule when tests patch mod.notify.
+        # re-exports e.g. the `play_signal` function from notify.py, which
+        # must not be shadowed by the `notify` submodule when tests patch
+        # mod.play_signal.
         if not hasattr(module, name):
             setattr(module, name, sys.modules[name])
     return module

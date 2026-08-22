@@ -17,7 +17,7 @@ from pathlib import Path
 SOUND_FILE = Path(__file__).resolve().parent / "victory.wav"
 
 
-def notify() -> None:
+def play_signal() -> None:
     """Play the single victory.wav signal, for every event.
 
     Called when a human-gate menu opens (except the feedback gate, which

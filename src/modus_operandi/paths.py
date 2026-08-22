@@ -64,13 +64,18 @@ def _layout(base: Path) -> Paths:
         "usage_parser": base / "opencode" / "scripts" / "usage_parser.py",
         # run-pipeline.py is further split one concern per file: the
         # config-to-invocation mapping, the statistics, the victory sound,
-        # the feedback gate's editor interaction and the pty plumbing.
+        # the feedback gate's editor interaction, the pty plumbing, the
+        # CLI surface, the engine-stdout consumption policy and the run
+        # teardown/outcome reporting.
         "config_invocation": (base / "opencode" / "scripts" / "config_invocation.py"),
         "run_statistics": (base / "opencode" / "scripts" / "run_statistics.py"),
         "latency_table": (base / "opencode" / "scripts" / "latency_table.py"),
         "notify": base / "opencode" / "scripts" / "notify.py",
         "feedback_editor": (base / "opencode" / "scripts" / "feedback_editor.py"),
         "pty_spawn": base / "opencode" / "scripts" / "pty_spawn.py",
+        "wrapper_cli": base / "opencode" / "scripts" / "wrapper_cli.py",
+        "stdout_reader": base / "opencode" / "scripts" / "stdout_reader.py",
+        "run_finish": base / "opencode" / "scripts" / "run_finish.py",
         # The shared editor resolution, copied next to the run-pipeline
         # wrapper for its feedback gates.
         "editor": base / "opencode" / "scripts" / "editor.py",

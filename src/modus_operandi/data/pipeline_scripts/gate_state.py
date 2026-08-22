@@ -12,8 +12,8 @@ class GateState:
 
     The main thread (which reads specify's stdout) calls open(state) when it
     sees the first line of a gate menu window, capturing the gate's step id
-    synchronously from the state it reads at that moment; update() advances
-    the lifecycle from each later state.json read — closing the gate
+    synchronously from the state it reads at that moment; update_and_closed()
+    advances the lifecycle from each later state.json read — closing the gate
     (returning True) once the engine moves past the gate step. The monitor
     thread closes the gate explicitly when the wrapper is stopping (an
     aborted/rejected run may leave current_step_id on the gate forever).
@@ -35,7 +35,7 @@ class GateState:
         monitor tick removes the window in which a fast answer could make
         the first tick record the next step's id and leave the gate open
         through that whole step. An unreadable state (None) leaves the id
-        for update() to capture on the first readable tick.
+        for update_and_closed() to capture on the first readable tick.
         """
         with self._lock:
             self._open = True
@@ -52,8 +52,8 @@ class GateState:
         with self._lock:
             return self._open
 
-    def update(self, state: dict[str, Any] | None) -> bool:
-        """Advance the lifecycle from one state.json read.
+    def update_and_closed(self, state: dict[str, Any] | None) -> bool:
+        """Advance the lifecycle from one state.json read; True when the gate closed.
 
         While the menu is open: when the captured id is missing (the open
         moment read failed), record current_step_id on the first readable
@@ -63,11 +63,11 @@ class GateState:
         open. A failed read (None) only skips the tick: it says nothing
         about the gate, and closing on it would print straight over the
         still-open menu — only a readable state with an empty or different
-        current_step_id may close the gate. update() performs no I/O and
-        emits no output — it only mutates the gate's own state (under its
-        lock). The "never emits output" clause is the contract the caller
-        relies on, since the caller decides the flush. Loop iterations carry
-        distinct suffixed ids (adr-loop:adr-gate:1,
+        current_step_id may close the gate. update_and_closed() performs no
+        I/O and emits no output — it only mutates the gate's own state
+        (under its lock). The "never emits output" clause is the contract
+        the caller relies on, since the caller decides the flush. Loop
+        iterations carry distinct suffixed ids (adr-loop:adr-gate:1,
         :2, …), so each re-drawn menu is tracked anew.
         """
         with self._lock:

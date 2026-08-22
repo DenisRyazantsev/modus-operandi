@@ -49,6 +49,9 @@ class InstallLayoutTest(InstallerTestCase):
             ".config/opencode/scripts/notify.py",
             ".config/opencode/scripts/feedback_editor.py",
             ".config/opencode/scripts/pty_spawn.py",
+            ".config/opencode/scripts/wrapper_cli.py",
+            ".config/opencode/scripts/stdout_reader.py",
+            ".config/opencode/scripts/run_finish.py",
             ".config/opencode/scripts/editor.py",
             ".config/opencode/scripts/victory.wav",
             ".config/opencode/scripts/save_adr.py",
@@ -157,7 +160,6 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertTrue(os.access(wrapper, os.X_OK))
         text = wrapper.read_text(encoding="utf-8")
         self.assertIn("specify", text)
-        self.assertIn("resume with: specify workflow resume", text)
         self.assertIn("LiveMonitor", text)
         self.assertIn("=== run statistics ===", text)
         self.assertIn("opencode", text)
@@ -171,11 +173,16 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertNotIn("PYEOF", text)
         self.assertNotIn("#!/usr/bin/env bash", text)
         # The split modules are installed next to the wrapper: the poller
-        # owns the state.json reads and the display module the timestamp.
+        # owns the state.json reads, the display module the timestamp, and
+        # run_finish.py the failure UX (the resume hint) and teardown.
         poller = self.home / ".config/opencode/scripts/step_result_poller.py"
         self.assertIn("state.json", poller.read_text(encoding="utf-8"))
         display = self.home / ".config/opencode/scripts/display.py"
         self.assertIn('strftime("%H:%M:%S")', display.read_text(encoding="utf-8"))
+        run_finish = self.home / ".config/opencode/scripts/run_finish.py"
+        self.assertIn(
+            "resume with: specify workflow resume", run_finish.read_text(encoding="utf-8")
+        )
 
     def test_victory_wav_shipped_next_to_wrapper(self) -> None:
         self.assertEqual(self.install(), 0)
@@ -284,7 +291,7 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertIn("w[:60]", adr_utils)
 
     def test_run_agent_sets_output_token_limit(self) -> None:
-        # ADR-0007: opencode's default 32k per-response cap must be raised so
+        # ADR-0006: opencode's default 32k per-response cap must be raised so
         # an agent cannot burn the whole budget on reasoning before acting.
         self.assertEqual(self.install(), 0)
         run_agent = (self.home / ".config/opencode/scripts/run-agent.sh").read_text(

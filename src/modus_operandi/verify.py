@@ -122,6 +122,9 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
         "notify",
         "feedback_editor",
         "pty_spawn",
+        "wrapper_cli",
+        "stdout_reader",
+        "run_finish",
         "editor",
     ):
         if not paths[key].is_file():

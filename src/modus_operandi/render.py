@@ -154,6 +154,9 @@ def render_run_pipeline(paths: Paths) -> None:
         ("notify", "notify.py"),
         ("feedback_editor", "feedback_editor.py"),
         ("pty_spawn", "pty_spawn.py"),
+        ("wrapper_cli", "wrapper_cli.py"),
+        ("stdout_reader", "stdout_reader.py"),
+        ("run_finish", "run_finish.py"),
         # The shared editor resolution, copied next to the wrapper too.
         ("editor", "editor.py"),
     ):
