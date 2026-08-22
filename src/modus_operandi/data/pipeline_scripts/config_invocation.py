@@ -61,9 +61,18 @@ def role_model(cfg: dict[str, Any], backend: str, role: str) -> str:
     only consumed by the cursor branch of run-agent.sh/name-task.sh.
     """
     section = cfg.get("cursor") if backend == "cursor" else cfg.get("opencode")
-    models = (section or {}).get("models") or {}
-    model = (models.get(role) or {}).get("model")
-    return model if isinstance(model, str) else ""
+    if not isinstance(section, dict):
+        # A non-mapping section in a hand-edited config.yml (e.g.
+        # `opencode: oops`) must degrade to the defaults, not crash: the
+        # wrapper reads the raw YAML without validate_config, and its
+        # contract is that a malformed config still runs.
+        section = {}
+    models = section.get("models")
+    models = models if isinstance(models, dict) else {}
+    model = models.get(role)
+    model = model if isinstance(model, dict) else {}
+    value = model.get("model")
+    return value if isinstance(value, str) else ""
 
 
 def load_config(config_path: Path | None = None) -> dict[str, Any]:
@@ -118,7 +127,13 @@ def build_specify_invocation(
     """
     cfg = normalize_config(cfg)
     backend = effective_backend(cfg, cli_backend)
-    workflow = cfg.get("workflow") or {}
+    workflow = cfg.get("workflow")
+    if not isinstance(workflow, dict):
+        # A non-mapping `workflow:` section in a hand-edited config.yml
+        # degrades to the documented defaults like load_config's top-level
+        # degradation — never a traceback (the installed wrapper is a
+        # standalone script that must keep running).
+        workflow = {}
     state_dir = workflow.get("state_dir") or ".workflow"
     adr_dir = workflow.get("adr_dir") or "architecture"
     # Strict booleans only (mirroring the installer's validate_config): the

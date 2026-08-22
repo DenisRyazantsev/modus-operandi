@@ -108,6 +108,19 @@ class TableFormatTest(unittest.TestCase):
         self.assertNotIn("[", rows[0][role_end:])
         self.assertIn("saved adr: x", rows[0])
 
+    def test_step_output_rows_non_str_fields_do_not_raise(self) -> None:
+        # Regression (bug fix): the `output` container is guarded against a
+        # non-dict, but the stdout/stderr VALUES can also be non-strings in
+        # a torn or hand-edited state.json — a raw AttributeError there
+        # would propagate out of _poll_once and silently kill the monitor
+        # thread (the live status stops updating for the rest of the run).
+        mod = load_run_pipeline()
+        layout = mod.table_format.TableLayout(tty=False)
+        result = {"status": "completed", "output": {"stdout": 123, "stderr": {"x": 1}}}
+        with mock.patch.object(sys.modules["table_format"], "stamp", return_value="07:51:37"):
+            rows = mod.step_output_rows(result, layout)
+        self.assertEqual(rows, [])
+
 
 if __name__ == "__main__":
     unittest.main()

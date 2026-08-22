@@ -71,6 +71,26 @@ class BackendSelectionTest(unittest.TestCase):
         self.assertEqual(mod.role_model({}, "cursor", "planner"), "")
         self.assertEqual(mod.role_model({}, "opencode", "planner"), "")
 
+    def test_role_model_degrades_on_non_mapping_sections(self) -> None:
+        # Regression (bug fix): a hand-edited config.yml with a scalar
+        # `opencode:`/`cursor:` section (e.g. `opencode: oops`) must degrade
+        # to the default empty model, not crash with AttributeError — the
+        # wrapper reads the raw YAML without validate_config and its
+        # contract is that a malformed config still runs.
+        mod = load_run_pipeline()
+        self.assertEqual(mod.role_model({"opencode": "oops"}, "opencode", "planner"), "")
+        self.assertEqual(mod.role_model({"cursor": "oops"}, "cursor", "planner"), "")
+        # A non-mapping models value inside a valid section degrades too.
+        self.assertEqual(
+            mod.role_model({"opencode": {"models": "oops"}}, "opencode", "planner"), ""
+        )
+        # A model entry that is not a mapping (e.g. a bare string) degrades
+        # to the empty model instead of crashing on .get.
+        self.assertEqual(
+            mod.role_model({"cursor": {"models": {"planner": "slug"}}}, "cursor", "planner"),
+            "",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

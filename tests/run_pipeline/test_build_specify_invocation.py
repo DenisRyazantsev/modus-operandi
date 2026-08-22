@@ -102,6 +102,21 @@ class BuildSpecifyInvocationTest(unittest.TestCase):
         self.assertIn("adr_verdict=", cmd)  # human_gates default True
         self.assertEqual(env["MO_ATTACH_FLAG"], "")  # use_serve default False
 
+    def test_non_mapping_workflow_section_degrades_to_defaults(self) -> None:
+        # Regression (bug fix): a hand-edited config.yml with a scalar
+        # `workflow:` section (e.g. `workflow: oops`) must degrade to the
+        # documented defaults like load_config's top level — the wrapper
+        # reads the raw YAML without validate_config, and a traceback
+        # (AttributeError on .get) would break the installed standalone
+        # script.
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            cmd, env, state_dir, logs_dir = self._invoke(mod, tmp, {"workflow": "oops"})
+        self.assertEqual(state_dir, ".workflow")
+        self.assertIn("state_dir=.workflow", cmd)
+        self.assertIn("adr_dir=architecture", cmd)
+        self.assertEqual(env["MO_STATE_DIR"], ".workflow")
+
     def test_task_pipeline_passes_motivation_verdict(self) -> None:
         # The task-pipeline gate is the motivation gate (the proposal gate
         # was removed, ADR-0011): with human_gates true the verdict input is

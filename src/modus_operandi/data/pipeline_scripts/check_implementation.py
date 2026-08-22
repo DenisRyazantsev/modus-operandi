@@ -56,14 +56,31 @@ def has_changes(adr_dir: str) -> tuple[bool, str]:
         return False, f"git ls-files failed: {(untracked.stderr or untracked.stdout).strip()}"
     # The pipeline's own saved ADR (written by save-adr before implement) is
     # untracked but is not executor work. git ls-files prints repo-relative
-    # paths without a "./" prefix, so the adr_dir is normalized before the
-    # prefix: with adr_dir "." or "./architecture" a raw "./ADR-" prefix
-    # would never match and the exclusion would silently stop working,
-    # letting an empty implementation pass the guard.
+    # paths without a "./" prefix, so the adr_dir is resolved against the
+    # repo root before the prefix: with adr_dir "." or "./architecture" a raw
+    # "./ADR-" prefix would never match, and with an ABSOLUTE adr_dir (the
+    # config validation deliberately allows "/" in adr_dir) a raw absolute
+    # prefix would never match any untracked line either — the exclusion
+    # would silently stop working, letting an empty implementation pass the
+    # guard.
+    root_result = run_git(["rev-parse", "--show-toplevel"])
+    root = root_result.stdout.strip() if root_result.returncode == 0 else ""
     normalized = os.path.normpath(adr_dir)
     # The repo root (""/"."): the saved ADRs sit directly under the root,
     # so the exclusion matches their bare repo-relative names ("ADR-...").
-    adr_prefix = "ADR-" if normalized in ("", ".") else normalized.rstrip("/") + "/ADR-"
+    if normalized in ("", "."):
+        adr_prefix = "ADR-"
+    elif root and os.path.isabs(normalized):
+        # An absolute adr_dir: git ls-files still prints repo-relative
+        # paths, so the prefix must be the adr_dir relative to the root.
+        # When the absolute adr_dir IS the root, relpath yields "." — the
+        # same as the relative ""/"." case, so it maps to the bare "ADR-"
+        # prefix too (a "./ADR-" prefix would never match the "./"-less
+        # ls-files output and the exclusion would silently stop working).
+        rel = os.path.relpath(normalized, root)
+        adr_prefix = "ADR-" if rel in ("", ".") else rel + "/ADR-"
+    else:
+        adr_prefix = normalized.rstrip("/") + "/ADR-"
     new_files = [line for line in untracked.stdout.splitlines() if not line.startswith(adr_prefix)]
     if new_files:
         summary.append(f"{len(new_files)} new file(s)")

@@ -51,11 +51,19 @@ class AgentLogTailer:
             # (sessions-<task>-<role>-fork-<kind>.jsonl, see run-agent.sh,
             # ADR-0013): the -fork-<kind> suffix is stripped for the role
             # and kept as the fork id (the kind), so the live status lines
-            # carry separate accumulators labeled [planner#<kind>].
-            fork_m = re.search(r"-fork-([A-Za-z0-9_-]+)$", path.stem)
-            fork_id = fork_m.group(1) if fork_m else ""
-            stem = re.sub(r"-fork-[A-Za-z0-9_-]+$", "", path.stem)
-            role = stem.rsplit("-", 1)[-1]
+            # carry separate accumulators labeled [planner#<kind>]. The
+            # marker is anchored to the role (not a bare "-fork-"): a task
+            # id that itself contains "-fork-" (branch-derived slugs like
+            # feature-fork-x) must not misattribute the log — the role is
+            # the last segment of the stem, and the real kind only ever
+            # follows "-<role>-fork-".
+            fork_m = re.search(r"-(planner|executor)-fork-([A-Za-z0-9_-]+)$", path.stem)
+            if fork_m:
+                role = fork_m.group(1)
+                fork_id = fork_m.group(2)
+            else:
+                role = path.stem.rsplit("-", 1)[-1]
+                fork_id = ""
             for line in lines:
                 event = None
                 with contextlib.suppress(Exception):

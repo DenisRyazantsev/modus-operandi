@@ -148,6 +148,48 @@ class HasChangesTest(RealGitCase):
         with cwd(self.repo):
             self.assertEqual(check_implementation.has_changes("."), (False, "no changes"))
 
+    def test_absolute_adr_dir_excludes_the_saved_adr(self) -> None:
+        # Regression (bug fix): the config validation allows "/" in adr_dir,
+        # so an ABSOLUTE in-repo adr_dir must still exclude the saved ADR —
+        # git ls-files prints repo-relative paths, and a raw absolute prefix
+        # would never match any untracked line, silently turning the
+        # exclusion into a no-op (an empty implementation would pass).
+        self._commit("a.txt")
+        adr = self.repo / "architecture" / "ADR-0001-x.md"
+        adr.parent.mkdir(parents=True, exist_ok=True)
+        adr.write_text("x\n", encoding="utf-8")
+        with cwd(self.repo):
+            self.assertEqual(
+                check_implementation.has_changes(str(self.repo / "architecture")),
+                (False, "no changes"),
+            )
+
+    def test_absolute_adr_dir_equal_to_repo_root_excludes_the_saved_adr(self) -> None:
+        # Regression (bug fix): when the absolute adr_dir IS the repo root,
+        # relpath yields "." — the prefix must still be the bare "ADR-"
+        # (a "./ADR-" prefix never matches the "./"-less ls-files output,
+        # so the exclusion would be a silent no-op again).
+        self._commit("a.txt")
+        adr = self.repo / "ADR-0001-x.md"
+        adr.write_text("x\n", encoding="utf-8")
+        with cwd(self.repo):
+            self.assertEqual(
+                check_implementation.has_changes(str(self.repo)), (False, "no changes")
+            )
+
+    def test_absolute_adr_dir_still_counts_real_untracked_work(self) -> None:
+        # The absolute-adr_dir exclusion must not over-exclude: a new file
+        # outside the adr dir still counts as executor work.
+        self._commit("a.txt")
+        adr = self.repo / "architecture" / "ADR-0001-x.md"
+        adr.parent.mkdir(parents=True, exist_ok=True)
+        adr.write_text("x\n", encoding="utf-8")
+        (self.repo / "new.py").write_text("x\n", encoding="utf-8")
+        with cwd(self.repo):
+            self.assertTrue(
+                check_implementation.has_changes(str(self.repo / "architecture"))[0]
+            )
+
     def test_unborn_head_repo_with_untracked_work_passes(self) -> None:
         # A fresh repo (git init, zero commits) has no HEAD: `git diff HEAD`
         # would exit 128 and fail the guard even though the executor created

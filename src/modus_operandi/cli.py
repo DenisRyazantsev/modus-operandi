@@ -282,9 +282,13 @@ def main(argv: list[str] | None = None) -> int:
             # The edit flow never runs the backend CLI, so the
             # tool-presence prerequisite check is skipped: a user who
             # uninstalled the active backend must still be able to edit the
-            # config (e.g. to switch backends).
-            if bootstrap.ensure_installed(_LAYOUT, check_prereqs=False) != 0:
-                return 1
+            # config (e.g. to switch backends). The bootstrap render is
+            # best-effort on this path: a stale install marker with an
+            # INVALID config.yml must not gate the editor either — fixing a
+            # broken config is exactly what `edit` is for, and _run_edit
+            # re-validates when the editor closes (rolling back an invalid
+            # edit), so a failed bootstrap here cannot apply anything.
+            bootstrap.ensure_installed(_LAYOUT, check_prereqs=False)
             return _run_edit(CONFIG, _LAYOUT)
         except UninstallRequested as exc:
             return uninstall.do_uninstall(_LAYOUT, exc.yes)

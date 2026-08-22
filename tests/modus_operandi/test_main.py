@@ -211,6 +211,50 @@ class MainTest(unittest.TestCase):
         self.assertIn("config unchanged", out.getvalue())
         self.assertTrue(mod._LAYOUT["install_version"].exists())
 
+    def test_edit_opens_despite_stale_marker_with_broken_config(self) -> None:
+        # Regression (bug fix): a stale/missing install marker with an
+        # INVALID config.yml must not gate the editor — `edit` exists to fix
+        # a broken config. The bootstrap render fails validation, but the
+        # editor still opens; a fixed config is applied (and the marker
+        # recorded) when the editor closes.
+        mod = self.mod
+        self._write_editor(
+            "#!/bin/sh\n"
+            "cat > \"$1\" <<'CFG'\n"
+            "backend: opencode\n"
+            "opencode:\n"
+            "  models:\n"
+            "    planner:\n"
+            "      provider: opencode-go\n"
+            "      model: deepseek-v4-pro\n"
+            "      reasoning: max\n"
+            "    executor:\n"
+            "      provider: opencode-go\n"
+            "      model: deepseek-v4-flash\n"
+            "      reasoning: max\n"
+            "workflow: {}\n"
+            "CFG\n"
+        )
+        config = Path(mod.CONFIG)
+        config.parent.mkdir(parents=True, exist_ok=True)
+        # Broken YAML (unparseable) and no install marker at all.
+        config.write_text("backend: [unclosed\n", encoding="utf-8")
+        with (
+            env(
+                {
+                    "XDG_CONFIG_HOME": self.xdg,
+                    "PATH": self._path("opencode", "python3"),
+                    "EDITOR": "editor",
+                }
+            ),
+            stdout(io.StringIO()) as out,
+        ):
+            rc = mod.main(["edit"])
+        self.assertEqual(rc, 0)
+        self.assertIn("config applied", out.getvalue())
+        self.assertIn("backend: opencode", config.read_text(encoding="utf-8"))
+        self.assertTrue(mod._LAYOUT["install_version"].exists())
+
     def test_uninstall_skips_bootstrap_and_passes_yes(self) -> None:
         # Real uninstall: the rendered files are removed from the temp config
         # base; the bootstrap is skipped (no opencode needed).

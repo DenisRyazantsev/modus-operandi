@@ -65,9 +65,18 @@ if [ "$PROMPT_NS" = "review" ]; then
   fi
   # Snapshot the repository after the check: the next iteration's re-review
   # diffs the fixed code against it (untracked files are excluded - the
-  # rereview prompts also ask for git status to cover them).
-  snap=$(git stash create 2>/dev/null || true)
-  [ -n "$snap" ] || snap=HEAD
+  # rereview prompts also ask for git status to cover them). An unborn HEAD
+  # (a fresh repo, which determine-scope.sh explicitly supports) makes
+  # `git stash create` fail and HEAD itself unresolvable, so the snapshot
+  # stays empty there: the existing `[ -s "$snapfile" ]` check then treats
+  # it as "no snapshot yet" and the next iteration runs the full review,
+  # which is correct when there is no previous state to diff against.
+  if git rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
+    snap=$(git stash create 2>/dev/null || true)
+    [ -n "$snap" ] || snap=HEAD
+  else
+    snap=""
+  fi
   printf '%s' "$snap" > "$snapfile"
 else
   "$SCRIPT_DIR/run-agent.sh" planner --review-fork "$ITEM" --prompt-file "$PROMPTS_DIR/$PROMPT"

@@ -3,8 +3,9 @@
 One responsibility: own the feedback.md file and the editor for the
 feedback gates — create the file (never overwriting), resolve the editor,
 open it, and on editor close answer the gate with `continue`. The platform
-resolution itself lives in editor.py. The module is shared with the
-modus-operandi launcher (same file, both install targets), but `modus-operandi edit`
+resolution itself lives in editor.py, which is the file shared with the
+modus-operandi launcher (same file, both install targets);
+feedback_editor.py ships only with the pipeline scripts. `modus-operandi edit`
 deliberately uses the terminal chain (`resolve_editor`) — the platform
 resolution (`resolve_feedback_editor`) is feedback-gate-only.
 """
@@ -41,7 +42,11 @@ def create_feedback_file(path: Path, source_doc: Path | None = None) -> None:
         with contextlib.suppress(OSError, UnicodeDecodeError):
             questions = extract_numbered_questions(source_doc.read_text(encoding="utf-8"))
     if questions:
-        path.write_text("\n".join(questions) + "\n", encoding="utf-8")
+        # A failed seeding write (disk full, permissions) must not abort the
+        # run with a traceback while specify is blocked at the gate: an
+        # unseeded feedback.md is the documented "no questions" state.
+        with contextlib.suppress(OSError):
+            path.write_text("\n".join(questions) + "\n", encoding="utf-8")
 
 
 def open_feedback_editor(

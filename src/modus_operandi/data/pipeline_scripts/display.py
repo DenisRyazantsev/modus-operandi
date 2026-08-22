@@ -68,12 +68,20 @@ def step_output_rows(result: dict[str, Any], layout: TableLayout) -> list[str]:
     rows: list[str] = []
     out = result.get("output")
     out = out if isinstance(out, dict) else {}
-    for line in (out.get("stdout") or "").splitlines():
+    # The same hardening as the `output` container: the engine writes
+    # strings, but a torn or hand-edited state.json can carry anything —
+    # a non-str field must degrade to no lines, not raise inside the
+    # monitor thread and silently kill the live status.
+    stdout = out.get("stdout")
+    stdout = stdout if isinstance(stdout, str) else ""
+    stderr = out.get("stderr")
+    stderr = stderr if isinstance(stderr, str) else ""
+    for line in stdout.splitlines():
         line = line.rstrip()
         if not line or line.startswith(SESSION_PREFIX):
             continue
         rows.append(layout.row("harness", " ", layout.empty_step(), line))
-    for line in (out.get("stderr") or "").splitlines():
+    for line in stderr.splitlines():
         line = line.rstrip()
         if not line:
             continue

@@ -54,7 +54,12 @@ def _load_inputs(run_id: str) -> dict[str, Any]:
         # print a clean error instead of a traceback inside the workflow.
         print("error: cannot read run inputs: " + str(exc), file=sys.stderr)
         sys.exit(1)
-    inputs = data.get("inputs")
+    # The root may parse as valid JSON but not be a mapping (a corrupted or
+    # hand-edited inputs.json): the get() below would then raise
+    # AttributeError and print a raw traceback as the step's stderr instead
+    # of the clean error every other failure path produces. The `inputs`
+    # value itself is guarded below; the root needs the same guard.
+    inputs = data.get("inputs") if isinstance(data, dict) else {}
     return inputs if isinstance(inputs, dict) else {}
 
 
