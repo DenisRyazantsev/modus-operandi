@@ -4,89 +4,111 @@ status: accepted
 date: 2026-08-22
 ---
 
-# ADR-0016: Единая табличная форма лог-вывода с колонками роли, шага и токенов
+# ADR-0016: One aligned table for the log output with role, step and token columns
 
 ## Context
 
-Потоковый лог обёртки шумен и рваный: маркеры завершения шагов дублируют закреплённые живые
-строки, захваченный stdout шагов (`SESSION:`, `saved adr:`, `implementation check:`) печатается
-отступами-хвостами, в одном логе смешаны два формата (обёртки и движка), и каждый элемент строки
-начинается на случайной позиции. Требование человека: каждая строка лога исходит ровно от одного
-актора — planner, executor или harness, а всё, что сегодня печатается «от движка», конвертируется
-в `[harness]`-строки; строки выравниваются в таблицу с невидимыми колонками, где ширины
-статического контента определяются до старта, а числовые колонки токенов подстраиваются в
-процессе под самое большое число за историю запуска. Исследование подтверждает, что это и есть
-устоявшаяся модель: write-filter паттерн (ширина колонки = максимум контента, числа вправо),
-отказ от табов и от обрезки по ширине терминала в non-TTY-выводе, измерение ширины по клеткам
-терминала, а не по кодпоинтам.
+The wrapper's streaming log is noisy and ragged: step-completion markers
+duplicate the pinned live rows, captured step stdout (`SESSION:`, `saved
+adr:`, `implementation check:`) is printed with indentation tails, two
+formats (the wrapper's and the engine's) are mixed in one log, and every
+line element starts at a random position. Human requirements: every log
+line originates from exactly one actor — planner, executor or harness —
+and everything currently printed "by the engine" is converted into
+`[harness]` rows; lines are aligned into a table with invisible columns,
+where the widths of the static content are determined before the run
+starts, and the numeric token columns adapt during the run to the largest
+number seen in the run's history. Research confirms this is the
+established model: the write-filter pattern (column width = content
+maximum, numbers right-aligned), no tabs and no truncation to terminal
+width in non-TTY output, measuring width in terminal cells rather than
+codepoints.
 
 ## Decision
 
-1. **Одна табличная строка для всего потокового лога**: `[hh:mm:ss] [<role>] <spin> [<step> N/M>
-   <токены>` с колонками: таймстамп, роль, спиннер, шаг, секция токенов (подколонки cache,
-   reasoning, input, output, price).
-2. **Единственная подпись на строку.** Каждая строка несёт одну из подписей `[planner]`,
-   `[executor]`, `[harness]` (плюс `[planner#<kind>]` у параллельных проверок ревью). Маркеры
-   завершения шагов исчезают вместе со статусами: completed подразумевается, сбои видны по
-   строкам stderr шага и финальной строке завершения прогона. Захваченный stdout/stderr шагов и
-   диагностика движка становятся `[harness]`-строками той же таблицы; служебные строки с
-   восстанавливаемым id (`SESSION:`) из вывода убираются совсем.
-3. **Ширины колонок.** Статические колонки (роль — по самому длинному возможному лейблу с учётом
-   форков; шаг — по самому длинному имени шага с запасом под максимальный вид `N/M`) измеряются
-   один раз до старта. Динамические подколонки токенов выравниваются вправо и растут до самого
-   большого значения, виденного за запуск; уже напечатанные строки истории никогда не
-   перерисовываются. Рантайм-удлинение шага (суффиксы итераций циклов, индексы fan-out) сверх
-   статической ширины расширяет колонку на весь остаток запуска.
-4. **Тот же формат на non-TTY** (без спиннера), без обрезки строк по ширине терминала — в
-   перенаправленном логе данные не теряются.
-5. Строки завершения прогона (`run failed`, `resume with:`) получают подпись `[harness]`; блок
-   `=== run statistics ===` и таблица латенси сохраняют свою форму. Вне задачи: каденс спиннера,
-   heartbeat-политика, буферизация при открытом гейте, само меню гейтов.
+1. **One table row for the whole streaming log**: `[hh:mm:ss] [<role>]
+   <spin> [<step> N/M] <tokens>` with the columns: timestamp, role,
+   spinner, step, token section (the cache, reasoning, input, output,
+   price sub-columns).
+2. **Exactly one signature per row.** Each row carries one of the
+   `[planner]`, `[executor]`, `[harness]` signatures (plus
+   `[planner#<kind>]` for the parallel review checks). Step-completion
+   markers disappear together with the statuses: completed is implied,
+   failures are visible through the step's stderr rows and the final
+   run-completion row. The captured stdout/stderr of steps and engine
+   diagnostics become `[harness]` rows of the same table; service lines
+   with a recoverable id (`SESSION:`) are dropped from the output
+   entirely.
+3. **Column widths.** The static columns (role — sized to the longest
+   possible label including the forks; step — sized to the longest step
+   name with an allowance for the widest `N/M` form) are measured once
+   before the run starts. The dynamic token sub-columns right-align and
+   grow to the largest value seen during the run; already-printed history
+   rows are never re-rendered. A runtime step-name lengthening (loop
+   iteration suffixes, fan-out indices) beyond the static width widens
+   the column for the rest of the run.
+4. **The same format on a non-TTY** (without the spinner), with no line
+   truncation to terminal width — no data is lost in a redirected log.
+5. The run-completion rows (`run failed`, `resume with:`) get the
+   `[harness]` signature; the `=== run statistics ===` block and the
+   latency table keep their form. Out of scope: spinner cadence,
+   heartbeat policy, gate-open buffering, the gate menus themselves.
 
 ## Alternatives
 
-- **Библиотеки таблиц (tabulate, rich.Table/Live).** Отвергнуто: лишняя зависимость (от rich
-  проект уже отказался в ADR-0011/0012), tabulate требует всю таблицу в памяти и не умеет
-  стриминг, rich.Live конфликтует с собственной механикой блока и буферизации гейта.
-- **Буферизация всей истории и перепечатка таблицы при росте ширины** (семантика Flush
-  tabwriter/tabulate). Отвергнуто: живой статус требует немедленных строк, история терминала
-  неизменяема, перепечатка на каждый тик — тот же шум, от которого уходим.
-- **Таб-разделители и padding табами.** Отвергнуто: ширина таба зависит от терминала, в файлах
-  выравнивание расплывается.
-- **Произвольные фиксированные минимумы колонок.** Отвергнуто по опыту docker stats (завышенный
-  min-width породил жалобы на лишнюю ширину и переносы).
-- **Выравнивание по десятичной точке / по центру.** Отвергнуто: токены — целые с
-  пробелами-тысячами, цена — фиксированная `$X.XX`; достаточно правого выравнивания.
-- **Обрезка строк до ширины терминала в non-TTY.** Отвергнуто: молчаливая потеря данных
-  (документированная ловушка rich в non-TTY).
+- **Table libraries (tabulate, rich.Table/Live).** Rejected: an extra
+  dependency (rich was already dropped in ADR-0011/0012), tabulate needs
+  the whole table in memory and cannot stream, rich.Live conflicts with
+  the project's own block and gate-buffering mechanics.
+- **Buffering the whole history and reprinting the table when the width
+  grows** (Flush tabwriter/tabulate semantics). Rejected: the live status
+  needs immediate rows, terminal history is immutable, and reprinting on
+  every tick is the same noise we are moving away from.
+- **Tab separators and tab padding.** Rejected: tab width depends on the
+  terminal; alignment drifts in files.
+- **Arbitrary fixed column minimums.** Rejected based on the docker stats
+  experience (an over-generous min-width drew complaints about extra
+  width and wrapping).
+- **Alignment at the decimal point / centered.** Rejected: tokens are
+  integers with space thousands separators, price is a fixed `$X.XX`;
+  right alignment is enough.
+- **Truncating rows to terminal width in non-TTY.** Rejected: silent data
+  loss (a documented rich trap in non-TTY).
 
 ## Consequences
 
-- Положительное: сканируемая таблица, одна строка на шаг, без дублирующих маркеров; видимость
-  сбоев сохранена через stderr и финальную строку.
-- Положительное: один формат для TTY и перенаправленного лога, одна подпись актора на строку —
-  требование «строго наш формат» (ADR-0013) доведено до конца.
-- Положительное: без новых зависимостей; существующие механики перерисовки блока и буферизации
-  гейта не меняются.
-- Отрицательное: рост числа сдвигает живую строку при перерисовке (принято); блок может
-  расширяться вплоть до ширины терминала.
-- Отрицательное: не-ASCII контент в захваченном выводе требует измерения ширины по клеткам,
-  иначе колонки «едут».
-- Отрицательное: статус завершения больше не виден построчно — сбой опознаётся по строкам
-  ошибок шага и итоговой строке, а не по метке `(failed)` у шага.
-- Частично развивает ADR-0011/0012 (формат живых строк), ADR-0013 (строгий формат лога),
-  ADR-0002 (видимость сбоев).
+- Positive: a scannable table, one row per step, no duplicate markers;
+  failure visibility is preserved through stderr rows and the final row.
+- Positive: one format for TTY and redirected logs, one actor signature
+  per row — the "our format only" requirement (ADR-0013) is carried
+  through to the end.
+- Positive: no new dependencies; the existing block-redraw and gate
+  buffering mechanics do not change.
+- Negative: growing numbers shift the live row on redraw (accepted); the
+  block can grow up to the terminal width.
+- Negative: non-ASCII content in captured output requires measuring width
+  in cells, otherwise the columns drift.
+- Negative: the completion status is no longer visible per line — a
+  failure is recognized by the step's error rows and the final row, not
+  by a `(failed)` label on the step.
+- Partly builds on ADR-0011/0012 (live-line format), ADR-0013 (strict log
+  format), ADR-0002 (failure visibility).
 
 ## Acceptance Criteria
 
-- Каждая строка потокового лога имеет вид `[hh:mm:ss] [<role>] …` с ролью из planner/executor/
-  harness (плюс форки), а колонки роли и шага выровнены по ширине самого длинного лейбла,
-  определённой до старта; числа токенов выровнены вправо и подстраиваются под максимум за запуск.
-- В логе нет маркеров завершения шагов и статусов; строки `SESSION:` отсутствуют; захваченный
-  вывод шагов и диагностика движка видны как `[harness]`-строки.
-- Рантайм-удлинение имени шага расширяет колонку до конца запуска; напечатанные строки не
-  перерисовываются.
-- Non-TTY-вывод использует то же выравнивание без спиннера и без обрезки строк.
-- Финальные строки завершения/возобновления несут подпись `[harness]`; блок статистики и таблица
-  латенси не изменились.
-- Каденс спиннера, heartbeat, буферизация гейта и отрисовка меню гейтов не изменились.
+- Every streaming-log line has the form `[hh:mm:ss] [<role>] …` with a
+  role from planner/executor/harness (plus the forks), and the role and
+  step columns are aligned to the width of the longest label determined
+  before the run starts; token numbers are right-aligned and adapt to the
+  maximum seen during the run.
+- The log contains no step-completion markers or statuses; `SESSION:`
+  rows are absent; captured step output and engine diagnostics appear as
+  `[harness]` rows.
+- A runtime step-name lengthening widens the column for the rest of the
+  run; printed rows are never re-rendered.
+- Non-TTY output uses the same alignment without the spinner and without
+  line truncation.
+- The final completion/resume rows carry the `[harness]` signature; the
+  statistics block and the latency table are unchanged.
+- Spinner cadence, heartbeat, gate buffering and gate-menu rendering are
+  unchanged.
