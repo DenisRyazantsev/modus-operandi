@@ -117,7 +117,12 @@ def load_run_pipeline() -> types.ModuleType:
     return module
 
 
-def point_config_at(mod: types.ModuleType, tmp: str, **workflow_overrides: object) -> Path:
+def point_config_at(
+    mod: types.ModuleType,
+    tmp: str,
+    sound: dict[str, object] | None = None,
+    **workflow_overrides: object,
+) -> Path:
     """Write a config.yml into tmp and point the module's CONFIG_PATH at it.
 
     Returns the config path. main() reads the installed config through
@@ -127,6 +132,8 @@ def point_config_at(mod: types.ModuleType, tmp: str, **workflow_overrides: objec
 
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
     cfg["workflow"].update(workflow_overrides)
+    if sound is not None:
+        cfg["sound"] = sound
     path = Path(tmp) / "config.yml"
     path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
     cast(Any, mod).CONFIG_PATH = path
