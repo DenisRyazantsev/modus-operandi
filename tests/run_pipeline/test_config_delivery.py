@@ -18,7 +18,7 @@ class ConfigDeliveryTest(unittest.TestCase):
     -i inputs, use_serve as the MO_ATTACH_FLAG env, human_gates as the
     adr_verdict input presence."""
 
-    def _popen_args(self, mod: Any, tmp: str, **workflow_overrides: object) -> Any:
+    def _popen_args(self, mod: Any, tmp: str, **workflow_overrides: Any) -> Any:
         point_config_at(mod, tmp, **workflow_overrides)
         captured: dict[str, Any] = {}
         with (

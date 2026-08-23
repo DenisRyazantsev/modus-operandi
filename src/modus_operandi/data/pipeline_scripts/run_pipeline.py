@@ -33,7 +33,9 @@ followed by a per-stage latency table (ADR-0009) built from the run's
 log.jsonl (stage durations, agent-call vs shell-overhead breakdown, and the
 parallel-checks detail for the review fan-out). It also plays a single
 victory.wav signal on gate-open (except the feedback gate), on success and
-on failure; the sound and the statistics never change the exit code.
+on failure; the sound and the statistics never change the exit code. The
+sound is configured through the `sound:` section of the installed config
+(enable/disable the alert, or point it at a custom sound file; ADR-0018).
 
 Every log line is one aligned table row (ADR-0016):
 `[hh:mm:ss] [<role>] <spin> [<step> N/M] <tokens>`. Agent logs are no
@@ -106,6 +108,7 @@ from config_invocation import (
     load_config,
     normalize_config,
     role_model,
+    sound_settings,
 )
 from display import (
     fmt_duration,
@@ -127,7 +130,7 @@ from feedback_gate import extract_numbered_questions, is_feedback_gate, question
 from gate_state import GateState
 from live_lines import LiveLines
 from live_monitor import LiveMonitor
-from notify import SOUND_FILE, play_signal
+from notify import SOUND_FILE, configure_sound, play_signal
 from pty_spawn import (
     forward_terminal_input,
     set_pty_no_echo,
@@ -164,6 +167,7 @@ __all__ = [
     "SOUND_FILE",
     "build_specify_invocation",
     "collect_usage",
+    "configure_sound",
     "consume_output",
     "create_feedback_file",
     "effective_backend",
@@ -194,6 +198,7 @@ __all__ = [
     "role_model",
     "run_id_from_text",
     "set_pty_no_echo",
+    "sound_settings",
     "spawn_specify",
     "stamp",
     "step_output_rows",
@@ -215,6 +220,14 @@ def main() -> int:
     # explicitly so a runtime override of this module's CONFIG_PATH (e.g. by
     # tests) is honored by the config read.
     cfg = load_config(CONFIG_PATH)
+    # The sound section is validated before the run starts (ADR-0018): an
+    # invalid sound setting aborts with an explanation, not a silent degrade.
+    try:
+        sound_enabled, sound_file = sound_settings(cfg, CONFIG_PATH)
+    except ValueError as exc:
+        print(f"error: invalid sound config: {exc}", file=sys.stderr)
+        return 1
+    configure_sound(sound_enabled, sound_file)
     backend = effective_backend(cfg, cli_backend)
     specify_cmd, env, state_dir, logs_dir = build_specify_invocation(
         cfg, source, extra, cli_backend

@@ -2,7 +2,9 @@
 
 One responsibility: decide when and how to play the single victory.wav
 signal (platform player selection, quiet degradation). Playback never
-affects the exit code or the wrapper's output.
+affects the exit code or the wrapper's output. The signal can be disabled
+or replaced with a custom sound file through the `sound:` section of the
+installed config.yml (ADR-0018).
 """
 
 from __future__ import annotations
@@ -16,6 +18,21 @@ from pathlib import Path
 # this module, so it is resolved from the module's own location at runtime.
 SOUND_FILE = Path(__file__).resolve().parent / "victory.wav"
 
+# Runtime state, set by the wrapper from config.yml (configure_sound); the
+# defaults match the old behavior: enabled + the shipped victory.wav.
+_enabled = True
+_sound_file: Path = SOUND_FILE
+
+
+def configure_sound(enabled: bool, sound_file: str | Path = "") -> None:
+    """Set the alert policy from the runtime config (called once by the wrapper).
+
+    An empty sound_file means the shipped victory.wav.
+    """
+    global _enabled, _sound_file
+    _enabled = enabled
+    _sound_file = Path(sound_file) if sound_file else SOUND_FILE
+
 
 def play_signal() -> None:
     """Play the single victory.wav signal, for every event.
@@ -28,24 +45,26 @@ def play_signal() -> None:
     a non-TTY stdout simply skip the call, so the exit code and the
     wrapper's output are never affected.
     """
+    if not _enabled:
+        return
     try:
         if not getattr(sys.stdout, "isatty", lambda: False)():
             return
-        if not SOUND_FILE.is_file():
+        if not _sound_file.is_file():
             return
         if sys.platform == "darwin":
             player = shutil.which("afplay")
         elif sys.platform.startswith("win"):
             import winsound  # Windows only
 
-            winsound.PlaySound(str(SOUND_FILE), winsound.SND_FILENAME | winsound.SND_ASYNC)
+            winsound.PlaySound(str(_sound_file), winsound.SND_FILENAME | winsound.SND_ASYNC)
             return
         else:
             player = shutil.which("paplay") or shutil.which("aplay")
         if not player:
             return
         subprocess.Popen(
-            [player, str(SOUND_FILE)],
+            [player, str(_sound_file)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,

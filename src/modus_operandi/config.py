@@ -38,6 +38,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "human_gates": True,
         "use_serve": False,
     },
+    "sound": {
+        "is_sound_alert_enabled": True,
+        "sound_file": "",
+    },
 }
 
 
@@ -100,6 +104,10 @@ def apply_defaults(raw: Any) -> dict[str, Any]:
     merged_workflow = dict(DEFAULT_CONFIG["workflow"])
     merged_workflow.update(workflow)
     cfg["workflow"] = merged_workflow
+    sound = cfg.get("sound") or {}
+    if not isinstance(sound, dict):
+        raise InstallError("invalid config.yml: sound must be a mapping")
+    cfg["sound"] = {**DEFAULT_CONFIG["sound"], **sound}
     if "opencode" in cfg:
         opencode = cfg["opencode"]
         if not isinstance(opencode, dict):
@@ -133,7 +141,9 @@ def apply_defaults(raw: Any) -> dict[str, Any]:
     return cfg
 
 
-def validate_config(cfg: dict[str, Any]) -> dict[str, Any]:
+def validate_config(
+    cfg: dict[str, Any], config_path: str | Path | None = None
+) -> dict[str, Any]:
     errors: list[str] = []
     backend = cfg.get("backend")
     if backend not in BACKENDS:
@@ -194,6 +204,27 @@ def validate_config(cfg: dict[str, Any]) -> dict[str, Any]:
         errors.append("workflow.human_gates must be a boolean")
     if not isinstance(workflow.get("use_serve"), bool):
         errors.append("workflow.use_serve must be a boolean")
+    sound = cfg.get("sound") or {}
+    # The wrapper mirrors this rule at run start
+    # (config_invocation.sound_settings): keep both in sync.
+    enabled = sound.get("is_sound_alert_enabled")
+    if type(enabled) is not bool:
+        errors.append("sound.is_sound_alert_enabled must be a boolean")
+    sound_file = sound.get("sound_file")
+    if not isinstance(sound_file, str):
+        errors.append("sound.sound_file must be a string")
+    elif enabled is True and sound_file:
+        # A relative path resolves against the config.yml directory; without
+        # config_path (a direct call, no file) the existence check is
+        # deferred to runtime (the wrapper).
+        path = Path(sound_file)
+        if not path.is_absolute() and config_path is not None:
+            path = Path(config_path).resolve().parent / path
+        if not path.is_file():
+            errors.append(
+                f"sound.sound_file {str(path)!r} does not exist - point it at an "
+                "existing file or disable the alert (sound.is_sound_alert_enabled: false)"
+            )
     if errors:
         raise InstallError("invalid config.yml:\n  " + "\n  ".join(errors))
     return cfg

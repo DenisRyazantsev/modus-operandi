@@ -46,7 +46,7 @@ def apply(paths: Paths) -> tuple[bool, dict[str, Any]]:
         directory.mkdir(parents=True, exist_ok=True)
     created = ensure_config(paths)
     raw = config.load_config(paths["config"])
-    cfg = config.validate_config(config.apply_defaults(raw))
+    cfg = config.validate_config(config.apply_defaults(raw), paths["config"])
     render.render_agents(cfg, paths)
     render.render_role_bodies(paths)
     render.render_run_agent(paths)

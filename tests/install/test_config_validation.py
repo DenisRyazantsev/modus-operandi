@@ -2,6 +2,17 @@
 
 from .installer_test_case import InstallerTestCase
 
+VALID_BASE = (
+    "models:\n"
+    "  planner:\n"
+    "    provider: p\n"
+    "    model: m\n"
+    "  executor:\n"
+    "    provider: p\n"
+    "    model: m\n"
+    "workflow: {}\n"
+)
+
 
 class ConfigValidationTest(InstallerTestCase):
     """The installed config.yml is validated: malformed, placeholder and
@@ -196,3 +207,52 @@ class ConfigValidationTest(InstallerTestCase):
             "workflow: {}\n"
         )
         self.assertEqual(self.install(), 0)
+
+    def test_sound_non_boolean_enabled_rejected(self) -> None:
+        self.assertEqual(self.install(), 0)
+        self.write_config(
+            VALID_BASE
+            + "sound:\n"
+            "  is_sound_alert_enabled: \"true\"\n"
+            '  sound_file: ""\n'
+        )
+        rc, err = self.install_with_capture()
+        self.assertEqual(rc, 1)
+        self.assertIn("sound.is_sound_alert_enabled must be a boolean", err)
+
+    def test_sound_file_non_string_rejected(self) -> None:
+        self.assertEqual(self.install(), 0)
+        self.write_config(
+            VALID_BASE + "sound:\n  is_sound_alert_enabled: true\n  sound_file: [a, b]\n"
+        )
+        rc, err = self.install_with_capture()
+        self.assertEqual(rc, 1)
+        self.assertIn("sound.sound_file must be a string", err)
+
+    def test_sound_missing_absolute_file_rejected(self) -> None:
+        self.assertEqual(self.install(), 0)
+        self.write_config(
+            VALID_BASE
+            + "sound:\n  is_sound_alert_enabled: true\n  sound_file: /no/such/dir/x.wav\n"
+        )
+        rc, err = self.install_with_capture()
+        self.assertEqual(rc, 1)
+        self.assertIn("does not exist", err)
+
+    def test_sound_disabled_allows_missing_file(self) -> None:
+        self.assertEqual(self.install(), 0)
+        self.write_config(
+            VALID_BASE
+            + "sound:\n  is_sound_alert_enabled: false\n  sound_file: /no/such/dir/x.wav\n"
+        )
+        rc, err = self.install_with_capture()
+        self.assertEqual(rc, 0, err)
+
+    def test_sound_relative_file_resolved_against_config_dir(self) -> None:
+        self.assertEqual(self.install(), 0)
+        (self.home / ".config/modus-operandi" / "my.wav").write_bytes(b"RIFF")
+        self.write_config(
+            VALID_BASE + "sound:\n  is_sound_alert_enabled: true\n  sound_file: my.wav\n"
+        )
+        rc, err = self.install_with_capture()
+        self.assertEqual(rc, 0, err)

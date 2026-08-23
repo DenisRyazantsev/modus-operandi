@@ -54,6 +54,41 @@ def effective_backend(cfg: dict[str, Any], cli_backend: str | None) -> str:
     return backend if backend in BACKENDS else "opencode"
 
 
+def sound_settings(cfg: dict[str, Any], config_path: Path) -> tuple[bool, str]:
+    """Validate/normalize the sound section: returns (enabled, sound_file).
+
+    Raises ValueError with a user-facing explanation on invalid values (the
+    wrapper refuses to start the run). An empty sound_file means the shipped
+    victory.wav; a relative sound_file is returned resolved against the
+    config file's directory, so validation and playback agree no matter
+    where the command is launched from. This mirrors the installer-side
+    rule in modus_operandi/config.py (validate_config): keep the two in
+    sync.
+    """
+    section = cfg.get("sound")
+    if section is None:
+        return True, ""
+    if not isinstance(section, dict):
+        raise ValueError("sound must be a mapping")
+    enabled = section.get("is_sound_alert_enabled", True)
+    if type(enabled) is not bool:
+        raise ValueError("sound.is_sound_alert_enabled must be a boolean")
+    sound_file = section.get("sound_file", "")
+    if not isinstance(sound_file, str):
+        raise ValueError("sound.sound_file must be a string")
+    if enabled is True and sound_file:
+        path = Path(sound_file)
+        if not path.is_absolute():
+            path = Path(config_path).resolve().parent / path
+        if not path.is_file():
+            raise ValueError(
+                f"sound.sound_file {str(path)!r} does not exist - point it at an "
+                "existing file or disable the alert (sound.is_sound_alert_enabled: false)"
+            )
+        sound_file = str(path)
+    return enabled, sound_file
+
+
 def role_model(cfg: dict[str, Any], backend: str, role: str) -> str:
     """Model slug of a role under the active backend ("" when unset).
 
