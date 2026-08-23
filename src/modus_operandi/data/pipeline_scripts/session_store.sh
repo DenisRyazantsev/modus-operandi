@@ -18,31 +18,23 @@ session_paths() {
   ROLE_SESSIONS_FILE="$STATE_DIR/$BASE.json"
   SESSIONS_FILE="$ROLE_SESSIONS_FILE"
   if [ -n "${REVIEW_FORK:-}" ]; then
-    # ADR-0013: a per-kind review fork session. One file per kind
-    # (srp|bugs|review|comment): the four parallel first-time checks never
-    # race on one file (session_store reads/writes a JSON file whole).
+    # A per-kind review session. One file per kind (srp|bugs|review|comment):
+    # the four parallel first-time checks never race on one file
+    # (session_store reads/writes a JSON file whole).
     SESSIONS_FILE="$STATE_DIR/$BASE-review-$REVIEW_FORK.json"
   fi
   PID_FILE="$STATE_DIR/pids/$(basename "$SESSIONS_FILE" .json).$ROLE.pid"
   LOG_DIR="$STATE_DIR/logs"
   LOG_FILE="$LOG_DIR/$(basename "$SESSIONS_FILE" .json)-$ROLE.jsonl"
   if [ -n "${REVIEW_FORK:-}" ]; then
-    # Stable per-kind log/pid names (ADR-0013): the tailer labels the live
-    # line [planner#<kind>] and the token sums continue between the
-    # review-fix-loop iterations, because the same file is reused.
-    #
-    # The -fork-<kind> suffix is a CROSS-FILE CONTRACT: agent_log_tailer.py
-    # matches it with `-fork-([A-Za-z0-9_-]+)$` and keys the live-line token
-    # accumulators on it (and collect_cursor_usage reads these files for the
-    # end-of-run statistics). The names are therefore recomputed from $BASE
-    # on purpose, NOT derived from SESSIONS_FILE: the session file's
-    # `.json`-scoped shape (sessions-<task>-review-<kind>.json) would lose
-    # the -fork- marker, collapsing the [planner#<kind>] label and merging
-    # the kind's token sums into the parent role accumulator. The first
-    # (role-shaped) PID_FILE/LOG_FILE assignments above are intentionally
-    # kept for the non-fork path; only this branch overrides them.
-    PID_FILE="$STATE_DIR/pids/$BASE-$ROLE-fork-$REVIEW_FORK.pid"
-    LOG_FILE="$LOG_DIR/$BASE-$ROLE-fork-$REVIEW_FORK.jsonl"
+    # Stable per-kind log/pid names: the tailer labels the live line
+    # [reviewer-srp] and the token sums continue between the
+    # review-fix-loop iterations, because the same file is reused. The kind
+    # is already part of the reviewer role name, so no -fork-<kind> suffix
+    # is needed: the log file is named after the role only
+    # (sessions-<task>-reviewer-srp.jsonl).
+    PID_FILE="$STATE_DIR/pids/$BASE-$ROLE.pid"
+    LOG_FILE="$LOG_DIR/$BASE-$ROLE.jsonl"
   fi
 }
 
@@ -52,8 +44,7 @@ read_session() {
 
 read_session_from() {
   # Read the session id for ROLE from a given store file. Used to read the
-  # parent warm session from the per-role store while SESSIONS_FILE points
-  # at a per-kind review file (ADR-0013).
+  # per-role store while SESSIONS_FILE points at a per-kind review file.
   python3 -c 'import json,sys
 p, r = sys.argv[1], sys.argv[2]
 try:
@@ -131,7 +122,7 @@ record_agent_pid() {
   # step shell but not the agent, the next step's manage_pid_file finds the
   # orphan pid and kills it. A dead pid is harmless (kill -0 fails, the file
   # is replaced). This applies to the per-role files and to the per-kind
-  # review fork files alike (ADR-0013): both have stable names, so a later
-  # step CAN target them for the stale-kill.
+  # reviewer files alike: both have stable names, so a later step CAN target
+  # them for the stale-kill.
   echo "$1" > "$PID_FILE"
 }

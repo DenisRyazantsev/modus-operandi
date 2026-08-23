@@ -3,12 +3,15 @@
 One responsibility: own the column widths of the aligned log table — the
 static role and step columns and the dynamic right-aligned token
 sub-columns — and assemble rows from them. The role column is as wide as
-the longest possible role label (the base roles plus the per-kind review
-fork labels); the step column starts at the width of the widest step
-bracket (computed from the workflow ids, with an allowance for the widest
-N/M form) and widens when a runtime step id exceeds it; each token
-sub-column is right-aligned and grows with the largest rendered value
-seen so far in that column. Already-printed lines are never re-rendered.
+the longest possible role label (the base roles, the reviewer role labels
+and the legacy per-kind review fork labels — since ADR-0017 no new fork
+logs are created, so `planner#<kind>` labels come only from stale
+pre-ADR-0017 log files); the step column starts at the width
+of the widest step bracket (computed from the workflow ids, with an
+allowance for the widest N/M form) and widens when a runtime step id
+exceeds it; each token sub-column is right-aligned and grows with the
+largest rendered value seen so far in that column. Already-printed lines
+are never re-rendered.
 """
 
 from __future__ import annotations
@@ -19,9 +22,20 @@ from display import stamp
 BASE_ROLES = ("planner", "executor", "harness")
 
 # The role column width: the widest role label, the base roles plus the
-# per-kind review fork labels (the kinds are known before the run starts).
+# reviewer role labels and the legacy per-kind review fork labels (all
+# known before the run starts). The reviewers are first-class roles
+# (ADR-0017), so their labels must fit the static width too: `[reviewer-comment]`
+# is the widest label of the whole set. The `planner#<kind>` fork labels
+# cannot occur in a fresh run — ADR-0017 replaced the planner review forks
+# with dedicated reviewer sessions — but stale log files from an older
+# install still carry them, so the width accounts for them anyway.
 ROLE_WIDTH = max(
-    len(f"[{label}]") for label in BASE_ROLES + tuple(f"planner#{kind}" for kind in KIND_ORDER)
+    len(f"[{label}]")
+    for label in (
+        BASE_ROLES
+        + tuple(f"reviewer-{kind}" for kind in KIND_ORDER)
+        + tuple(f"planner#{kind}" for kind in KIND_ORDER)
+    )
 )
 
 

@@ -5,9 +5,12 @@
 # calls this script once per pending kind. It dispatches the kind to its
 # report prefix and prompt files, computes the next report number, exports
 # STATE_DIR/LATEST/N(/SNAP) for the @TOKEN@ prompt substitution and runs the
-# check in the per-kind fork of the warm planner session (ADR-0013: the first
-# check of a kind forks the warm session, every later check continues the
-# same fork).
+# check in the per-kind session of the dedicated reviewer role
+# (reviewer-srp|reviewer-bugs|reviewer-review|reviewer-comment). The first
+# check of a kind starts a fresh session that receives ONLY the plan and the
+# ADR (via the step prompt) — it never inherits the planner's context; every
+# later check continues the same session, so the reviewer keeps its past
+# findings across the review-fix-loop iterations.
 #
 # Usage: review-check.sh <state_dir> <task_id> <item> <prompt-ns>
 #
@@ -32,10 +35,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROMPTS_DIR="${MO_PROMPTS_DIR:-$HOME/.config/modus-operandi/prompts}"
 
 case "$ITEM" in
-  srp) PREFIX=srp-review; PROMPT="$PROMPT_NS/srp-review.md"; REREVIEW="$PROMPT_NS/srp-rereview.md";;
-  bugs) PREFIX=bug-review; PROMPT="$PROMPT_NS/bug-review.md"; REREVIEW="$PROMPT_NS/bug-rereview.md";;
-  review) PREFIX=review; PROMPT="$PROMPT_NS/review.md"; REREVIEW="$PROMPT_NS/review-rereview.md";;
-  comment) PREFIX=comment-review; PROMPT="$PROMPT_NS/comment-review.md"; REREVIEW="$PROMPT_NS/comment-rereview.md";;
+  srp) PREFIX=srp-review; PROMPT="$PROMPT_NS/srp-review.md"; REREVIEW="$PROMPT_NS/srp-rereview.md"; ROLE=reviewer-srp;;
+  bugs) PREFIX=bug-review; PROMPT="$PROMPT_NS/bug-review.md"; REREVIEW="$PROMPT_NS/bug-rereview.md"; ROLE=reviewer-bugs;;
+  review) PREFIX=review; PROMPT="$PROMPT_NS/review.md"; REREVIEW="$PROMPT_NS/review-rereview.md"; ROLE=reviewer-review;;
+  comment) PREFIX=comment-review; PROMPT="$PROMPT_NS/comment-review.md"; REREVIEW="$PROMPT_NS/comment-rereview.md"; ROLE=reviewer-comment;;
   *) echo "error: unknown review kind '$ITEM'" >&2; exit 2;;
 esac
 
@@ -59,9 +62,9 @@ if [ "$PROMPT_NS" = "review" ]; then
   snapfile="$STATE_DIR/tasks/current/$ITEM-snapshot.sha"
   if [ -s "$snapfile" ]; then
     export SNAP="$(cat "$snapfile")"
-    "$SCRIPT_DIR/run-agent.sh" planner --review-fork "$ITEM" --prompt-file "$PROMPTS_DIR/$REREVIEW"
+    "$SCRIPT_DIR/run-agent.sh" "$ROLE" --review-fork "$ITEM" --prompt-file "$PROMPTS_DIR/$REREVIEW"
   else
-    "$SCRIPT_DIR/run-agent.sh" planner --review-fork "$ITEM" --prompt-file "$PROMPTS_DIR/$PROMPT"
+    "$SCRIPT_DIR/run-agent.sh" "$ROLE" --review-fork "$ITEM" --prompt-file "$PROMPTS_DIR/$PROMPT"
   fi
   # Snapshot the repository after the check: the next iteration's re-review
   # diffs the fixed code against it (untracked files are excluded - the
@@ -79,5 +82,5 @@ if [ "$PROMPT_NS" = "review" ]; then
   fi
   printf '%s' "$snap" > "$snapfile"
 else
-  "$SCRIPT_DIR/run-agent.sh" planner --review-fork "$ITEM" --prompt-file "$PROMPTS_DIR/$PROMPT"
+  "$SCRIPT_DIR/run-agent.sh" "$ROLE" --review-fork "$ITEM" --prompt-file "$PROMPTS_DIR/$PROMPT"
 fi

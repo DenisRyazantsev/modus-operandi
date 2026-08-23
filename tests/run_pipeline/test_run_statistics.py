@@ -49,6 +49,34 @@ class RunStatisticsTest(unittest.TestCase):
             broken = self._state(tmp, {}, task_id="broken")
             self.assertEqual(mod.read_session_ids(broken), {})
 
+    def test_read_session_ids_merges_reviewer_kind_sessions(self) -> None:
+        # ADR-0017: the reviewers run in their own per-kind sessions
+        # (sessions-<task>-review-<kind>.json, one per review kind) — their
+        # tokens must be counted too, so read_session_ids merges them under
+        # the reviewer role.
+        mod = load_run_pipeline()
+        with tempfile.TemporaryDirectory() as tmp:
+            state = self._state(tmp, {"planner": "p1", "executor": "e1"})
+            (state / "sessions-task-1-review-srp.json").write_text(
+                json.dumps({"reviewer-srp": "r-srp"}), encoding="utf-8"
+            )
+            (state / "sessions-task-1-review-bugs.json").write_text(
+                json.dumps({"reviewer-bugs": "r-bugs"}), encoding="utf-8"
+            )
+            (state / "sessions-task-1-review-comment.json").write_text(
+                json.dumps({"reviewer-comment": ""}), encoding="utf-8"
+            )
+            # An unreadable/absent kind file contributes nothing.
+            self.assertEqual(
+                mod.read_session_ids(state),
+                {
+                    "planner": "p1",
+                    "executor": "e1",
+                    "reviewer-srp": "r-srp",
+                    "reviewer-bugs": "r-bugs",
+                },
+            )
+
     def test_export_session_info_failures_return_none(self) -> None:
         mod = load_run_pipeline()
         # opencode not on PATH at all: the real exec fails with OSError.

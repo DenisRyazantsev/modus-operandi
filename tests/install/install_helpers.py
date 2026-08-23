@@ -30,7 +30,16 @@ def make_run(
         if cmd[1:3] == ["workflow", "run"]:
             return FakeResult(1, "", "Error: Required input 'feature' not provided.\n")
         if cmd[-3:] == ["opencode", "agent", "list"]:
-            return FakeResult(0, "build (primary)\nplanner (subagent)\nexecutor (subagent)\n")
+            return FakeResult(
+                0,
+                "build (primary)\n"
+                "planner (subagent)\n"
+                "executor (subagent)\n"
+                "reviewer-srp (subagent)\n"
+                "reviewer-bugs (subagent)\n"
+                "reviewer-review (subagent)\n"
+                "reviewer-comment (subagent)\n",
+            )
         return FakeResult(0)
 
     return _run

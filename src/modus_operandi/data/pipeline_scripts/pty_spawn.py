@@ -41,7 +41,11 @@ def forward_terminal_input(
     """
     try:
         fd = source.fileno()
-    except (OSError, ValueError):
+    except (OSError, TypeError, ValueError):
+        # A real terminal always yields an int fd; a non-int fileno
+        # (e.g. a mocked stdin under test) raises TypeError instead of
+        # ValueError, so it is treated like a missing fd too — an unhandled
+        # exception here would leak the forwarding thread.
         return
     while not stop.is_set():
         if pause.is_set():
@@ -49,19 +53,19 @@ def forward_terminal_input(
             continue
         try:
             readable, _, _ = select.select([fd], [], [], 0.1)
-        except (OSError, ValueError):
+        except (OSError, TypeError, ValueError):
             return
         if not readable:
             continue
         try:
             chunk = os.read(fd, 4096)
-        except (OSError, ValueError):
+        except (OSError, TypeError, ValueError):
             return
         if not chunk:
             return  # terminal EOF: nothing more to forward
         try:
             os.write(master_fd, chunk)
-        except (OSError, ValueError):
+        except (OSError, TypeError, ValueError):
             return
 
 

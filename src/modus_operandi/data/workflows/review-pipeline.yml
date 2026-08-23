@@ -46,13 +46,6 @@ steps:
       "{{ inputs.state_dir }}"
       "{{ inputs.branch-diff }}"
 
-  - id: warm-planner
-    type: shell
-    timeout: 7200
-    run: >-
-      "${MO_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/warm-planner.sh"
-      "{{ inputs.state_dir }}"
-
   - id: review-fix-loop
     type: do-while
     max_iterations: 5

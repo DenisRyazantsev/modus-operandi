@@ -48,7 +48,7 @@ class LiveLinesTest(unittest.TestCase):
         self.assertEqual(len(block), 1)
         self.assertEqual(
             block[0],
-            "[07:51:37] [planner]         \u280b [study 4/15] cache 40 · reasoning 30 · "
+            "[07:51:37] [planner]          \u280b [study 4/15] cache 40 · reasoning 30 · "
             "input 10 · output 20 · price $0.50",
         )
 
@@ -206,7 +206,7 @@ class LiveLinesTest(unittest.TestCase):
         self.assertIsNotNone(line)
         self.assertEqual(
             line,
-            "[07:51:37] [planner]         [study 4/15] cache 40 · reasoning 30 · "
+            "[07:51:37] [planner]          [study 4/15] cache 40 · reasoning 30 · "
             "input 10 · output 20 · price $0.50",
         )
         # No block and no fixed lines in non-TTY mode: every event already
@@ -356,8 +356,8 @@ class HarnessLineTest(unittest.TestCase):
             block = live.block()
         self.assertEqual(len(block), 1)
         # No token section on the harness line; the role column is padded to
-        # 17 and the spinner column is drawn on a TTY (ADR-0016).
-        self.assertEqual(block[0], "[07:51:37] [harness]         \u280b [study 4/15]")
+        # 18 and the spinner column is drawn on a TTY (ADR-0016).
+        self.assertEqual(block[0], "[07:51:37] [harness]          \u280b [study 4/15]")
 
     def test_harness_line_without_step_omitted(self) -> None:
         # No known step yet (run id not discovered): nothing to draw.
@@ -471,12 +471,12 @@ class HarnessLineTest(unittest.TestCase):
         live = mod.LiveLines(total_steps=15, tty=False)
         with mock.patch.object(sys.modules["table_format"], "stamp", return_value="07:51:37"):
             self.assertTrue(live.set_step("study", 3))
-            self.assertEqual(live.harness_step_line(), "[07:51:37] [harness]         [study 4/15]")
+            self.assertEqual(live.harness_step_line(), "[07:51:37] [harness]          [study 4/15]")
             # Same step: no new line; the next step gets its own.
             self.assertFalse(live.set_step("study", 3))
             self.assertTrue(live.set_step("research", 4))
             self.assertEqual(
-                live.harness_step_line(), "[07:51:37] [harness]         [research 5/15]"
+                live.harness_step_line(), "[07:51:37] [harness]          [research 5/15]"
             )
 
     def test_set_step_reports_only_non_empty_changes(self) -> None:

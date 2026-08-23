@@ -20,6 +20,7 @@ RUN_AGENT = REPO_ROOT / "src/modus_operandi/data/pipeline_scripts" / "run-agent.
 
 PLANNER_BODY = "You are the planner and reviewer in a spec-driven pipeline."
 EXECUTOR_BODY = "You are the executor in a spec-driven pipeline."
+REVIEWER_BODY = "You are the SRP reviewer in a spec-driven pipeline."
 
 CURSOR_AGENT_SCRIPT = """#!/usr/bin/env bash
 printf '%s\\0' "$@" >> "$FAKE_CURSOR_LOG"
@@ -135,6 +136,13 @@ class RunAgentTest(unittest.TestCase):
         self.run_agent = self.scripts / "run-agent.sh"
         (self.scripts / "planner-body.txt").write_text(PLANNER_BODY, encoding="utf-8")
         (self.scripts / "executor-body.txt").write_text(EXECUTOR_BODY, encoding="utf-8")
+        for kind, body in (
+            ("srp", REVIEWER_BODY),
+            ("bugs", "You are the bugs reviewer in a spec-driven pipeline."),
+            ("review", "You are the general reviewer in a spec-driven pipeline."),
+            ("comment", "You are the comment reviewer in a spec-driven pipeline."),
+        ):
+            (self.scripts / f"reviewer-{kind}-body.txt").write_text(body, encoding="utf-8")
         self.cursor_log = self.tmp / "cursor.log"
         self.agent_log = self.tmp / "agent.log"
         self.opencode_log = self.tmp / "opencode.log"
@@ -216,6 +224,16 @@ class RunAgentTest(unittest.TestCase):
         self.assertEqual(executor_run[8], "executor-slug")
         self.assertTrue(executor_run[-1].startswith(EXECUTOR_BODY))
 
+    def test_cursor_reviewer_uses_planner_model(self) -> None:
+        # The reviewers review on the planner's model: an analysis task of
+        # the same difficulty as planning (ADR-0017).
+        _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_SCRIPT)
+        self._run("reviewer-srp", "review now", "--review-fork", "srp", MO_BACKEND="cursor")
+        invs = read_invocations(self.cursor_log)
+        run = invs[1]
+        self.assertEqual(run[8], "planner-slug")  # --model <planner model>
+        self.assertTrue(run[-1].startswith(REVIEWER_BODY))
+
     def test_cursor_falls_back_to_agent_binary(self) -> None:
         _write_executable(self.bin / "agent", AGENT_SCRIPT)
         result = self._run("planner", "write the adr now", MO_BACKEND="cursor")
@@ -279,49 +297,50 @@ class RunAgentTest(unittest.TestCase):
             ],
         )
 
-    # -- review fork (ADR-0013): one per-kind session per review check ------
+    # -- review fork (ADR-0017): one per-kind REVIEWER session per kind ------
 
-    def test_review_fork_first_call_forks_parent_and_saves_kind_id(self) -> None:
+    def test_review_fork_first_call_starts_fresh_session_and_saves_kind_id(self) -> None:
+        # The reviewer runs under its own role (reviewer-srp) in a FRESH
+        # session: it never forks the warm planner session, so its context is
+        # only the plan and the ADR referenced by the step prompt.
         _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
         self._seed_session("planner", "warm-999")
-        result = self._run("planner", "review now", "--review-fork", "srp")
+        result = self._run("reviewer-srp", "review now", "--review-fork", "srp")
         self.assertEqual(result.returncode, 0, result.stderr)
         invs = read_invocations(self.opencode_log)
         self.assertEqual(
             invs[0],
             [
                 "run",
-                "--session",
-                "warm-999",
-                "--fork",
                 "--agent",
-                "planner",
+                "reviewer-srp",
                 "--auto",
                 "--format",
                 "json",
                 "review now",
             ],
         )
-        # The fork's id is saved to the per-kind file, never to the per-role
-        # store: the parent warm session stays authoritative.
+        # The session id is saved to the per-kind file under the reviewer
+        # role; the planner warm session is never touched.
         kind_file = self.state / "sessions-review-srp.json"
         self.assertEqual(
-            json.loads(kind_file.read_text(encoding="utf-8"))["planner"],
-            "sess-fork-1",
+            json.loads(kind_file.read_text(encoding="utf-8"))["reviewer-srp"],
+            "sess-abc",
         )
         self.assertEqual(self._sessions().get("planner"), "warm-999")
-        self.assertIn("SESSION:sess-fork-1", result.stdout)
-        # Stable per-kind log/pid files: the tailer labels the live line
-        # [planner#srp] and the token sums continue between iterations.
-        self.assertTrue((self.state / "logs" / "sessions-planner-fork-srp.jsonl").is_file())
-        self.assertTrue((self.state / "pids" / "sessions-planner-fork-srp.pid").is_file())
+        self.assertIn("SESSION:sess-abc", result.stdout)
+        # Stable per-kind log/pid files named after the reviewer role: the
+        # tailer labels the live line [reviewer-srp] and the token sums
+        # continue between iterations.
+        self.assertTrue((self.state / "logs" / "sessions-reviewer-srp.jsonl").is_file())
+        self.assertTrue((self.state / "pids" / "sessions-reviewer-srp.pid").is_file())
 
     def test_review_fork_second_call_continues_without_fork(self) -> None:
         _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
         self._seed_session("planner", "warm-999")
         kind_file = self.state / "sessions-review-srp.json"
-        kind_file.write_text(json.dumps({"planner": "sess-fork-1"}), encoding="utf-8")
-        result = self._run("planner", "review again", "--review-fork", "srp")
+        kind_file.write_text(json.dumps({"reviewer-srp": "sess-fork-1"}), encoding="utf-8")
+        result = self._run("reviewer-srp", "review again", "--review-fork", "srp")
         self.assertEqual(result.returncode, 0, result.stderr)
         invs = read_invocations(self.opencode_log)
         self.assertEqual(
@@ -331,7 +350,7 @@ class RunAgentTest(unittest.TestCase):
                 "--session",
                 "sess-fork-1",
                 "--agent",
-                "planner",
+                "reviewer-srp",
                 "--auto",
                 "--format",
                 "json",
@@ -341,21 +360,21 @@ class RunAgentTest(unittest.TestCase):
         # The id is not re-saved (it did not change); the parent store is
         # untouched.
         self.assertEqual(
-            json.loads(kind_file.read_text(encoding="utf-8"))["planner"],
+            json.loads(kind_file.read_text(encoding="utf-8"))["reviewer-srp"],
             "sess-fork-1",
         )
         self.assertEqual(self._sessions().get("planner"), "warm-999")
         self.assertIn("SESSION:sess-fork-1", result.stdout)
 
-    def test_review_fork_vanished_session_clears_id_and_reforks_parent(self) -> None:
+    def test_review_fork_vanished_session_clears_id_and_starts_fresh(self) -> None:
         # A continue that fails with "Session not found" (opencode
-        # auto-compact/cleanup) drops the per-kind id and forks the parent
-        # again (ADR-0013).
+        # auto-compact/cleanup) drops the per-kind id and starts a fresh
+        # session (ADR-0017) — the reviewer never re-forks the planner.
         _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
         self._seed_session("planner", "warm-999")
         kind_file = self.state / "sessions-review-srp.json"
-        kind_file.write_text(json.dumps({"planner": "sess-gone"}), encoding="utf-8")
-        result = self._run("planner", "review again", "--review-fork", "srp")
+        kind_file.write_text(json.dumps({"reviewer-srp": "sess-gone"}), encoding="utf-8")
+        result = self._run("reviewer-srp", "review again", "--review-fork", "srp")
         self.assertEqual(result.returncode, 0, result.stderr)
         invs = read_invocations(self.opencode_log)
         self.assertEqual(
@@ -365,7 +384,7 @@ class RunAgentTest(unittest.TestCase):
                 "--session",
                 "sess-gone",
                 "--agent",
-                "planner",
+                "reviewer-srp",
                 "--auto",
                 "--format",
                 "json",
@@ -376,11 +395,8 @@ class RunAgentTest(unittest.TestCase):
             invs[1],
             [
                 "run",
-                "--session",
-                "warm-999",
-                "--fork",
                 "--agent",
-                "planner",
+                "reviewer-srp",
                 "--auto",
                 "--format",
                 "json",
@@ -388,38 +404,41 @@ class RunAgentTest(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            json.loads(kind_file.read_text(encoding="utf-8"))["planner"],
-            "sess-fork-1",
+            json.loads(kind_file.read_text(encoding="utf-8"))["reviewer-srp"],
+            "sess-abc",
         )
-        self.assertIn("SESSION:sess-fork-1", result.stdout)
+        self.assertIn("SESSION:sess-abc", result.stdout)
 
-    def test_review_fork_without_warm_session_errors(self) -> None:
+    def test_review_fork_without_warm_session_is_fine(self) -> None:
+        # The reviewer does NOT need a warm planner session: its first check
+        # starts a fresh session with only the plan and the ADR as context.
         _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
-        result = self._run("planner", "review now", "--review-fork", "srp")
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("no warm session to fork", result.stderr)
+        result = self._run("reviewer-srp", "review now", "--review-fork", "srp")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        kind_file = self.state / "sessions-review-srp.json"
+        self.assertEqual(
+            json.loads(kind_file.read_text(encoding="utf-8"))["reviewer-srp"],
+            "sess-abc",
+        )
+        self.assertIn("SESSION:sess-abc", result.stdout)
 
     def test_review_fork_with_prompt_file_parses_flags_in_any_order(self) -> None:
-        # The parallel fan-out invokes `planner --review-fork <kind>
-        # --prompt-file <path>` (ADR-0013): --prompt-file must be recognized
-        # at any position, not only as the second argument, or the leftover
-        # flag hits usage().
+        # The parallel fan-out invokes `reviewer-srp --review-fork <kind>
+        # --prompt-file <path>`: --prompt-file must be recognized at any
+        # position, not only as the second argument, or the leftover flag
+        # hits usage().
         _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
-        self._seed_session("planner", "warm-999")
         prompt = self.tmp / "review.md"
         prompt.write_text("review now", encoding="utf-8")
-        result = self._run("planner", "--review-fork", "srp", "--prompt-file", str(prompt))
+        result = self._run("reviewer-srp", "--review-fork", "srp", "--prompt-file", str(prompt))
         self.assertEqual(result.returncode, 0, result.stderr)
         invs = read_invocations(self.opencode_log)
         self.assertEqual(
             invs[0],
             [
                 "run",
-                "--session",
-                "warm-999",
-                "--fork",
                 "--agent",
-                "planner",
+                "reviewer-srp",
                 "--auto",
                 "--format",
                 "json",
@@ -428,53 +447,53 @@ class RunAgentTest(unittest.TestCase):
         )
         kind_file = self.state / "sessions-review-srp.json"
         self.assertEqual(
-            json.loads(kind_file.read_text(encoding="utf-8"))["planner"],
-            "sess-fork-1",
+            json.loads(kind_file.read_text(encoding="utf-8"))["reviewer-srp"],
+            "sess-abc",
         )
 
     def test_review_fork_invalid_kind_errors(self) -> None:
         _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
-        result = self._run("planner", "review now", "--review-fork", "srp bad!")
+        result = self._run("reviewer-srp", "review now", "--review-fork", "srp bad!")
         self.assertEqual(result.returncode, 2)
         self.assertIn("invalid --review-fork", result.stderr)
 
     def test_review_fork_files_scoped_by_task_id(self) -> None:
         _write_executable(self.bin / "opencode", OPENCODE_SCRIPT)
-        # The parent warm session is task-scoped too: sessions-task-42.json.
-        (self.state / "sessions-task-42.json").write_text(
-            json.dumps({"planner": "warm-999"}), encoding="utf-8"
+        # The reviewer session is task-scoped too: sessions-task-42-review-bugs.json.
+        result = self._run(
+            "reviewer-bugs", "review now", "--review-fork", "bugs", "--task", "task-42"
         )
-        result = self._run("planner", "review now", "--review-fork", "bugs", "--task", "task-42")
         self.assertEqual(result.returncode, 0, result.stderr)
         kind_file = self.state / "sessions-task-42-review-bugs.json"
         self.assertEqual(
-            json.loads(kind_file.read_text(encoding="utf-8"))["planner"],
-            "sess-fork-1",
+            json.loads(kind_file.read_text(encoding="utf-8"))["reviewer-bugs"],
+            "sess-abc",
         )
-        self.assertTrue(
-            (self.state / "logs" / "sessions-task-42-planner-fork-bugs.jsonl").is_file()
-        )
+        self.assertTrue((self.state / "logs" / "sessions-task-42-reviewer-bugs.jsonl").is_file())
 
     def test_cursor_review_fork_first_call_mints_and_saves_kind_chat(self) -> None:
-        # cursor-agent has no fork primitive (ADR-0013, documented in
-        # run-agent-cursor.sh): the per-kind chat IS the fork. The first
-        # check of a kind mints a fresh chat, saves its id to the per-kind
-        # file (never to the shared store) and prefixes the role body.
+        # cursor-agent has no fork primitive: the per-kind chat IS the fresh
+        # reviewer session. The first check of a kind mints a fresh chat,
+        # saves its id to the per-kind file (never to the shared store) and
+        # prefixes the reviewer role body.
         _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_SCRIPT)
         self._seed_session("planner", "warm-456")
-        result = self._run("planner", "review now", "--review-fork", "srp", MO_BACKEND="cursor")
+        result = self._run(
+            "reviewer-srp", "review now", "--review-fork", "srp", MO_BACKEND="cursor"
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         invs = read_invocations(self.cursor_log)
         self.assertEqual(invs[0], ["create-chat"])
         run = invs[1]
         self.assertEqual(run[9], "--resume")
         self.assertEqual(run[10], "chat-fresh-123")  # the per-kind chat
-        self.assertTrue(run[-1].startswith(PLANNER_BODY))
+        self.assertTrue(run[-1].startswith(REVIEWER_BODY))
+        self.assertEqual(run[-1].endswith("review now"), True)
         # The per-kind chat id lands in the per-kind file; the warm parent
         # chat id stays in the shared store, untouched.
         kind_file = self.state / "sessions-review-srp.json"
         self.assertEqual(
-            json.loads(kind_file.read_text(encoding="utf-8"))["planner"],
+            json.loads(kind_file.read_text(encoding="utf-8"))["reviewer-srp"],
             "chat-fresh-123",
         )
         self.assertEqual(self._sessions().get("planner"), "warm-456")
@@ -484,8 +503,10 @@ class RunAgentTest(unittest.TestCase):
         _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_SCRIPT)
         self._seed_session("planner", "warm-456")
         kind_file = self.state / "sessions-review-srp.json"
-        kind_file.write_text(json.dumps({"planner": "chat-srp-1"}), encoding="utf-8")
-        result = self._run("planner", "review again", "--review-fork", "srp", MO_BACKEND="cursor")
+        kind_file.write_text(json.dumps({"reviewer-srp": "chat-srp-1"}), encoding="utf-8")
+        result = self._run(
+            "reviewer-srp", "review again", "--review-fork", "srp", MO_BACKEND="cursor"
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         invs = read_invocations(self.cursor_log)
         self.assertEqual([i[0] for i in invs], ["-p"])  # no create-chat
@@ -500,16 +521,18 @@ class RunAgentTest(unittest.TestCase):
     def test_cursor_review_fork_recovers_kind_chat_when_create_chat_fails(self) -> None:
         _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_NO_CREATE_SCRIPT)
         self._seed_session("planner", "warm-456")
-        result = self._run("planner", "review now", "--review-fork", "srp", MO_BACKEND="cursor")
+        result = self._run(
+            "reviewer-srp", "review now", "--review-fork", "srp", MO_BACKEND="cursor"
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         invs = read_invocations(self.cursor_log)
         self.assertEqual(invs[0], ["create-chat"])  # attempted, failed
         run = invs[1]
         self.assertNotIn("--resume", run)  # no id: bare run, cursor mints
-        self.assertTrue(run[-1].startswith(PLANNER_BODY))
+        self.assertTrue(run[-1].startswith(REVIEWER_BODY))
         kind_file = self.state / "sessions-review-srp.json"
         self.assertEqual(
-            json.loads(kind_file.read_text(encoding="utf-8"))["planner"],
+            json.loads(kind_file.read_text(encoding="utf-8"))["reviewer-srp"],
             "chat-from-json",
         )
         self.assertEqual(self._sessions().get("planner"), "warm-456")
@@ -523,11 +546,13 @@ class RunAgentTest(unittest.TestCase):
         # last iteration's tokens.
         _write_executable(self.bin / "cursor-agent", CURSOR_AGENT_SCRIPT)
         self._seed_session("planner", "warm-456")
-        first = self._run("planner", "review now", "--review-fork", "srp", MO_BACKEND="cursor")
+        first = self._run("reviewer-srp", "review now", "--review-fork", "srp", MO_BACKEND="cursor")
         self.assertEqual(first.returncode, 0, first.stderr)
-        second = self._run("planner", "review again", "--review-fork", "srp", MO_BACKEND="cursor")
+        second = self._run(
+            "reviewer-srp", "review again", "--review-fork", "srp", MO_BACKEND="cursor"
+        )
         self.assertEqual(second.returncode, 0, second.stderr)
-        log = self.state / "logs" / "sessions-planner-fork-srp.jsonl"
+        log = self.state / "logs" / "sessions-reviewer-srp.jsonl"
         self.assertTrue(log.is_file())
         events = [line for line in log.read_text(encoding="utf-8").splitlines() if line.strip()]
         # One result event per invocation, both preserved.

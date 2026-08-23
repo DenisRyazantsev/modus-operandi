@@ -10,10 +10,9 @@ pip install modus-operandi
 modus-operandi task "<task-description>"
 ```
 
-No configuration needed: the defaults use the free OpenCode Zen models
-(`opencode/big-pickle` for planning and review, `opencode/deepseek-v4-flash-free`
-for implementation), which work out of the box. To switch models or backends,
-run `modus-operandi edit`.
+No configuration needed: the defaults use the free OpenCode Zen model
+`opencode/big-pickle` for planning, review and implementation, which works
+out of the box. To switch models or backends, run `modus-operandi edit`.
 
 ## Install
 

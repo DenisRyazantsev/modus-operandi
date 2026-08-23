@@ -149,6 +149,24 @@ class AgentLogTailerTest(unittest.TestCase):
         self.assertEqual(text, "")
         self.assertEqual(event["type"], "step_finish")
 
+    def test_reviewer_role_logs_label_by_role(self) -> None:
+        # ADR-0017: the reviewers run under their own roles, and their logs
+        # are named after the role (sessions-<task>-reviewer-srp.jsonl): the
+        # role label is the last segment, with no fork id — the live status
+        # lines show [reviewer-srp].
+        tailer = self.mod.AgentLogTailer(self.dir)
+        log = self.dir / "sessions-task-42-reviewer-srp.jsonl"
+        log.write_text(
+            '{"type": "step_finish", "part": {"tokens": {"input": 1}}}\n',
+            encoding="utf-8",
+        )
+        events = tailer.tail()
+        self.assertEqual(len(events), 1)
+        role, fork_id, text, event = events[0]
+        self.assertEqual(role, "reviewer-srp")
+        self.assertEqual(fork_id, "")
+        self.assertEqual(event["type"], "step_finish")
+
     def test_fork_log_files_accept_kinds_with_digits_and_dashes(self) -> None:
         # The per-kind regex is ^[A-Za-z0-9_-]+$: a task-id-scoped kind
         # suffix (e.g. a future loop id) must still parse.

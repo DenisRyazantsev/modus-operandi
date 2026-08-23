@@ -123,12 +123,12 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertIn("id: review-pipeline", review)
         self.assertNotIn("inputs: {}", review)
         self.assertIn("branch-diff:", review)
-        # ADR-0009: a warm-up step, then one parallel retry loop, then the
-        # deterministic final pass-check; the agentic report step is gone.
+        # ADR-0017: the reviewers review in their own fresh sessions, so
+        # there is no planner warm-up step: determine-scope, then one
+        # parallel retry loop, then the deterministic final pass-check.
         for step in (
             "generate-task-id",
             "determine-scope",
-            "warm-planner",
             "review-fix-loop",
             "pass-check",
         ):
@@ -138,10 +138,11 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertNotIn("- id: bug-loop", review)
         self.assertNotIn("- id: review-loop", review)
         self.assertNotIn("- id: comment-review-loop", review)
+        self.assertNotIn("- id: warm-planner", review)
         # CONTRIBUTING.md: the fan-out item calls review-check.sh with the
         # state_dir, the empty task id, the item and the "review" prompt
-        # namespace; the per-kind prompt dispatch and the fork invocation
-        # live in the installed script.
+        # namespace; the per-kind prompt dispatch and the reviewer-session
+        # invocation live in the installed script.
         fan = self.find_step(parsed["steps"], "review-fan")
         self.assertIsNotNone(fan)
         check = fan["step"]
@@ -153,7 +154,12 @@ class WorkflowStructureTest(InstallerTestCase):
         review_check = (self.home / ".config/opencode/scripts/review-check.sh").read_text(
             encoding="utf-8"
         )
-        self.assertIn('run-agent.sh" planner --review-fork', review_check)
+        self.assertIn('run-agent.sh" "$ROLE" --review-fork', review_check)
+        self.assertIn("ROLE=reviewer-srp", review_check)
+        self.assertIn("ROLE=reviewer-bugs", review_check)
+        self.assertIn("ROLE=reviewer-review", review_check)
+        self.assertIn("ROLE=reviewer-comment", review_check)
+        self.assertNotIn("planner --review-fork", review_check)
         # The prompt namespace is parametrized: the yaml call passes "review",
         # the script picks review vs rereview from the per-kind snapshot.
         for prompt in (
@@ -172,18 +178,6 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertIn('merge "{{ inputs.state_dir }}" ""', all_runs)
         self.assertIn('pending "{{ inputs.state_dir }}" ""', all_runs)
         self.assertIn("fix-all.md", all_runs)
-        # The warm-up is skipped on the cursor backend (no fork primitive):
-        # the skip decision and the cursor pre-flight live in warm-planner.sh.
-        warm_run = self.find_step(parsed["steps"], "warm-planner")["run"]
-        self.assertIn("warm-planner.sh", warm_run)
-        self.assertIn('"{{ inputs.state_dir }}"', warm_run)
-        warm_planner = (self.home / ".config/opencode/scripts/warm-planner.sh").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("MO_BACKEND", warm_planner)
-        self.assertIn('"cursor"', warm_planner)
-        self.assertIn("review/warmup.md", warm_planner)
-        self.assertIn("cursor backend: skipping warm-up", warm_planner)
         # determine-scope logic lives in determine-scope.sh.
         determine = (self.home / ".config/opencode/scripts/determine-scope.sh").read_text(
             encoding="utf-8"
@@ -257,7 +251,6 @@ class WorkflowStructureTest(InstallerTestCase):
             for s in (
                 "generate-task-id",
                 "determine-scope",
-                "warm-planner",
                 "review-fix-loop",
                 "pass-check",
             )
@@ -407,8 +400,8 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertEqual(check.get("timeout"), 7200)
         # CONTRIBUTING.md: the item step calls review-check.sh with the state
         # dir, task id, item and the "adr" prompt namespace; the per-kind
-        # dispatch (report prefix, prompt file, fork invocation) lives in the
-        # installed script.
+        # dispatch (report prefix, prompt file, reviewer-role invocation)
+        # lives in the installed script.
         check_run = check["run"]
         self.assertIn("review-check.sh", check_run)
         self.assertIn('"{{ inputs.state_dir }}"', check_run)
@@ -418,7 +411,8 @@ class WorkflowStructureTest(InstallerTestCase):
         review_check = (self.home / ".config/opencode/scripts/review-check.sh").read_text(
             encoding="utf-8"
         )
-        self.assertIn('run-agent.sh" planner --review-fork', review_check)
+        self.assertIn('run-agent.sh" "$ROLE" --review-fork', review_check)
+        self.assertNotIn("planner --review-fork", review_check)
         # The prompt namespace is parametrized: the yaml call passes "adr".
         for prompt in (
             '"$PROMPT_NS/srp-review.md"',
@@ -521,25 +515,38 @@ class WorkflowStructureTest(InstallerTestCase):
     def test_workflow_per_kind_review_prompts_still_ship(self) -> None:
         # ADR-0009 retires the per-kind FIX prompts and the sequential loops,
         # but the four per-kind REVIEW prompts are still the prompt files the
-        # parallel fan-out dispatches on (one per kind).
+        # parallel fan-out dispatches on (one per kind). The verdict markers
+        # live in the reviewer role bodies (the agents' system prompts,
+        # ADR-0017); the step prompts carry the review scope and the report
+        # path.
         self.assertEqual(self.install(), 0)
         adr_prompts = self.home / ".config/modus-operandi/prompts/adr"
+        for name in ("srp-review", "bug-review", "review", "comment-review"):
+            prompt = (adr_prompts / f"{name}.md").read_text(encoding="utf-8")
+            self.assertIn("@STATE_DIR@/tasks/current/plan.md", prompt)
+            self.assertIn("@STATE_DIR@/tasks/current/adr.md", prompt)
+            self.assertIn("@N@", prompt)
+        roles = self.home / ".config/opencode/agent"
+        self.assertIn(
+            "SRP: PASS",
+            (roles / "reviewer-srp.md").read_text(encoding="utf-8"),
+        )
         self.assertIn(
             "SRP: FIX",
-            (adr_prompts / "srp-review.md").read_text(encoding="utf-8"),
+            (roles / "reviewer-srp.md").read_text(encoding="utf-8"),
         )
         self.assertIn(
             "BUGS: FIX",
-            (adr_prompts / "bug-review.md").read_text(encoding="utf-8"),
+            (roles / "reviewer-bugs.md").read_text(encoding="utf-8"),
         )
         self.assertIn(
             "VERDICT: FIX",
-            (adr_prompts / "review.md").read_text(encoding="utf-8"),
+            (roles / "reviewer-review.md").read_text(encoding="utf-8"),
         )
-        comment_prompt = (adr_prompts / "comment-review.md").read_text(encoding="utf-8")
-        self.assertIn("VERDICT: FIX", comment_prompt)
-        self.assertIn("Why a reader would be misled:", comment_prompt)
-        self.assertIn("Verdict: COMMENT | REFACTOR", comment_prompt)
+        comment_role = (roles / "reviewer-comment.md").read_text(encoding="utf-8")
+        self.assertIn("VERDICT: FIX", comment_role)
+        self.assertIn("Why a reader would be misled:", comment_role)
+        self.assertIn("Verdict: COMMENT | REFACTOR", comment_role)
 
     def test_workflow_shell_blocks_are_syntactically_valid(self) -> None:
         # Every inline shell block must parse with /bin/sh (what specify uses).

@@ -18,10 +18,20 @@ class InstallLayoutTest(InstallerTestCase):
         expected = [
             ".config/opencode/agent/planner.md",
             ".config/opencode/agent/executor.md",
+            # ADR-0017: one reviewer agent per review kind, rendered with
+            # the planner's model.
+            ".config/opencode/agent/reviewer-srp.md",
+            ".config/opencode/agent/reviewer-bugs.md",
+            ".config/opencode/agent/reviewer-review.md",
+            ".config/opencode/agent/reviewer-comment.md",
             ".config/opencode/scripts/run-agent.sh",
             ".config/opencode/scripts/name-task.sh",
             ".config/opencode/scripts/planner-body.txt",
             ".config/opencode/scripts/executor-body.txt",
+            ".config/opencode/scripts/reviewer-srp-body.txt",
+            ".config/opencode/scripts/reviewer-bugs-body.txt",
+            ".config/opencode/scripts/reviewer-review-body.txt",
+            ".config/opencode/scripts/reviewer-comment-body.txt",
             # run-agent.sh is split one concern per file: the session store
             # and the cursor backend are sourced, prompt_subst.sh is called.
             ".config/opencode/scripts/session_store.sh",
@@ -115,6 +125,22 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertIn("opencode/big-pickle", executor)
         self.assertIn("reasoningEffort: max", executor)
         self.assertIn("permission", executor)
+
+    def test_rendered_reviewers_use_planner_model(self) -> None:
+        # ADR-0017: the reviewers review on the planner's model, never on
+        # the executor's; each reviewer agent carries its own review rules
+        # as its system prompt (e.g. the SRP reviewer has the SRP rules).
+        self.assertEqual(self.install(), 0)
+        for kind in ("srp", "bugs", "review", "comment"):
+            agent = (self.home / ".config/opencode/agent" / f"reviewer-{kind}.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("opencode/big-pickle", agent)  # planner model
+            self.assertIn("reasoningEffort: max", agent)
+            self.assertIn("permission", agent)
+            self.assertIn("You are the", agent)
+        srp = (self.home / ".config/opencode/agent/reviewer-srp.md").read_text(encoding="utf-8")
+        self.assertIn("SRP: PASS", srp)
 
     def test_rendered_planner_reasoning_from_config(self) -> None:
         self.assertEqual(self.install(), 0)
@@ -262,12 +288,16 @@ class InstallLayoutTest(InstallerTestCase):
         self.assertEqual(self.install(), 0)
         self.assertFalse((self.home / ".config/opencode/agent/planner.md").exists())
         self.assertFalse((self.home / ".config/opencode/agent/executor.md").exists())
+        self.assertFalse((self.home / ".config/opencode/agent/reviewer-srp.md").exists())
         planner_body = self.home / ".config/opencode/scripts/planner-body.txt"
         executor_body = self.home / ".config/opencode/scripts/executor-body.txt"
+        reviewer_body = self.home / ".config/opencode/scripts/reviewer-srp-body.txt"
         self.assertTrue(planner_body.is_file())
         self.assertTrue(executor_body.is_file())
+        self.assertTrue(reviewer_body.is_file())
         self.assertIn("You are the planner", planner_body.read_text(encoding="utf-8"))
         self.assertIn("You are the executor", executor_body.read_text(encoding="utf-8"))
+        self.assertIn("SRP: PASS", reviewer_body.read_text(encoding="utf-8"))
 
     def test_name_task_script_rendered(self) -> None:
         self.assertEqual(self.install(), 0)
