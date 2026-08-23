@@ -60,6 +60,10 @@ then you can use this command
 modus-operandi task "<task-description>"
 ```
 
+The description can also come from a file: `modus-operandi task path/to/description.md`
+(a single argument naming an existing file is read as the description; file
+and inline text input are mutually exclusive).
+
 ### Review
 
 If you have a workflow like this
