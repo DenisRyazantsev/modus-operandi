@@ -29,7 +29,7 @@ the dev installer copy to `~/.config/opencode/scripts/` verbatim.
 
 1. The specify engine folds a `>-` block into a single line. A `#` comment inside a folded
    `run:` block starts a shell comment that swallows the REST of the step, silently turning it
-   into a no-op (this actually happened to `warm-planner` in `review-pipeline.yml`; see
+   into a no-op (this actually happened to a workflow step in `review-pipeline.yml`; see
    `tests/install/test_workflow_structure.py`).
 2. Inline logic cannot be unit-tested and is invisible to `sh -n`; a script in
    `src/modus_operandi/data/pipeline_scripts/` is tested the same way as `run-agent.sh` and friends.
