@@ -45,6 +45,7 @@ _MODULES = (
     # truth for the review order), which itself imports task_utils.py.
     "check_review",
     "task_utils",
+    "validate_inputs",
     "notify",
     "feedback_editor",
     "pty_spawn",
@@ -106,6 +107,12 @@ def load_run_pipeline() -> types.ModuleType:
         # must not be shadowed by the `notify` submodule when tests patch
         # mod.play_signal.
         if not hasattr(module, name):
+            if name not in sys.modules:
+                # Standalone scripts the entry module never imports (e.g.
+                # validate_inputs.py, invoked by the workflow as a script):
+                # import them explicitly so tests can reach them through
+                # the entry module.
+                importlib.import_module(name)
             setattr(module, name, sys.modules[name])
     return module
 

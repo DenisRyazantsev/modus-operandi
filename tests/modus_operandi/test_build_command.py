@@ -3,6 +3,7 @@
 import io
 import tempfile
 import unittest
+from pathlib import Path
 
 from tests.env_sandbox import stderr, stdout
 
@@ -151,6 +152,65 @@ class BuildCommandTest(unittest.TestCase):
         for argv in (["task", "add a dark mode toggle"], ["review", "--branch-diff"]):
             for arg in self.mod.build_command(argv):
                 self.assertNotIn('"', arg)
+
+    def test_task_reads_description_from_file(self) -> None:
+        path = Path(self.tmp.name) / "task.txt"
+        path.write_text("add dark mode\nfrom a file", encoding="utf-8")
+        cmd = self.mod.build_command(["task", str(path)])
+        self.assertEqual(cmd[-2:], ["-i", "task=add dark mode\nfrom a file"])
+
+    def test_task_file_content_is_escaped(self) -> None:
+        path = Path(self.tmp.name) / "special.txt"
+        path.write_text('price $5 "quoted" `tick` and \\slash', encoding="utf-8")
+        cmd = self.mod.build_command(["task", str(path)])
+        self.assertEqual(cmd[-1], r"task=price \$5 \"quoted\" \`tick\` and \\slash")
+
+    def test_task_file_with_extra_text_is_invalid(self) -> None:
+        path = Path(self.tmp.name) / "task.txt"
+        path.write_text("add dark mode", encoding="utf-8")
+        with self.assertRaises(self.mod.InvalidInvocation) as cm:
+            self.mod.build_command(["task", str(path), "add tests"])
+        self.assertIn("not both", str(cm.exception))
+
+    def test_task_two_files_is_invalid(self) -> None:
+        first = Path(self.tmp.name) / "a.txt"
+        second = Path(self.tmp.name) / "b.txt"
+        first.write_text("one", encoding="utf-8")
+        second.write_text("two", encoding="utf-8")
+        with self.assertRaises(self.mod.InvalidInvocation):
+            self.mod.build_command(["task", str(first), str(second)])
+
+    def test_task_nonexistent_path_stays_text(self) -> None:
+        cmd = self.mod.build_command(["task", "no-such-file.txt"])
+        self.assertEqual(cmd[-2:], ["-i", "task=no-such-file.txt"])
+
+    def test_task_empty_file_is_invalid(self) -> None:
+        path = Path(self.tmp.name) / "empty.txt"
+        path.write_text("", encoding="utf-8")
+        with self.assertRaises(self.mod.InvalidInvocation) as cm:
+            self.mod.build_command(["task", str(path)])
+        self.assertIn("empty", str(cm.exception))
+
+    def test_task_non_utf8_file_is_invalid(self) -> None:
+        path = Path(self.tmp.name) / "binary.txt"
+        path.write_bytes(b"\xff\xfe\x00")
+        with self.assertRaises(self.mod.InvalidInvocation) as cm:
+            self.mod.build_command(["task", str(path)])
+        self.assertIn("cannot read task file", str(cm.exception))
+
+    def test_task_escapes_special_characters_in_inline_text(self) -> None:
+        cmd = self.mod.build_command(["task", 'price $5 "q" `t` \\'])
+        self.assertEqual(cmd[-1], r"task=price \$5 \"q\" \`t\` \\")
+
+    def test_task_file_with_backend_and_inputs(self) -> None:
+        path = Path(self.tmp.name) / "task.txt"
+        path.write_text("add dark mode", encoding="utf-8")
+        cmd = self.mod.build_command(["--backend", "cursor", "task", str(path), "-i", "task_id=x"])
+        self.assertEqual(cmd[:3], [self.mod.RUN_PIPELINE, "--backend", "cursor"])
+        self.assertEqual(cmd[3], self.mod.TASK_WORKFLOW)
+        self.assertIn("-i", cmd)
+        self.assertIn("task=add dark mode", cmd)
+        self.assertIn("task_id=x", cmd)
 
     def test_edit_signals_edit_requested(self) -> None:
         # build_command only dispatches; the editor resolution happens in the

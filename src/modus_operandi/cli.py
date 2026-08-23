@@ -26,6 +26,7 @@ bootstrap (first-run/update render) lives in bootstrap.py and the
 
 Usage:
   modus-operandi task "task description" [-i key=value ...]
+  modus-operandi task path/to/task-description.txt [-i key=value ...]
   modus-operandi review [--branch-diff]
   modus-operandi edit
   modus-operandi uninstall [--yes]
@@ -34,6 +35,7 @@ Usage:
 
 Examples:
   modus-operandi task "add a dark mode toggle"
+  modus-operandi task docs/tasks/dark-mode.md
   modus-operandi task "add a dark mode toggle" -i task_id=dark-mode
   modus-operandi --backend cursor task "add a dark mode toggle"
   modus-operandi review
@@ -101,10 +103,13 @@ USAGE = """Usage: modus-operandi <subcommand> [args]
       the subcommand; the config `backend:` remains the default).
 
   modus-operandi task "task description" [-i key=value ...]
+  modus-operandi task path/to/task-description.txt [-i key=value ...]
       Run the full task pipeline for the task (motivation study -> research ->
       ADR -> implementation -> review). All non-flag arguments after `task`
-      are joined into the task input; -i key=value arguments are passed
-      through to the workflow.
+      are joined into the task input; a single argument naming an existing
+      file is read as the task description instead (text and file input are
+      mutually exclusive); -i key=value arguments are passed through to the
+      workflow.
 
   modus-operandi review [--branch-diff] [-i key=value ...]
       Review the project code (default: the whole codebase). With --branch-diff
@@ -127,6 +132,7 @@ USAGE = """Usage: modus-operandi <subcommand> [args]
 
 Examples:
   modus-operandi task "add a dark mode toggle"
+  modus-operandi task docs/tasks/dark-mode.md
   modus-operandi task "add a dark mode toggle" -i task_id=dark-mode
   modus-operandi --backend cursor task "add a dark mode toggle"
   modus-operandi review
@@ -180,6 +186,12 @@ def build_command(argv: list[str]) -> list[str]:
     raise InvalidInvocation
 
 
+def _escape_shell_text(text: str) -> str:
+    """Escape \\ " ` $ with a backslash (backslash first) for the
+    double-quoted shell contexts the pipeline interpolates the text into."""
+    return text.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
+
+
 def _build_text_input_command(
     rest: list[str], backend: str | None, workflow: str, input_key: str
 ) -> list[str]:
@@ -225,6 +237,21 @@ def _build_text_input_command(
     text = " ".join(text_parts)
     if not text:
         raise InvalidInvocation
+    if len(text_parts) == 1 and Path(text_parts[0]).is_file():
+        # File mode (ADR-0018): a single argument naming an existing file is
+        # read as the task description.
+        try:
+            text = Path(text_parts[0]).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise InvalidInvocation(f"cannot read task file {text_parts[0]!r}: {exc}") from exc
+        if not text.strip():
+            raise InvalidInvocation(f"task file {text_parts[0]!r} is empty")
+    elif any(Path(part).is_file() for part in text_parts):
+        raise InvalidInvocation("pass either a single task file or task text, not both")
+    # The pipeline interpolates the text into double-quoted shell arguments
+    # and validate-inputs accepts only the escaped forms (ADR-0018): escape
+    # uniformly for text and file input, so the user never sees the check.
+    text = _escape_shell_text(text)
     cmd.append("-i")
     cmd.append(f"{input_key}={text}")
     cmd.extend(passed)
@@ -275,7 +302,9 @@ def main(argv: list[str] | None = None) -> int:
         except HelpRequested:
             print_usage()
             return 0
-        except InvalidInvocation:
+        except InvalidInvocation as exc:
+            if str(exc):
+                print(f"error: {exc}", file=sys.stderr)
             print_usage(sys.stderr)
             return 1
         except EditRequested:

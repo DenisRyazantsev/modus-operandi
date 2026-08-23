@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""validate_inputs.py - validate the pipeline inputs against shell injection.
+r"""validate_inputs.py - validate the pipeline inputs against shell injection.
 
 Usage:
   validate_inputs.py task-id <run_id>
@@ -19,8 +19,9 @@ validated in python, where the text never enters a shell context:
   delimiter would terminate the heredoc at parse time and the remaining
   feature lines would execute as shell).
 
-task-id rejects anything outside [A-Za-z0-9_-]; feature and task reject
-double quote, backtick, dollar sign and backslash.
+task-id rejects anything outside [A-Za-z0-9_-]; feature rejects double quote,
+backtick, dollar sign and backslash; task accepts only the escaped forms of
+those four (\", \`, \$, \\) — the launcher escapes them automatically.
 
 The run id comes from the workflow context ({{ context.run_id }}), not from
 "newest directory by mtime": a concurrently started run, or a resumed run
@@ -87,10 +88,17 @@ def cmd_feature(run_id: str) -> None:
 
 def cmd_task(run_id: str) -> None:
     task = _load_inputs(run_id).get("task") or ""
-    if re.search(r"[\"`$\\]", task):
+    # The launcher escapes " ` $ \ into \" \` \$ \\ (ADR-0018); the task is
+    # accepted only when it consists of ordinary characters and those escaped
+    # forms. Anything else (raw quote/backtick/dollar, or a backslash escaping
+    # an ordinary character) bypassed the launcher and is rejected. An empty
+    # task is not a shell-safety problem and stays accepted (required-input
+    # validation happens elsewhere).
+    if task and not re.fullmatch(r'(?:[^"`$\\]|\\["`$\\])+', task):
         print(
-            "error: task contains characters unsafe for shell (quote, backtick, "
-            "dollar, backslash); rephrase it",
+            "error: task contains characters unsafe for shell (unescaped quote, "
+            "backtick, dollar, or an invalid backslash escape); launch the "
+            "pipeline through modus-operandi task",
             file=sys.stderr,
         )
         sys.exit(1)
