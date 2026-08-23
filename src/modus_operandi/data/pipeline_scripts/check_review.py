@@ -49,6 +49,16 @@ KINDS: dict[str, tuple[str, str]] = {
 # on the first iteration and of the merged review-report.md sections.
 KIND_ORDER: tuple[str, ...] = ("srp", "bugs", "review", "comment")
 
+# Kind -> reviewer role convention (ADR-0017): the reviewer role name of a
+# kind is `reviewer-<kind>` (reviewer-srp, reviewer-bugs, reviewer-review,
+# reviewer-comment). KIND_ORDER is the single source of truth for the kinds:
+# the Python consumers derive the reviewer names from it (table_format.py
+# ROLE_WIDTH, agent_log_tailer.py's reviewer-log regex, run_statistics.py's
+# kind loop). The shell consumers (review-check.sh's case, run-agent.sh's
+# REVIEWER_ROLE_RE) and the install-side lists (render.py REVIEWER_KINDS,
+# paths.py / verify.py / uninstall.py) carry their own copies — a new kind
+# must be added to every consumer above in lockstep.
+
 # Section headings of the merged review-report.md, one per kind.
 KIND_TITLES: dict[str, str] = {
     "srp": "SRP review",

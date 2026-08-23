@@ -37,9 +37,14 @@ def _layout(base: Path) -> Paths:
         "run_agent_cursor": (base / "opencode" / "scripts" / "run-agent-cursor.sh"),
         "prompt_subst": base / "opencode" / "scripts" / "prompt_subst.sh",
         # Role bodies as plain text, read by run-agent.sh for the cursor
-        # backend (cursor has no agent files to carry the role).
+        # backend (cursor has no agent files to carry the role). The four
+        # reviewer roles have their own bodies, named reviewer-<kind>-body.txt.
         "planner_body": base / "opencode" / "scripts" / "planner-body.txt",
         "executor_body": base / "opencode" / "scripts" / "executor-body.txt",
+        "reviewer-srp_body": base / "opencode" / "scripts" / "reviewer-srp-body.txt",
+        "reviewer-bugs_body": base / "opencode" / "scripts" / "reviewer-bugs-body.txt",
+        "reviewer-review_body": base / "opencode" / "scripts" / "reviewer-review-body.txt",
+        "reviewer-comment_body": base / "opencode" / "scripts" / "reviewer-comment-body.txt",
         "run_pipeline": base / "opencode" / "scripts" / "run-pipeline.py",
         # run-pipeline.py is split one concern per file; the modules below
         # are copied next to it so the installed wrapper stays importable.
@@ -93,7 +98,6 @@ def _layout(base: Path) -> Paths:
         # verbatim like every other pipeline script.
         "agent_step": base / "opencode" / "scripts" / "agent-step.sh",
         "review_check": base / "opencode" / "scripts" / "review-check.sh",
-        "warm_planner": base / "opencode" / "scripts" / "warm-planner.sh",
         "determine_scope": base / "opencode" / "scripts" / "determine-scope.sh",
         "review_task_id": base / "opencode" / "scripts" / "review-task-id.sh",
         "adr_task_id": base / "opencode" / "scripts" / "adr-task-id.sh",

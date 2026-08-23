@@ -10,11 +10,27 @@ from .helpers import load_run_pipeline
 class TableFormatTest(unittest.TestCase):
     """TableLayout column widths and the row assembly (ADR-0016)."""
 
-    def test_role_width_covers_fork_labels(self) -> None:
+    def test_role_width_covers_all_rendered_role_labels(self) -> None:
+        # The static role column must fit every label rendered during a run:
+        # the base roles, the reviewer roles (ADR-0017) and the legacy
+        # planner fork labels. `[reviewer-comment]` is the widest — one char
+        # wider than the widest fork label, so a width computed from the
+        # forks alone would start the step column one char late on every
+        # reviewer row.
         mod = load_run_pipeline()
         layout = mod.table_format.TableLayout()
-        self.assertEqual(layout.role_width, 17)
-        self.assertEqual(layout.role_width, len("[planner#comment]"))
+        self.assertEqual(layout.role_width, 18)
+        self.assertEqual(layout.role_width, len("[reviewer-comment]"))
+        labels = (
+            ("planner", "executor", "harness")
+            + tuple(f"reviewer-{kind}" for kind in ("srp", "bugs", "review", "comment"))
+            + tuple(f"planner#{kind}" for kind in ("srp", "bugs", "review", "comment"))
+        )
+        for label in labels:
+            rendered = layout.role_field(label)
+            # Fits the static width: the rendered field is exactly the
+            # column (label + padding), never longer.
+            self.assertEqual(rendered, f"[{label}]".ljust(18), label)
 
     def test_step_width_for_uses_widest_bracket_with_nm_allowance(self) -> None:
         mod = load_run_pipeline()
@@ -64,11 +80,11 @@ class TableFormatTest(unittest.TestCase):
             nontty_row = mod.table_format.TableLayout(tty=False).row(
                 "planner", "⠋", "[study 4/15]", "cache 10"
             )
-        # The role column is padded to 17 and the spinner column is drawn on
+        # The role column is padded to 18 and the spinner column is drawn on
         # a TTY only.
-        self.assertIn("[planner]" + " " * 8 + " ⠋ ", tty_row)
+        self.assertIn("[planner]" + " " * 9 + " ⠋ ", tty_row)
         self.assertNotIn("⠋", nontty_row)
-        self.assertIn("[planner]" + " " * 8 + " [study 4/15]", nontty_row)
+        self.assertIn("[planner]" + " " * 9 + " [study 4/15]", nontty_row)
         for line in (tty_row, nontty_row):
             self.assertEqual(line, line.rstrip())
 

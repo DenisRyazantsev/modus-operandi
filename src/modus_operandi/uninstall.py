@@ -24,6 +24,10 @@ _SCRIPTS_KEYS = (
     "name_task",
     "planner_body",
     "executor_body",
+    "reviewer-srp_body",
+    "reviewer-bugs_body",
+    "reviewer-review_body",
+    "reviewer-comment_body",
     "session_store",
     "run_agent_cursor",
     "prompt_subst",
@@ -63,7 +67,6 @@ _SCRIPTS_KEYS = (
     "agent_call",
     "agent_step",
     "review_check",
-    "warm_planner",
     "determine_scope",
     "review_task_id",
     "adr_task_id",
@@ -138,6 +141,10 @@ def do_uninstall(paths: Paths, yes: bool) -> int:
     for path in (
         paths["agents"] / "planner.md",
         paths["agents"] / "executor.md",
+        paths["agents"] / "reviewer-srp.md",
+        paths["agents"] / "reviewer-bugs.md",
+        paths["agents"] / "reviewer-review.md",
+        paths["agents"] / "reviewer-comment.md",
         *(paths[key] for key in _SCRIPTS_KEYS),
     ):
         if path.exists():

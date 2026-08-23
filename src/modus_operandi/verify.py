@@ -49,10 +49,18 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
     # Opencode agent files are required under the same predicate that renders
     # them (config.opencode_models_complete): an opencode backend always has
     # them, while a cursor-only config with an empty/incomplete opencode
-    # section neither renders nor demands them.
+    # section neither renders nor demands them. The four reviewer agents
+    # (one per review kind) render under the same predicate.
     require_agents = config.opencode_models_complete(cfg)
     if require_agents:
-        for agent_name in ("planner.md", "executor.md"):
+        for agent_name in (
+            "planner.md",
+            "executor.md",
+            "reviewer-srp.md",
+            "reviewer-bugs.md",
+            "reviewer-review.md",
+            "reviewer-comment.md",
+        ):
             agent = paths["agents"] / agent_name
             if not agent.exists():
                 errors.append(f"generated agent missing: {agent}")
@@ -75,7 +83,6 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
     for key, executable in (
         ("agent_step", True),
         ("review_check", True),
-        ("warm_planner", True),
         ("determine_scope", True),
         ("review_task_id", True),
         ("adr_task_id", True),
@@ -131,7 +138,14 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
             errors.append(f"generated script missing: {paths[key]}")
     if not paths["victory_wav"].is_file():
         errors.append(f"victory sound missing: {paths['victory_wav']}")
-    for key in ("planner_body", "executor_body"):
+    for key in (
+        "planner_body",
+        "executor_body",
+        "reviewer-srp_body",
+        "reviewer-bugs_body",
+        "reviewer-review_body",
+        "reviewer-comment_body",
+    ):
         if not paths[key].is_file():
             errors.append(f"generated role body missing: {paths[key]}")
     for rel in (
@@ -143,7 +157,6 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
         "review/review-rereview.md",
         "review/comment-review.md",
         "review/comment-rereview.md",
-        "review/warmup.md",
         "review/comment-fix.md",
         "adr/executor-questions.md",
         "adr/planner-answers.md",
@@ -213,7 +226,14 @@ def check_agents_visible(paths: Paths, cfg: dict[str, Any] | None = None) -> lis
         return [f"opencode agent list failed: {result.stderr.strip()}"]
     names = set(re.findall(r"^(\S+)\s+\((?:primary|subagent)\)", result.stdout, re.M))
     errors: list[str] = []
-    for name in ("planner", "executor"):
+    for name in (
+        "planner",
+        "executor",
+        "reviewer-srp",
+        "reviewer-bugs",
+        "reviewer-review",
+        "reviewer-comment",
+    ):
         if name not in names:
             errors.append(
                 "opencode does not see the '{}' agent; check {}".format(name, paths["agents"])

@@ -7,6 +7,13 @@ import json
 import re
 from pathlib import Path
 
+from check_review import KIND_ORDER
+
+# The reviewer-log stem suffix, derived from the kinds (the single source of
+# truth: check_review.KIND_ORDER + the reviewer-<kind> convention, ADR-0017).
+# Matches e.g. the trailing "reviewer-srp" of sessions-<task>-reviewer-srp.
+_REVIEWER_LOG_RE = re.compile("-(reviewer-(?:" + "|".join(KIND_ORDER) + r"))$")
+
 
 class AgentLogTailer:
     """Tails the per-role agent logs (<state_dir>/logs/*.jsonl).
@@ -32,13 +39,14 @@ class AgentLogTailer:
         appended since the last tail.
 
         Raw file reading (byte offsets) lives in _read_appended(). The role
-        and the fork id come from the log file name (ADR-0011: the parallel
-        review forks write per-invocation files, so the live status lines
-        can keep separate accumulators), the text is always empty (since
-        ADR-0011 nothing is printed from the agent logs — the live status
-        lines replace the old log echo) and the event is the parsed JSON
-        object of the line (None for a non-JSON line) — the live status
-        lines consume the `step_finish` events from it.
+        and the fork id come from the log file name (ADR-0011, ADR-0017:
+        each review kind writes a stable per-kind log file named after its
+        reviewer role — sessions-<task>-reviewer-<kind>.jsonl — so the live
+        status lines keep separate accumulators per reviewer), the text is
+        always empty (since ADR-0011 nothing is printed from the agent logs
+        — the live status lines replace the old log echo) and the event is
+        the parsed JSON object of the line (None for a non-JSON line) — the
+        live status lines consume the `step_finish` events from it.
         """
         if not self._logs_dir.is_dir():
             return []
@@ -47,16 +55,16 @@ class AgentLogTailer:
             lines, _ = self._read_appended(path)
             if not lines:
                 continue
-            # The review kinds write stable per-kind log files
-            # (sessions-<task>-<role>-fork-<kind>.jsonl, see run-agent.sh,
-            # ADR-0013): the -fork-<kind> suffix is stripped for the role
-            # and kept as the fork id (the kind), so the live status lines
-            # carry separate accumulators labeled [planner#<kind>]. The
-            # marker is anchored to the role (not a bare "-fork-"): a task
-            # id that itself contains "-fork-" (branch-derived slugs like
-            # feature-fork-x) must not misattribute the log — the role is
-            # the last segment of the stem, and the real kind only ever
-            # follows "-<role>-fork-".
+            # The review kinds write stable per-kind log files named after
+            # the reviewer role (sessions-<task>-reviewer-srp.jsonl, see
+            # run-agent.sh): the role is a reviewer name, so the live status
+            # lines carry one accumulator per reviewer labeled [reviewer-srp].
+            # The old -fork-<kind> marker (planner review forks, pre-ADR-0017)
+            # is still recognized so stale log files from an older install
+            # keep working; the marker is anchored to the role (not a bare
+            # "-fork-"): a task id that itself contains "-fork-" (branch-
+            # derived slugs like feature-fork-x) must not misattribute the
+            # log.
             fork_m = re.search(r"-(planner|executor)-fork-([A-Za-z0-9_-]+)$", path.stem)
             if fork_m:
                 role = fork_m.group(1)
@@ -64,6 +72,12 @@ class AgentLogTailer:
             else:
                 role = path.stem.rsplit("-", 1)[-1]
                 fork_id = ""
+                # A reviewer log: sessions-<task>-reviewer-<kind>.jsonl has
+                # the kind as the last segment ("srp"), so the real role is
+                # the reviewer name, not the bare kind.
+                reviewer_m = _REVIEWER_LOG_RE.search(path.stem)
+                if reviewer_m:
+                    role = reviewer_m.group(1)
             for line in lines:
                 event = None
                 with contextlib.suppress(Exception):

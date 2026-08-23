@@ -56,6 +56,17 @@ def _agent_markdown(
     return frontmatter + body
 
 
+# The four reviewer agents (one per review kind) render with the planner's
+# model: reviews are an analysis task of the same difficulty as planning
+# (ADR-0017: the reviewers review in their own fresh sessions, never in a
+# fork of the planner session).
+REVIEWER_KINDS: tuple[str, ...] = ("srp", "bugs", "review", "comment")
+
+
+def _reviewer_agent_name(kind: str) -> str:
+    return f"reviewer-{kind}"
+
+
 def render_agents(cfg: dict[str, Any], paths: Paths) -> None:
     # Agent files are an opencode concept: when the opencode models are not
     # complete (a cursor-only config, or an empty/incomplete section), nothing
@@ -69,7 +80,7 @@ def render_agents(cfg: dict[str, Any], paths: Paths) -> None:
     executor = models["executor"]
     (paths["agents"] / "planner.md").write_text(
         _agent_markdown(
-            "Planner and reviewer for the modus-operandi task/review workflows",
+            "Planner for the modus-operandi task/review workflows",
             "0.3",
             planner["provider"],
             planner["model"],
@@ -89,6 +100,19 @@ def render_agents(cfg: dict[str, Any], paths: Paths) -> None:
         ),
         encoding="utf-8",
     )
+    for kind in REVIEWER_KINDS:
+        name = _reviewer_agent_name(kind)
+        (paths["agents"] / f"{name}.md").write_text(
+            _agent_markdown(
+                f"Reviewer ({kind}) for the modus-operandi task/review workflows",
+                "0.3",
+                planner["provider"],
+                planner["model"],
+                planner["reasoning"],
+                _role_body(name),
+            ),
+            encoding="utf-8",
+        )
 
 
 def render_role_bodies(paths: Paths) -> None:
@@ -98,6 +122,9 @@ def render_role_bodies(paths: Paths) -> None:
     # cursor chat; opencode carries the role in the agent files instead.
     (paths["planner_body"]).write_text(_role_body("planner"), encoding="utf-8")
     (paths["executor_body"]).write_text(_role_body("executor"), encoding="utf-8")
+    for kind in REVIEWER_KINDS:
+        name = _reviewer_agent_name(kind)
+        (paths[f"{name}_body"]).write_text(_role_body(name), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +219,6 @@ def render_adr_scripts(paths: Paths) -> None:
 _STEP_SCRIPTS = {
     "agent_step": ("agent-step.sh", True),
     "review_check": ("review-check.sh", True),
-    "warm_planner": ("warm-planner.sh", True),
     "determine_scope": ("determine-scope.sh", True),
     "review_task_id": ("review-task-id.sh", True),
     "adr_task_id": ("adr-task-id.sh", True),

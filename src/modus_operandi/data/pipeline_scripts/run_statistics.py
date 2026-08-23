@@ -18,6 +18,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from check_review import KIND_ORDER
 from display import fmt_duration, fmt_thousands
 from latency_table import print_latency_table
 from usage_parser import event_usage, is_result_style
@@ -29,7 +30,10 @@ def read_session_ids(state_dir: Path) -> dict[str, str]:
     The task id is taken from the <state_dir>/tasks/current symlink that the
     workflow's generate-task-id step maintains; a missing or looped symlink
     yields no ids — the try/except below turns any resolve/read failure
-    into an empty map. Only roles with a non-empty id are returned.
+    into an empty map. Only roles with a non-empty id are returned. The
+    per-kind reviewer sessions (sessions-<task>-review-<kind>.json, one
+    session per review kind) are merged in under their reviewer role, so
+    the review tokens are counted too.
     """
     try:
         task_id = current_task_id(state_dir)
@@ -38,11 +42,26 @@ def read_session_ids(state_dir: Path) -> dict[str, str]:
         return {}
     if not isinstance(data, dict):
         return {}
-    return {
+    ids = {
         role: data[role]
         for role in ("planner", "executor")
         if isinstance(data.get(role), str) and data[role]
     }
+    # The per-kind reviewer files follow the reviewer-<kind> convention of
+    # check_review.KIND_ORDER (ADR-0017), the single source of truth.
+    for kind in KIND_ORDER:
+        try:
+            kind_data = json.loads(
+                (state_dir / f"sessions-{task_id}-review-{kind}.json").read_text(encoding="utf-8")
+            )
+        except Exception:
+            continue
+        if not isinstance(kind_data, dict):
+            continue
+        role = f"reviewer-{kind}"
+        if isinstance(kind_data.get(role), str) and kind_data[role]:
+            ids[role] = kind_data[role]
+    return ids
 
 
 def current_task_id(state_dir: Path) -> str:

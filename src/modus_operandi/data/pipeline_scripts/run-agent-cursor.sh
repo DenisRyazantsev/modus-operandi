@@ -7,16 +7,16 @@
 # writes back SESSION_ID, so run-agent.sh's final "SESSION:<id>" line works
 # for both backends. A change to the cursor backend touches only this file.
 #
-# Warm chats are per-role and per review kind: the per-kind review chats
-# (ADR-0013) are minted with `create-chat` on the kind's first check and
-# resumed with `--resume <chatId>` on every later check, so the reviewer
-# keeps its past findings across the review-fix-loop iterations. The minted
-# id is saved to the per-kind session file (SESSIONS_FILE already points at
-# it), never to the per-role store — the warm parent chat id stays
-# authoritative and is never resumed or mutated. cursor-agent has no fork
-# primitive (`opencode run --session <id> --fork` is opencode-only), so the
-# per-kind chat IS the fork: a fresh chat that inherits the review context
-# only through the review prompts themselves.
+# Warm chats are per-role and per review kind: the per-kind reviewer chats
+# are minted with `create-chat` on the kind's first check and resumed with
+# `--resume <chatId>` on every later check, so the reviewer keeps its past
+# findings across the review-fix-loop iterations. The minted id is saved to
+# the per-kind session file (SESSIONS_FILE already points at it), never to
+# the per-role store. The reviewer chat is a FRESH chat: it receives only
+# the plan and the ADR (via the step prompt) and never inherits the warm
+# planner chat's context. cursor-agent has no fork primitive, so this was
+# always the cursor behavior; opencode matches it now (the reviewers do not
+# fork the planner session either).
 
 resolve_cursor_binary() {
   # The specific `cursor-agent` name is probed FIRST because it is
@@ -91,8 +91,8 @@ run_cursor_once() {
   # truncated).
   #
   # The valid JSON lines are APPENDED to $LOG_FILE, never written over it:
-  # the per-kind review logs are stable files reused by every
-  # review-fix-loop iteration (ADR-0013), so truncating on each call would
+  # the per-kind reviewer logs are stable files reused by every
+  # review-fix-loop iteration, so truncating on each call would
   # erase the previous iterations' events and the end-of-run statistics
   # (collect_cursor_usage sums every .jsonl of the task) would undercount
   # all but the last iteration. Appending also keeps the live-line tailer's
@@ -160,9 +160,8 @@ run_cursor() {
     # SESSION_ID is guaranteed empty here on a kind's FIRST check: with
     # --review-fork, session_paths pointed SESSIONS_FILE at the per-kind
     # file, so run-agent.sh's read_session never loads the warm parent id
-    # into SESSION_ID. The old ADR-0009 guard "a fork must never fall back
-    # to the stored warm chat" therefore became UNREACHABLE when the
-    # --fork flag was removed (ADR-0013), not lost: a failed create-chat
+    # into SESSION_ID. A reviewer chat is always a fresh chat: it never
+    # inherits the warm planner chat's context, so a failed create-chat
     # below can never resume the warm parent chat.
     # Mint a fresh chat through `create-chat`: its id always comes from
     # Cursor. A synthesized id in --resume is silently accepted by cursor
@@ -173,9 +172,8 @@ run_cursor() {
     if [ -n "$CHAT_ID" ]; then
       SESSION_ID="$CHAT_ID"
       # The fresh chat id is saved to the CURRENT store file: the per-role
-      # file for a warm chat, the per-kind file for a review chat (ADR-0013)
-      # — the review chat never touches the per-role store, so the warm
-      # parent id stays authoritative.
+      # file for a warm chat, the per-kind file for a review chat — the
+      # review chat never touches the per-role store.
       save_session "$SESSION_ID"
     fi
   fi
@@ -199,7 +197,7 @@ $PROMPT"
   if [ -z "$SESSION_ID" ]; then
     # Fallback: the id was not obtained from create-chat, so recover it from
     # the JSON output (always a Cursor-minted id, never synthesized). The id
-    # is saved to the current store file (per-role or per-kind, ADR-0013).
+    # is saved to the current store file (per-role or per-kind).
     SESSION_ID="$(extract_session_id)"
     if [ -n "$SESSION_ID" ]; then
       save_session "$SESSION_ID"

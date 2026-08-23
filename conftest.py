@@ -18,10 +18,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 # The wrapper's runtime exports. An ambient value would override the
 # derived defaults the tests assert on. Consumers: config_invocation.py
-# reads MO_CONFIG and MO_PROMPTS_DIR to derive values; run-agent.sh,
-# name-task.sh and warm-planner.sh read the rest (MO_SCRIPTS_DIR is
-# consumed by the workflow steps' ${MO_SCRIPTS_DIR:-...} path expansion,
-# not by run-agent.sh).
+# reads MO_CONFIG and MO_PROMPTS_DIR to derive values; run-agent.sh and
+# name-task.sh read the rest (MO_SCRIPTS_DIR is consumed by the workflow
+# steps' ${MO_SCRIPTS_DIR:-...} path expansion, not by run-agent.sh).
 _MO_ENV_VARS = (
     "MO_CONFIG",
     "MO_SCRIPTS_DIR",

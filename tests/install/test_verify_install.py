@@ -60,6 +60,7 @@ class VerifyInstallTest(InstallerTestCase):
         err = str(cm.exception)
         self.assertIn("planner", err)
         self.assertIn("executor", err)
+        self.assertIn("reviewer-srp", err)
         self.assertIn("save_adr.py", err)
         self.assertIn("check_review.py", err)
         self.assertIn("adr_utils.py", err)
