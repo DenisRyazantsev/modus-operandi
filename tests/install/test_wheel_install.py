@@ -67,7 +67,7 @@ class WheelBootstrapTest(unittest.TestCase):
             "modus_operandi/data/victory.wav",
             "modus_operandi/cli.py",
             # The MIT license text ships in the wheel (PEP 639 license-files).
-            "modus_operandi-0.1.0.dist-info/licenses/LICENSE",
+            "modus_operandi-0.0.0.dev0.dist-info/licenses/LICENSE",
         ):
             self.assertIn(needle, names, needle)
         # The standalone adr pipeline is not shipped.

@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "modus-operandi"
-version = "0.1.0"
+version = "0.0.0.dev0"
 description = "Spec-driven planner -> executor pipelines for opencode and cursor"
 readme = "README.md"
 requires-python = ">=3.12"

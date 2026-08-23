@@ -47,6 +47,21 @@ class SetVersionTest(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("usage", proc.stderr)
 
+    def test_rejects_v_prefixed_tag(self) -> None:
+        proc = self.run_script("v1.2.3")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("not a valid PEP 440", proc.stderr)
+
+    def test_rejects_non_version_tag(self) -> None:
+        proc = self.run_script("release-1")
+        self.assertNotEqual(proc.returncode, 0)
+
+    def test_accepts_dev_version_tag(self) -> None:
+        proc = self.run_script("0.1.0.dev1")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        pyproject = (self.root / "pyproject.toml").read_text()
+        self.assertIn('version = "0.1.0.dev1"', pyproject)
+
 
 if __name__ == "__main__":
     unittest.main()
