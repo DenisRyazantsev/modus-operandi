@@ -1,9 +1,10 @@
 """Tests for open_feedback_editor against real ptys and real editor scripts.
 
 open_feedback_editor owns the feedback gates: on a TTY it opens the
-platform editor (ADR-0011) — "waited" paths (macOS TextEdit, the terminal
-chain) run blocking and answer `continue` on close; the Linux GUI path is
-"detached" (separate window, the gate stays interactive). The tests run a
+platform editor (ADR-0011) — the "waited" path (the terminal chain) runs
+blocking and answers `continue` on close; the macOS TextEdit and Linux GUI
+paths are "detached" (separate window, the gate stays interactive). The
+tests run a
 real pty pair (sys.stdin/sys.stdout are the real pty slave), real editor
 executables on PATH and real subprocesses; only the macOS branches cannot
 """
