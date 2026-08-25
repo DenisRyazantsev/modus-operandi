@@ -26,6 +26,24 @@ CONFIG_PATH = Path(
 # fallback for an invalid config value).
 BACKENDS = ("opencode", "cursor")
 
+# The shipped per-backend default role model slugs, mirroring
+# modus_operandi/config.py (DEFAULT_MODELS). The wrapper reads the raw YAML
+# without apply_defaults, so a model missing from the ACTIVE backend's
+# section (a legacy config without a cursor section, a --backend override on
+# a config that does not configure the backend) falls back to the shipped
+# default instead of exporting an empty MO_*_MODEL that fails deep in
+# run-agent.sh. Keep the two in sync.
+_DEFAULT_MODELS: dict[str, dict[str, dict[str, str]]] = {
+    "opencode": {
+        "planner": {"model": "big-pickle"},
+        "executor": {"model": "big-pickle"},
+    },
+    "cursor": {
+        "planner": {"model": "composer-2"},
+        "executor": {"model": "composer-2"},
+    },
+}
+
 
 def normalize_config(cfg: dict[str, Any]) -> dict[str, Any]:
     """Fold the legacy top-level `models:` into `opencode.models`.
@@ -90,10 +108,14 @@ def sound_settings(cfg: dict[str, Any], config_path: Path) -> tuple[bool, str]:
 
 
 def role_model(cfg: dict[str, Any], backend: str, role: str) -> str:
-    """Model slug of a role under the active backend ("" when unset).
+    """Model slug of a role under the active backend.
 
     The opencode agent files carry the opencode model; the exported value is
-    only consumed by the cursor branch of run-agent.sh/name-task.sh.
+    only consumed by the cursor branch of run-agent.sh/name-task.sh. A model
+    missing from the active backend's section falls back to the shipped
+    default (_DEFAULT_MODELS, mirroring the installer's apply_defaults), so a
+    legacy config or a `--backend` override on a config that does not
+    configure the backend still runs instead of exporting an empty value.
     """
     section = cfg.get("cursor") if backend == "cursor" else cfg.get("opencode")
     if not isinstance(section, dict):
@@ -107,30 +129,64 @@ def role_model(cfg: dict[str, Any], backend: str, role: str) -> str:
     model = models.get(role)
     model = model if isinstance(model, dict) else {}
     value = model.get("model")
-    return value if isinstance(value, str) else ""
+    if isinstance(value, str) and value:
+        return value
+    default = _DEFAULT_MODELS.get(backend, {}).get(role, {}).get("model")
+    return default if isinstance(default, str) else ""
 
 
 def load_config(config_path: Path | None = None) -> dict[str, Any]:
-    """Read the installed config.yml into a dict, or {} on any failure.
+    """Read the installed config.yml into a dict, or {} when it is missing.
 
     config_path defaults to the module's CONFIG_PATH; the run-pipeline entry
     passes its own CONFIG_PATH explicitly so a runtime override (e.g. tests
-    pointing the wrapper at another file) is honored. A missing or unreadable
-    file degrades to the documented defaults, so a hand-invoked wrapper (or a
-    config deleted after install) still runs.
+    pointing the wrapper at another file) is honored. A MISSING file degrades
+    to the documented defaults, so a hand-invoked wrapper (or a config
+    deleted after install) still runs. An EXISTING file that cannot be read
+    or parsed raises ValueError with a user-facing explanation: silently
+    running the pipeline with the opencode defaults on a broken config is
+    what hid backend misconfiguration (a config that fails to load made
+    `backend: cursor` invisible, so the run used opencode and exported empty
+    role models), so a broken config now aborts before the run starts —
+    mirroring sound_settings. The file is read as BYTES: PyYAML detects the
+    UTF-8 and UTF-16/UTF-32 (with BOM) encodings a desktop text editor can
+    save, so a macOS TextEdit UTF-16 save still parses instead of failing.
     """
     path = config_path if config_path is not None else CONFIG_PATH
     try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
+        raw = path.read_bytes()
+    except FileNotFoundError:
         return {}
-    try:
-        import yaml  # pyproject.toml declares pyyaml as a package dependency
+    except OSError as exc:
+        raise ValueError(f"cannot read config {path}: {exc}") from exc
+    data = _safe_yaml_load(raw)
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"invalid config.yml at {path}: top-level must be a mapping, got {type(data).__name__}"
+        )
+    return data
 
-        data = yaml.safe_load(text) or {}
-    except Exception:
-        return {}
-    return data if isinstance(data, dict) else {}
+
+def _safe_yaml_load(raw: bytes) -> Any:
+    """Parse config bytes into a value, tolerating editor-saved encodings.
+
+    PyYAML given BYTES detects UTF-8 (plain and with BOM) and UTF-16/UTF-32
+    with BOM natively; a BOM-less UTF-16 file (an editor that saves
+    "UTF-16 LE") falls back to an explicit decode. Raises ValueError with
+    the parse error when neither works.
+    """
+    import yaml  # pyproject.toml declares pyyaml as a package dependency
+
+    try:
+        return yaml.safe_load(raw)
+    except yaml.YAMLError:
+        pass
+    try:
+        return yaml.safe_load(raw.decode("utf-16"))
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise ValueError(f"invalid config.yml: cannot parse the file: {exc}") from exc
 
 
 def build_specify_invocation(

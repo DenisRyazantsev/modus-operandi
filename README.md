@@ -1,5 +1,8 @@
 # Modus Operandi 🤌
 
+[![PyPI version](https://img.shields.io/pypi/v/modus-operandi.svg)](https://pypi.org/project/modus-operandi/)
+[![Python versions](https://img.shields.io/pypi/pyversions/modus-operandi.svg)](https://pypi.org/project/modus-operandi/)
+
 Automate spec-driven "planner -> executor" workflows in LLM clients (opencode
 and cursor): task planning, task implementing and code review.
 
@@ -95,6 +98,10 @@ By default, opencode is used. If you need the cursor backend, use the
 ```shell
 modus-operandi --backend cursor task "<task-description>"
 ```
+
+Cursor runs on its default `composer-2` model for planning, review and
+implementation when no `cursor:` section is configured yet; set your own
+model slugs with `modus-operandi edit`.
 
 ### Config
 

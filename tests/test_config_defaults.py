@@ -22,26 +22,30 @@ class ApplyDefaultsTest(unittest.TestCase):
         self.assertEqual(cfg["workflow"]["adr_dir"], "architecture")
         self.assertTrue(cfg["workflow"]["human_gates"])
         self.assertFalse(cfg["workflow"]["use_serve"])
-        # The motivation loop is effectively unlimited since ADR-0011: its
-        # ceiling is a workflow literal, so no config key exists for it.
-        self.assertNotIn("max_motivation_iterations", cfg["workflow"])
-        self.assertNotIn("max_proposal_iterations", cfg["workflow"])
-        # Empty config: no backend sections are fabricated (the active
-        # backend's models are required by validation instead).
-        self.assertNotIn("opencode", cfg)
+        # The ACTIVE backend's models are filled with the shipped defaults
+        # (the inactive section is never fabricated).
+        self.assertEqual(
+            cfg["opencode"]["models"]["planner"],
+            {"provider": "opencode", "model": "big-pickle", "reasoning": "max"},
+        )
         self.assertNotIn("cursor", cfg)
 
     def test_none_raw_is_treated_as_empty(self) -> None:
         cfg = config.apply_defaults(None)
         self.assertEqual(cfg["backend"], "opencode")
-        self.assertNotIn("opencode", cfg)
+        self.assertIn("opencode", cfg)
         self.assertNotIn("cursor", cfg)
 
     def test_legacy_models_fold_into_opencode(self) -> None:
         cfg = config.apply_defaults({"models": {"planner": {"provider": "p", "model": "m"}}})
         self.assertNotIn("models", cfg)
         self.assertEqual(cfg["opencode"]["models"]["planner"]["reasoning"], "max")
-        self.assertEqual(cfg["opencode"]["models"]["executor"], {"reasoning": "max"})
+        # The executor role is missing from the legacy section: it is filled
+        # with the active backend's shipped defaults.
+        self.assertEqual(
+            cfg["opencode"]["models"]["executor"],
+            {"provider": "opencode", "model": "big-pickle", "reasoning": "max"},
+        )
         self.assertIn("state_dir", cfg["workflow"])
 
     def test_explicit_opencode_section_wins_over_legacy_models(self) -> None:
@@ -63,6 +67,48 @@ class ApplyDefaultsTest(unittest.TestCase):
         cfg = config.apply_defaults({"cursor": {"models": {"planner": {"model": "composer-2"}}}})
         self.assertEqual(cfg["cursor"]["models"]["planner"]["model"], "composer-2")
         self.assertEqual(cfg["cursor"]["models"]["executor"], {})
+
+    def test_switch_to_cursor_fills_missing_section(self) -> None:
+        # A legacy pre-cursor config (opencode models only) edited to
+        # `backend: cursor` via `modus-operandi edit`: the missing cursor
+        # section is filled with the shipped defaults, so the switch applies
+        # instead of failing validation and rolling back.
+        cfg = config.apply_defaults(
+            {
+                "backend": "cursor",
+                "models": {
+                    "planner": {"provider": "opencode", "model": "big-pickle"},
+                    "executor": {"provider": "opencode", "model": "big-pickle"},
+                },
+            }
+        )
+        self.assertEqual(cfg["cursor"]["models"]["planner"], {"model": "composer-2"})
+        self.assertEqual(cfg["cursor"]["models"]["executor"], {"model": "composer-2"})
+        config.validate_config(cfg, None)
+
+    def test_fill_never_overwrites_existing_values(self) -> None:
+        # An existing value (even a placeholder) is preserved: validation
+        # still rejects the placeholder instead of silently running with it.
+        cfg = config.apply_defaults(
+            {
+                "backend": "cursor",
+                "cursor": {"models": {"planner": {"model": "<planner-slug>"}}},
+            }
+        )
+        self.assertEqual(cfg["cursor"]["models"]["planner"]["model"], "<planner-slug>")
+        with self.assertRaises(InstallError) as cm:
+            config.validate_config(cfg, None)
+        self.assertIn("placeholder", str(cm.exception))
+
+    def test_fill_skips_structurally_invalid_active_section(self) -> None:
+        # A non-mapping active section is left for validation to reject, not
+        # silently replaced by the defaults.
+        with self.assertRaises(InstallError) as cm:
+            config.apply_defaults({"backend": "cursor", "cursor": "oops"})
+        self.assertIn("cursor must be a mapping", str(cm.exception))
+        with self.assertRaises(InstallError) as cm:
+            config.apply_defaults({"backend": "cursor", "cursor": {"models": 123}})
+        self.assertIn("cursor.models must be a mapping", str(cm.exception))
 
     def test_opencode_models_complete_predicate(self) -> None:
         # The single predicate shared by render_agents (writes agent files)
@@ -144,6 +190,49 @@ class ApplyDefaultsTest(unittest.TestCase):
                 with self.assertRaises(InstallError) as cm:
                     config.load_config(path)
                 self.assertIn("top-level must be a mapping", str(cm.exception))
+
+    def test_load_config_missing_file_raises_install_error(self) -> None:
+        # A missing config is a user error on the edit/install paths (the
+        # runtime wrapper is the one that degrades a missing file to the
+        # defaults): it surfaces as a clean InstallError, not a raw
+        # FileNotFoundError traceback.
+        with self.assertRaises(InstallError) as cm:
+            config.load_config(Path("/nonexistent/config.yml"))
+        self.assertIn("cannot read", str(cm.exception))
+
+    def test_load_config_accepts_editor_encodings(self) -> None:
+        # A desktop editor on macOS can save the config as UTF-16 (with or
+        # without BOM): the loader must parse it instead of failing (and
+        # rolling back the edit). Regression: `modus-operandi edit` rejected
+        # such a file and the `backend: cursor` change never stuck.
+        yaml_body = (
+            "backend: cursor\n"
+            "cursor:\n"
+            "  models:\n"
+            "    planner:\n"
+            "      model: composer-2\n"
+            "    executor:\n"
+            "      model: composer-2\n"
+            "workflow: {}\n"
+        )
+        for encoding in ("utf-16", "utf-16-le"):
+            with self.subTest(encoding=encoding), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "config.yml"
+                path.write_bytes(yaml_body.encode(encoding))
+                cfg = config.load_config(path)
+                self.assertEqual(cfg["backend"], "cursor")
+                self.assertEqual(cfg["cursor"]["models"]["planner"]["model"], "composer-2")
+
+    def test_load_config_invalid_encoding_raises_install_error(self) -> None:
+        # A file that is neither valid UTF-8/UTF-16 nor valid YAML (e.g. an
+        # RTF save from TextEdit) surfaces as a clean InstallError with the
+        # parse reason, never a raw traceback.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.yml"
+            path.write_bytes(b"{\\rtf1\\ansi\\ansicpg1252\\cocoartf\n")
+            with self.assertRaises(InstallError) as cm:
+                config.load_config(path)
+            self.assertIn("invalid config.yml", str(cm.exception))
 
 
 if __name__ == "__main__":

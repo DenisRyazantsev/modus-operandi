@@ -218,8 +218,15 @@ def main() -> int:
     # Map the installed config + argv to the specify invocation; main() only
     # orchestrates the live run from the result. CONFIG_PATH is passed
     # explicitly so a runtime override of this module's CONFIG_PATH (e.g. by
-    # tests) is honored by the config read.
-    cfg = load_config(CONFIG_PATH)
+    # tests) is honored by the config read. An existing but unreadable or
+    # invalid config aborts with an explanation instead of silently running
+    # with the opencode defaults (a broken config used to make `backend:
+    # cursor` invisible and export empty role models).
+    try:
+        cfg = load_config(CONFIG_PATH)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     # The sound section is validated before the run starts (ADR-0018): an
     # invalid sound setting aborts with an explanation, not a silent degrade.
     try:

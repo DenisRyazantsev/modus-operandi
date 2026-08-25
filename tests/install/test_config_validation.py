@@ -111,10 +111,10 @@ class ConfigValidationTest(InstallerTestCase):
         self.assertEqual(rc, 1)
         self.assertIn("backend must be one of: opencode, cursor", err)
 
-    def test_backend_cursor_requires_both_models(self) -> None:
-        # cursor.models.planner.model and cursor.models.executor.model are
-        # required (symmetric to opencode's provider/model/reasoning); the
-        # opencode section is not required in cursor mode.
+    def test_backend_cursor_partial_models_get_defaults(self) -> None:
+        # A partially-configured active section (only the planner slot) is
+        # completed with the shipped defaults: switching backends must not
+        # fail on a missing role slot.
         self.assertEqual(self.install(), 0)
         self.write_config(
             "backend: cursor\n"
@@ -125,9 +125,7 @@ class ConfigValidationTest(InstallerTestCase):
             "workflow: {}\n"
         )
         rc, err = self.install_with_capture()
-        self.assertEqual(rc, 1)
-        self.assertIn("missing required key: cursor.models.executor.model", err)
-        self.assertNotIn("opencode", err)
+        self.assertEqual(rc, 0, err)
 
     def test_backend_cursor_placeholder_model_rejected(self) -> None:
         self.assertEqual(self.install(), 0)
@@ -145,20 +143,31 @@ class ConfigValidationTest(InstallerTestCase):
         self.assertEqual(rc, 1)
         self.assertIn("placeholder value in cursor.models.planner.model", err)
 
-    def test_backend_cursor_without_cursor_section_rejected(self) -> None:
+    def test_backend_cursor_without_cursor_section_gets_defaults(self) -> None:
+        # A config that predates the cursor section (no cursor key at all)
+        # edited to `backend: cursor`: apply_defaults fills the missing
+        # section with the shipped defaults, so the switch applies out of the
+        # box (regression: it used to fail validation and roll back the edit).
         self.assertEqual(self.install(), 0)
-        self.write_config("backend: cursor\ncursor: {}\nworkflow: {}\n")
+        self.write_config(
+            "backend: cursor\n"
+            "models:\n"
+            "  planner:\n"
+            "    provider: opencode\n"
+            "    model: big-pickle\n"
+            "  executor:\n"
+            "    provider: opencode\n"
+            "    model: big-pickle\n"
+            "workflow: {}\n"
+        )
         rc, err = self.install_with_capture()
-        self.assertEqual(rc, 1)
-        self.assertIn("missing required key: cursor.models.planner.model", err)
-        self.assertIn("missing required key: cursor.models.executor.model", err)
+        self.assertEqual(rc, 0, err)
 
-    def test_backend_opencode_requires_opencode_models(self) -> None:
+    def test_backend_opencode_empty_section_gets_defaults(self) -> None:
         self.assertEqual(self.install(), 0)
         self.write_config("backend: opencode\nopencode: {}\nworkflow: {}\n")
         rc, err = self.install_with_capture()
-        self.assertEqual(rc, 1)
-        self.assertIn("missing required key: opencode.models.planner.provider", err)
+        self.assertEqual(rc, 0, err)
 
     def test_backend_cursor_without_opencode_section_is_valid(self) -> None:
         self.assertEqual(self.install(), 0)

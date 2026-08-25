@@ -70,9 +70,11 @@ class BuildSpecifyInvocationBackendTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             _, env, _, _ = self._invoke(mod, tmp, self._cfg(), cli_backend="cursor")
         self.assertEqual(env["MO_BACKEND"], "cursor")
-        # No cursor section in the config: the model exports degrade to "".
-        self.assertEqual(env["MO_PLANNER_MODEL"], "")
-        self.assertEqual(env["MO_EXECUTOR_MODEL"], "")
+        # No cursor section in the config: the model exports fall back to the
+        # shipped cursor defaults, so the run works instead of failing deep in
+        # run-agent.sh with an empty MO_PLANNER_MODEL.
+        self.assertEqual(env["MO_PLANNER_MODEL"], "composer-2")
+        self.assertEqual(env["MO_EXECUTOR_MODEL"], "composer-2")
 
     def test_legacy_models_export_opencode_models(self) -> None:
         mod = load_run_pipeline()
