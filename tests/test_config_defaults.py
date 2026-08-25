@@ -22,26 +22,30 @@ class ApplyDefaultsTest(unittest.TestCase):
         self.assertEqual(cfg["workflow"]["adr_dir"], "architecture")
         self.assertTrue(cfg["workflow"]["human_gates"])
         self.assertFalse(cfg["workflow"]["use_serve"])
-        # The motivation loop is effectively unlimited since ADR-0011: its
-        # ceiling is a workflow literal, so no config key exists for it.
-        self.assertNotIn("max_motivation_iterations", cfg["workflow"])
-        self.assertNotIn("max_proposal_iterations", cfg["workflow"])
-        # Empty config: no backend sections are fabricated (the active
-        # backend's models are required by validation instead).
-        self.assertNotIn("opencode", cfg)
+        # The ACTIVE backend's models are filled with the shipped defaults
+        # (the inactive section is never fabricated).
+        self.assertEqual(
+            cfg["opencode"]["models"]["planner"],
+            {"provider": "opencode", "model": "big-pickle", "reasoning": "max"},
+        )
         self.assertNotIn("cursor", cfg)
 
     def test_none_raw_is_treated_as_empty(self) -> None:
         cfg = config.apply_defaults(None)
         self.assertEqual(cfg["backend"], "opencode")
-        self.assertNotIn("opencode", cfg)
+        self.assertIn("opencode", cfg)
         self.assertNotIn("cursor", cfg)
 
     def test_legacy_models_fold_into_opencode(self) -> None:
         cfg = config.apply_defaults({"models": {"planner": {"provider": "p", "model": "m"}}})
         self.assertNotIn("models", cfg)
         self.assertEqual(cfg["opencode"]["models"]["planner"]["reasoning"], "max")
-        self.assertEqual(cfg["opencode"]["models"]["executor"], {"reasoning": "max"})
+        # The executor role is missing from the legacy section: it is filled
+        # with the active backend's shipped defaults.
+        self.assertEqual(
+            cfg["opencode"]["models"]["executor"],
+            {"provider": "opencode", "model": "big-pickle", "reasoning": "max"},
+        )
         self.assertIn("state_dir", cfg["workflow"])
 
     def test_explicit_opencode_section_wins_over_legacy_models(self) -> None:
@@ -63,6 +67,48 @@ class ApplyDefaultsTest(unittest.TestCase):
         cfg = config.apply_defaults({"cursor": {"models": {"planner": {"model": "composer-2"}}}})
         self.assertEqual(cfg["cursor"]["models"]["planner"]["model"], "composer-2")
         self.assertEqual(cfg["cursor"]["models"]["executor"], {})
+
+    def test_switch_to_cursor_fills_missing_section(self) -> None:
+        # A legacy pre-cursor config (opencode models only) edited to
+        # `backend: cursor` via `modus-operandi edit`: the missing cursor
+        # section is filled with the shipped defaults, so the switch applies
+        # instead of failing validation and rolling back.
+        cfg = config.apply_defaults(
+            {
+                "backend": "cursor",
+                "models": {
+                    "planner": {"provider": "opencode", "model": "big-pickle"},
+                    "executor": {"provider": "opencode", "model": "big-pickle"},
+                },
+            }
+        )
+        self.assertEqual(cfg["cursor"]["models"]["planner"], {"model": "composer-2"})
+        self.assertEqual(cfg["cursor"]["models"]["executor"], {"model": "composer-2"})
+        config.validate_config(cfg, None)
+
+    def test_fill_never_overwrites_existing_values(self) -> None:
+        # An existing value (even a placeholder) is preserved: validation
+        # still rejects the placeholder instead of silently running with it.
+        cfg = config.apply_defaults(
+            {
+                "backend": "cursor",
+                "cursor": {"models": {"planner": {"model": "<planner-slug>"}}},
+            }
+        )
+        self.assertEqual(cfg["cursor"]["models"]["planner"]["model"], "<planner-slug>")
+        with self.assertRaises(InstallError) as cm:
+            config.validate_config(cfg, None)
+        self.assertIn("placeholder", str(cm.exception))
+
+    def test_fill_skips_structurally_invalid_active_section(self) -> None:
+        # A non-mapping active section is left for validation to reject, not
+        # silently replaced by the defaults.
+        with self.assertRaises(InstallError) as cm:
+            config.apply_defaults({"backend": "cursor", "cursor": "oops"})
+        self.assertIn("cursor must be a mapping", str(cm.exception))
+        with self.assertRaises(InstallError) as cm:
+            config.apply_defaults({"backend": "cursor", "cursor": {"models": 123}})
+        self.assertIn("cursor.models must be a mapping", str(cm.exception))
 
     def test_opencode_models_complete_predicate(self) -> None:
         # The single predicate shared by render_agents (writes agent files)

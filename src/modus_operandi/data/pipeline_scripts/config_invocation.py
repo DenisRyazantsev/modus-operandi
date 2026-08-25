@@ -26,6 +26,24 @@ CONFIG_PATH = Path(
 # fallback for an invalid config value).
 BACKENDS = ("opencode", "cursor")
 
+# The shipped per-backend default role model slugs, mirroring
+# modus_operandi/config.py (DEFAULT_MODELS). The wrapper reads the raw YAML
+# without apply_defaults, so a model missing from the ACTIVE backend's
+# section (a legacy config without a cursor section, a --backend override on
+# a config that does not configure the backend) falls back to the shipped
+# default instead of exporting an empty MO_*_MODEL that fails deep in
+# run-agent.sh. Keep the two in sync.
+_DEFAULT_MODELS: dict[str, dict[str, dict[str, str]]] = {
+    "opencode": {
+        "planner": {"model": "big-pickle"},
+        "executor": {"model": "big-pickle"},
+    },
+    "cursor": {
+        "planner": {"model": "composer-2"},
+        "executor": {"model": "composer-2"},
+    },
+}
+
 
 def normalize_config(cfg: dict[str, Any]) -> dict[str, Any]:
     """Fold the legacy top-level `models:` into `opencode.models`.
@@ -90,10 +108,14 @@ def sound_settings(cfg: dict[str, Any], config_path: Path) -> tuple[bool, str]:
 
 
 def role_model(cfg: dict[str, Any], backend: str, role: str) -> str:
-    """Model slug of a role under the active backend ("" when unset).
+    """Model slug of a role under the active backend.
 
     The opencode agent files carry the opencode model; the exported value is
-    only consumed by the cursor branch of run-agent.sh/name-task.sh.
+    only consumed by the cursor branch of run-agent.sh/name-task.sh. A model
+    missing from the active backend's section falls back to the shipped
+    default (_DEFAULT_MODELS, mirroring the installer's apply_defaults), so a
+    legacy config or a `--backend` override on a config that does not
+    configure the backend still runs instead of exporting an empty value.
     """
     section = cfg.get("cursor") if backend == "cursor" else cfg.get("opencode")
     if not isinstance(section, dict):
@@ -107,7 +129,10 @@ def role_model(cfg: dict[str, Any], backend: str, role: str) -> str:
     model = models.get(role)
     model = model if isinstance(model, dict) else {}
     value = model.get("model")
-    return value if isinstance(value, str) else ""
+    if isinstance(value, str) and value:
+        return value
+    default = _DEFAULT_MODELS.get(backend, {}).get(role, {}).get("model")
+    return default if isinstance(default, str) else ""
 
 
 def load_config(config_path: Path | None = None) -> dict[str, Any]:

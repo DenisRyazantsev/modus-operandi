@@ -96,6 +96,10 @@ By default, opencode is used. If you need the cursor backend, use the
 modus-operandi --backend cursor task "<task-description>"
 ```
 
+Cursor runs on its default `composer-2` model for planning, review and
+implementation when no `cursor:` section is configured yet; set your own
+model slugs with `modus-operandi edit`.
+
 ### Config
 
 ```shell

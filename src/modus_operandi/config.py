@@ -23,6 +23,24 @@ DEFAULT_ADR_DIR = "architecture"
 DEFAULT_BACKEND = "opencode"
 BACKENDS = ("opencode", "cursor")
 
+# The shipped per-backend role model defaults, mirroring config.example.yml
+# (opencode: the free OpenCode Zen big-pickle; cursor: Cursor's default
+# composer-2). apply_defaults fills the ACTIVE backend's missing role models
+# from these, so switching backends with `modus-operandi edit` works out of
+# the box even on a config created before the backend's section existed
+# (e.g. a legacy pre-cursor config); an existing value (even a placeholder)
+# is never overwritten, so validation still catches placeholders.
+DEFAULT_MODELS: dict[str, dict[str, dict[str, str]]] = {
+    "opencode": {
+        "planner": {"provider": "opencode", "model": "big-pickle", "reasoning": DEFAULT_REASONING},
+        "executor": {"provider": "opencode", "model": "big-pickle", "reasoning": DEFAULT_REASONING},
+    },
+    "cursor": {
+        "planner": {"model": "composer-2"},
+        "executor": {"model": "composer-2"},
+    },
+}
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "backend": DEFAULT_BACKEND,
     "workflow": {
@@ -94,6 +112,45 @@ def opencode_models_complete(cfg: dict[str, Any]) -> bool:
     )
 
 
+def _fill_default_models(cfg: dict[str, Any], backend: str) -> None:
+    """Fill the ACTIVE backend's missing role models with the shipped defaults.
+
+    Only the active backend is completed (DEFAULT_MODELS): switching backends
+    with `modus-operandi edit` must not fail on a config that predates the
+    target backend's section (e.g. a legacy config without a cursor section),
+    while the inactive section stays untouched — an empty opencode section
+    keeps rendering no agent files. Existing values are never overwritten (a
+    placeholder value stays and fails validation), and a structurally invalid
+    section is left alone for the per-section validation below to reject.
+    """
+    defaults = DEFAULT_MODELS.get(backend)
+    if defaults is None:
+        return
+    section = cfg.get(backend)
+    if section is None:
+        section = {}
+    if not isinstance(section, dict):
+        return
+    models = section.get("models")
+    if models is None:
+        models = {}
+    if not isinstance(models, dict):
+        return
+    for role in ("planner", "executor"):
+        model = models.get(role)
+        if model is None:
+            model = {}
+        if not isinstance(model, dict):
+            continue
+        merged = dict(defaults[role])
+        for key, value in model.items():
+            if value is not None:
+                merged[key] = value
+        models[role] = merged
+    section["models"] = models
+    cfg[backend] = section
+
+
 def apply_defaults(raw: Any) -> dict[str, Any]:
     # Same guard as load_config: raw may be None (treated as empty config) but
     # any other non-mapping top level is a user error, not a TypeError.
@@ -108,6 +165,10 @@ def apply_defaults(raw: Any) -> dict[str, Any]:
             cfg["opencode"] = {"models": cfg["models"]}
         del cfg["models"]
     cfg.setdefault("backend", DEFAULT_BACKEND)
+    # Complete the active backend's models (see _fill_default_models): the
+    # active section is always usable out of the box, the inactive one is
+    # validated structurally below, nothing more.
+    _fill_default_models(cfg, cfg["backend"])
     workflow = cfg.get("workflow") or {}
     if not isinstance(workflow, dict):
         raise InstallError("invalid config.yml: workflow must be a mapping")
