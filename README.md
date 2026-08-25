@@ -1,5 +1,8 @@
 # Modus Operandi 🤌
 
+[![PyPI version](https://img.shields.io/pypi/v/modus-operandi.svg)](https://pypi.org/project/modus-operandi/)
+[![Python versions](https://img.shields.io/pypi/pyversions/modus-operandi.svg)](https://pypi.org/project/modus-operandi/)
+
 Automate spec-driven "planner -> executor" workflows in LLM clients (opencode
 and cursor): task planning, task implementing and code review.
 
