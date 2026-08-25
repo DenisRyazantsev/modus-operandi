@@ -58,21 +58,25 @@ def resolve_editor() -> list[str] | None:
 def resolve_feedback_editor() -> tuple[str, list[str]] | None:
     """Resolve the platform editor for the feedback gates (ADR-0011).
 
-    Returns (mode, cmd): mode is "waited" — run the editor blocking and
-    answer the gate with `continue` on close — or "detached" — launch it in
-    a separate window and leave the gate interactive (the user presses
-    `continue`). None means no editor is available at all.
+    Returns (mode, cmd): mode is "detached" — launch the editor in a
+    separate window and leave the gate interactive (the user presses
+    `continue` in the terminal) — or "waited" — run the editor blocking in
+    the terminal and answer the gate with `continue` on close. None means
+    no editor is available at all.
 
-    macOS: TextEdit via `open -a TextEdit -W` (always installed; the -W flag
-    blocks until the app closes), waited. Linux: GNOME Text Editor in a
-    separate window — Flatpak first (checked via `flatpak info
+    macOS: TextEdit via `open -a TextEdit` (always installed), detached —
+    the -W flag is deliberately NOT used: it waits for the whole app to
+    quit (closing the document window is not enough, and an already-running
+    TextEdit makes `open -W` block until THAT instance exits), which hung
+    the run at the feedback gate with no menu on screen. Linux: GNOME Text
+    Editor in a separate window — Flatpak first (checked via `flatpak info
     org.gnome.TextEditor`), then the RPM binary, then the generic desktop
     opener (gio, then xdg-open) — all detached, since these launchers return
     immediately. Fallback: the terminal chain ($VISUAL, $EDITOR, nano, vi),
     waited.
     """
     if sys.platform == "darwin":
-        return "waited", ["open", "-a", "TextEdit", "-W"]
+        return "detached", ["open", "-a", "TextEdit"]
     if sys.platform.startswith("linux"):
         if shutil.which("flatpak"):
             try:

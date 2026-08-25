@@ -18,11 +18,15 @@ to specify (keeping sys.stdin.isatty() True inside it) and terminal input is
 forwarded into the master end, so interactive gates keep working while the
 wrapper can answer the feedback gate itself. When that gate opens
 the wrapper creates <state_dir>/tasks/current/feedback.md (never overwriting
-an existing file), opens it in the terminal editor ($VISUAL, then $EDITOR,
-then nano, then vi), and on editor close answers the gate with `continue` so
-the workflow resumes (study-revise reads feedback.md). If no editor can run
-(non-TTY or none found), the file is still created and the gate stays
-interactive for manual input. On a non-TTY run no pty is used and specify
+an existing file) and opens it in the platform editor — macOS TextEdit and
+the Linux GUI open in a separate window and the run NEVER waits for the
+editor: the gate stays interactive and the user answers it in the terminal
+(`continue`/`abort`) after closing the editor; without a GUI the editor runs
+in the terminal ($VISUAL, then $EDITOR, then nano, then vi) and the wrapper
+answers the gate with `continue` on editor close so the workflow resumes
+(study-revise reads feedback.md). If no editor can run (non-TTY or none
+found), the file is still created and the gate stays interactive for manual
+input. On a non-TTY run no pty is used and specify
 keeps the inherited stdin, so gates keep going PAUSED exactly as before.
 
 When the run finishes (success, failure or abort alike) the wrapper prints a

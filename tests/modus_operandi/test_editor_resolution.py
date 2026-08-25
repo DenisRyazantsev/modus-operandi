@@ -6,14 +6,30 @@ executable files and control PATH, so shutil.which performs a genuine
 lookup instead of a stub.
 """
 
+import importlib.util
 import io
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests.env_sandbox import env, stderr
 
 from .helpers import load_modus_operandi
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_EDITOR_SRC = REPO_ROOT / "src" / "modus_operandi" / "editor.py"
+
+
+def _load_editor() -> types.ModuleType:
+    """The launcher's editor.py as a module (resolve_feedback_editor is not
+    re-exported by cli.py, so it is loaded from source directly)."""
+    spec = importlib.util.spec_from_file_location("editor_under_test", _EDITOR_SRC)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class EditorResolutionTest(unittest.TestCase):
@@ -96,6 +112,65 @@ class EditorResolutionTest(unittest.TestCase):
         ):
             self.assertEqual(self.mod.resolve_editor(), ["nano"])
         self.assertIn("malformed", err.getvalue())
+
+
+class FeedbackEditorResolutionTest(unittest.TestCase):
+    """resolve_feedback_editor: the platform editor for the feedback gates.
+
+    macOS TextEdit and the Linux GUI are "detached" (separate window, the
+    gate stays interactive — the user answers `continue` in the terminal);
+    the no-GUI fallback is the "waited" terminal chain (the wrapper answers
+    the gate on editor close)."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.editor = _load_editor()
+        self.bin = Path(self.tmp.name) / "bin"
+        self.bin.mkdir()
+
+    def _make(self, *names: str) -> None:
+        for name in names:
+            (self.bin / name).write_text("#!/bin/sh\nexit 0\n")
+            (self.bin / name).chmod(0o755)
+
+    def test_macos_textedit_is_detached_without_wait(self) -> None:
+        # Regression: `open -a TextEdit -W` waited for the whole TextEdit app
+        # to QUIT (closing the document window is not enough, and an
+        # already-running instance made it block until THAT instance exited),
+        # hanging the run at the feedback gate with the menu never drawn.
+        # The macOS branch must be detached like the Linux GUI one: the gate
+        # stays interactive and the user presses continue in the terminal.
+        with mock.patch("sys.platform", "darwin"):
+            self.assertEqual(
+                self.editor.resolve_feedback_editor(),
+                ("detached", ["open", "-a", "TextEdit"]),
+            )
+
+    def test_linux_gui_is_detached(self) -> None:
+        # flatpak wins when it reports the GNOME Text Editor installed...
+        self._make("flatpak", "gnome-text-editor")
+        with mock.patch("sys.platform", "linux"), env({"PATH": str(self.bin)}, clear=True):
+            self.assertEqual(
+                self.editor.resolve_feedback_editor(),
+                ("detached", ["flatpak", "run", "org.gnome.TextEditor"]),
+            )
+            # The generic binary wins when the probe fails.
+            self.bin.joinpath("flatpak").write_text("#!/bin/sh\nexit 1\n")
+            mode, cmd = self.editor.resolve_feedback_editor()
+        self.assertEqual(mode, "detached")
+        self.assertIn("gnome-text-editor", cmd)
+
+    def test_no_gui_falls_back_to_waited_terminal_chain(self) -> None:
+        # No GUI launcher on PATH: the terminal chain (nano here) is the
+        # waited editor — the wrapper answers the gate on editor close.
+        self._make("nano")
+        with mock.patch("sys.platform", "linux"), env({"PATH": str(self.bin)}, clear=True):
+            self.assertEqual(self.editor.resolve_feedback_editor(), ("waited", ["nano"]))
+
+    def test_no_editor_at_all_returns_none(self) -> None:
+        with mock.patch("sys.platform", "linux"), env({"PATH": str(self.bin)}, clear=True):
+            self.assertIsNone(self.editor.resolve_feedback_editor())
 
 
 class EditorCopiesTest(unittest.TestCase):

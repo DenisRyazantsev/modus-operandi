@@ -68,14 +68,14 @@ def open_feedback_editor(
     in the platform editor and, on editor close,
     answers the gate with `continue` so the workflow continues (the revise
     step reads feedback.md).
-    The editor resolution (editor.py) returns a mode: "waited" (macOS
-    TextEdit or the terminal chain) runs the editor blocking and the wrapper
-    answers the gate; "detached" (Linux GUI in a separate window) launches
-    the editor and leaves the gate interactive — the user closes the window
-    and presses `continue`. Returns True when the wrapper answered the gate;
-    False on fallback — no TTY, no editor, or a detached launch — where the
-    file is still created, forwarding is left running and the gate stays
-    interactive for manual input.
+    The editor resolution (editor.py) returns a mode: "detached" (macOS
+    TextEdit, Linux GUI in a separate window) launches the editor and
+    leaves the gate interactive — the user closes the window and presses
+    `continue`; "waited" (the terminal chain) runs the editor blocking and
+    the wrapper answers the gate. Returns True when the wrapper answered
+    the gate; False on fallback — no TTY, no editor, or a detached launch —
+    where the file is still created, forwarding is left running and the
+    gate stays interactive for manual input.
     """
     task_dir = Path.cwd() / state_dir / "tasks" / "current"
     source_doc: Path | None = None
