@@ -51,17 +51,27 @@ def load_config(path: str | Path) -> dict[str, Any]:
     # without special-casing yaml types. A root that is valid YAML but not a
     # mapping (a bare scalar or a list) is the same class of user error, and
     # dict(raw) would otherwise raise an unhandled TypeError instead.
+    # The file is read as BYTES so PyYAML detects the encodings a desktop
+    # editor can save (UTF-8, UTF-16/UTF-32 with BOM); a BOM-less UTF-16 save
+    # falls back to an explicit decode — otherwise `modus-operandi edit`
+    # rejected (and rolled back) a config saved as UTF-16 by a macOS editor.
     # PyYAML is a declared wheel dependency (pyproject.toml `dependencies`),
     # so the import is unconditional.
-    with open(path, encoding="utf-8") as fh:
-        text = fh.read()
     try:
-        raw = yaml.safe_load(text) or {}
-    except yaml.YAMLError as exc:
+        raw = Path(path).read_bytes()
+    except OSError as exc:
+        raise InstallError(f"cannot read config.yml: {exc}") from exc
+    try:
+        try:
+            parsed = yaml.safe_load(raw)
+        except yaml.YAMLError:
+            parsed = yaml.safe_load(raw.decode("utf-16"))
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
         raise InstallError(f"invalid config.yml: {exc}") from exc
-    if not isinstance(raw, dict):
+    raw_cfg = parsed or {}
+    if not isinstance(raw_cfg, dict):
         raise InstallError("invalid config.yml: top-level must be a mapping")
-    return dict(raw)
+    return dict(raw_cfg)
 
 
 def opencode_models_complete(cfg: dict[str, Any]) -> bool:

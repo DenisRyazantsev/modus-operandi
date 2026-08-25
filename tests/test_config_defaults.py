@@ -145,6 +145,49 @@ class ApplyDefaultsTest(unittest.TestCase):
                     config.load_config(path)
                 self.assertIn("top-level must be a mapping", str(cm.exception))
 
+    def test_load_config_missing_file_raises_install_error(self) -> None:
+        # A missing config is a user error on the edit/install paths (the
+        # runtime wrapper is the one that degrades a missing file to the
+        # defaults): it surfaces as a clean InstallError, not a raw
+        # FileNotFoundError traceback.
+        with self.assertRaises(InstallError) as cm:
+            config.load_config(Path("/nonexistent/config.yml"))
+        self.assertIn("cannot read", str(cm.exception))
+
+    def test_load_config_accepts_editor_encodings(self) -> None:
+        # A desktop editor on macOS can save the config as UTF-16 (with or
+        # without BOM): the loader must parse it instead of failing (and
+        # rolling back the edit). Regression: `modus-operandi edit` rejected
+        # such a file and the `backend: cursor` change never stuck.
+        yaml_body = (
+            "backend: cursor\n"
+            "cursor:\n"
+            "  models:\n"
+            "    planner:\n"
+            "      model: composer-2\n"
+            "    executor:\n"
+            "      model: composer-2\n"
+            "workflow: {}\n"
+        )
+        for encoding in ("utf-16", "utf-16-le"):
+            with self.subTest(encoding=encoding), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "config.yml"
+                path.write_bytes(yaml_body.encode(encoding))
+                cfg = config.load_config(path)
+                self.assertEqual(cfg["backend"], "cursor")
+                self.assertEqual(cfg["cursor"]["models"]["planner"]["model"], "composer-2")
+
+    def test_load_config_invalid_encoding_raises_install_error(self) -> None:
+        # A file that is neither valid UTF-8/UTF-16 nor valid YAML (e.g. an
+        # RTF save from TextEdit) surfaces as a clean InstallError with the
+        # parse reason, never a raw traceback.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.yml"
+            path.write_bytes(b"{\\rtf1\\ansi\\ansicpg1252\\cocoartf\n")
+            with self.assertRaises(InstallError) as cm:
+                config.load_config(path)
+            self.assertIn("invalid config.yml", str(cm.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
