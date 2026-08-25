@@ -12,6 +12,7 @@ import io
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any, cast
 from unittest import mock
 
 from tests.env_sandbox import argv, cwd, stdin, stdout
@@ -82,8 +83,8 @@ class MainBrokenConfigTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.yml"
             path.write_bytes(b"backend: [unclosed\n")
-            mod.CONFIG_PATH = path
-            captured: dict[str, object] = {}
+            cast(Any, mod).CONFIG_PATH = path
+            captured: dict[str, Any] = {}
 
             def fake_popen(*a: object, **kw: object) -> FakeProc:
                 captured["spawned"] = True
@@ -109,8 +110,8 @@ class MainBrokenConfigTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.yml"
             path.write_bytes(FRESH_YAML.encode("utf-16"))
-            mod.CONFIG_PATH = path
-            captured: dict[str, object] = {}
+            cast(Any, mod).CONFIG_PATH = path
+            captured: dict[str, Any] = {}
 
             def fake_popen(*a: object, **kw: object) -> FakeProc:
                 captured["env"] = kw.get("env", {})
