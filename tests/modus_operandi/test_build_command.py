@@ -116,6 +116,10 @@ class BuildCommandTest(unittest.TestCase):
         with self.assertRaises(self.mod.HelpRequested):
             self.mod.build_command(["--backend", "cursor", "--help"])
 
+    def test_backend_flag_version_still_prints_version(self) -> None:
+        with self.assertRaises(self.mod.VersionRequested):
+            self.mod.build_command(["--backend", "cursor", "--version"])
+
     def test_review_dangling_dash_i_is_invalid(self) -> None:
         with self.assertRaises(self.mod.InvalidInvocation):
             self.mod.build_command(["review", "-i"])
@@ -249,6 +253,8 @@ class BuildCommandTest(unittest.TestCase):
             self.mod.build_command(["review", "--branch-diff"])
             with self.assertRaises(self.mod.HelpRequested):
                 self.mod.build_command(["--help"])
+            with self.assertRaises(self.mod.VersionRequested):
+                self.mod.build_command(["--version"])
             with self.assertRaises(self.mod.InvalidInvocation):
                 self.mod.build_command([])
             with self.assertRaises(self.mod.InvalidInvocation):
@@ -264,6 +270,26 @@ class BuildCommandTest(unittest.TestCase):
         for argv in (["--help"], ["-h"]):
             with self.assertRaises(self.mod.HelpRequested):
                 self.mod.build_command(argv)
+
+    def test_version_signals_version_requested(self) -> None:
+        for argv in (["--version"], ["-V"]):
+            with self.assertRaises(self.mod.VersionRequested):
+                self.mod.build_command(argv)
+
+    def test_version_then_help_prints_version(self) -> None:
+        # The first flag in the main-command position wins (ADR-0020).
+        with self.assertRaises(self.mod.VersionRequested):
+            self.mod.build_command(["--version", "--help"])
+
+    def test_help_then_version_prints_help(self) -> None:
+        with self.assertRaises(self.mod.HelpRequested):
+            self.mod.build_command(["--help", "--version"])
+
+    def test_version_after_subcommand_is_not_version_request(self) -> None:
+        # `--version` is recognized only in the main-command position: after
+        # `task` it is ordinary task text, not a version request (ADR-0020).
+        cmd = self.mod.build_command(["task", "--version"])
+        self.assertEqual(cmd[-2:], ["-i", "task=--version"])
 
     def test_no_args_is_invalid(self) -> None:
         with self.assertRaises(self.mod.InvalidInvocation):

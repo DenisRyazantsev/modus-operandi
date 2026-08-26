@@ -32,6 +32,7 @@ Usage:
   modus-operandi uninstall [--yes]
   modus-operandi --backend cursor task "task description"   # override the backend for this run
   modus-operandi --help | -h
+  modus-operandi --version | -V   # print the version and exit 0
 
 Examples:
   modus-operandi task "add a dark mode toggle"
@@ -50,7 +51,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from modus_operandi import bootstrap, paths, uninstall
+from modus_operandi import __version__, bootstrap, paths, uninstall
 from modus_operandi.edit_command import _run_edit
 from modus_operandi.editor import resolve_editor
 from modus_operandi.exceptions import (
@@ -58,6 +59,7 @@ from modus_operandi.exceptions import (
     HelpRequested,
     InvalidInvocation,
     UninstallRequested,
+    VersionRequested,
 )
 
 # Public surface of the launcher: the pure mapping, the shared editor
@@ -69,8 +71,14 @@ __all__ = [
     "RUN_PIPELINE",
     "TASK_WORKFLOW",
     "USAGE",
+    "EditRequested",
+    "HelpRequested",
+    "InvalidInvocation",
+    "UninstallRequested",
+    "VersionRequested",
     "build_command",
     "print_usage",
+    "print_version",
     "resolve_editor",
 ]
 
@@ -130,6 +138,9 @@ USAGE = """Usage: modus-operandi <subcommand> [args]
   modus-operandi --help | -h
       Print this help and exit 0.
 
+  modus-operandi --version | -V
+      Print the version and exit 0.
+
 Examples:
   modus-operandi task "add a dark mode toggle"
   modus-operandi task docs/tasks/dark-mode.md
@@ -144,7 +155,8 @@ Examples:
 def build_command(argv: list[str]) -> list[str]:
     """Map modus-operandi argv to the command to execute (pure dispatch).
 
-    Raises HelpRequested for `--help`/`-h`, EditRequested for `edit`,
+    Raises HelpRequested for `--help`/`-h`, VersionRequested for
+    `--version`/`-V`, EditRequested for `edit`,
     UninstallRequested for `uninstall` (carrying the `--yes` flag) and
     InvalidInvocation for an unusable invocation; it never prints anything,
     so mapping stays separate from presentation. The caller owns the usage
@@ -168,6 +180,8 @@ def build_command(argv: list[str]) -> list[str]:
         head, rest = rest[0], rest[1:]
     if head in ("-h", "--help"):
         raise HelpRequested
+    if head in ("-V", "--version"):
+        raise VersionRequested
     if head == "task":
         return _build_task_command(rest, backend)
     if head == "review":
@@ -306,6 +320,15 @@ def print_usage(stream: Any = None) -> None:
     print(USAGE, file=stream)
 
 
+def print_version(stream: Any = None) -> None:
+    """Print the version line; defaults to stdout. Unlike print_usage, no
+    error path uses stderr here — the stream parameter mirrors print_usage
+    for symmetry and testability."""
+    if stream is None:
+        stream = sys.stdout
+    print(f"modus-operandi {__version__}", file=stream)
+
+
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
@@ -314,6 +337,9 @@ def main(argv: list[str] | None = None) -> int:
             cmd = build_command(argv)
         except HelpRequested:
             print_usage()
+            return 0
+        except VersionRequested:
+            print_version()
             return 0
         except InvalidInvocation as exc:
             if str(exc):

@@ -97,6 +97,16 @@ class MainTest(unittest.TestCase):
         self.assertIn("Usage:", captured.getvalue())
         self.assertFalse(mod._LAYOUT["install_version"].exists())
 
+    def test_main_version_exit_zero_without_bootstrap(self) -> None:
+        mod = self.mod
+        for flag in ("--version", "-V"):
+            captured = io.StringIO()
+            with self.subTest(flag=flag), stdout(captured):
+                rc = mod.main([flag])
+            self.assertEqual(rc, 0)
+            self.assertEqual(captured.getvalue().strip(), f"modus-operandi {__version__}")
+            self.assertFalse(mod._LAYOUT["install_version"].exists())
+
     def test_main_no_args_exit_nonzero(self) -> None:
         mod = self.mod
         with stderr(io.StringIO()) as err:
