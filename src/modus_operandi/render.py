@@ -229,6 +229,7 @@ _STEP_SCRIPTS = {
     "show_file": ("show-file.sh", True),
     "validate_inputs": ("validate_inputs.py", False),
     "check_plan_deviation": ("check_plan_deviation.py", False),
+    "check_summary": ("check_summary.py", False),
 }
 
 

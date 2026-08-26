@@ -62,6 +62,7 @@ _SCRIPTS_KEYS = (
     "check_implementation",
     "check_questions",
     "check_plan_deviation",
+    "check_summary",
     "task_utils",
     "adr_utils",
     "agent_call",

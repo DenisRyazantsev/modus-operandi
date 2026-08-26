@@ -171,6 +171,7 @@ class TaskPipelineStructureTest(InstallerTestCase):
             "review-fix-loop",
             "save-adr",
             "pass-check",
+            "summary",
         ):
             self.assertIn(f"- id: {step}", workflow, step)
         order = [
@@ -184,6 +185,7 @@ class TaskPipelineStructureTest(InstallerTestCase):
                 "review-fix-loop",
                 "save-adr",
                 "pass-check",
+                "summary",
             )
         ]
         self.assertEqual(order, sorted(order))
@@ -297,6 +299,7 @@ class TaskPipelineStructureTest(InstallerTestCase):
             "planner-agreement",
             "implement-continue",
             "fix-all",
+            "summary",
         ):
             found = self.find_step(parsed["steps"], step)
             self.assertIsNotNone(found, step)
@@ -323,6 +326,9 @@ class TaskPipelineStructureTest(InstallerTestCase):
             "validate-task-id",
             "validate-task",
             "generate-task-id",
+            "summary-check",
+            "summary-display",
+            "summary-display-file",
         ):
             found = self.find_step(parsed["steps"], step)
             self.assertIsNotNone(found, step)
@@ -363,3 +369,29 @@ class TaskPipelineStructureTest(InstallerTestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("answers.md", executor_questions)
         self.assertIn("QUESTIONS: NONE", executor_questions)
+
+    def test_task_workflow_summary_step(self) -> None:
+        # ADR-0019: the pipeline ends with the executor's final summary - a
+        # missing summary is a warning (never a failure), and the summary is
+        # shown to the user at the very end.
+        self.assertEqual(self.install(), 0)
+        workflow = self._task_workflow_text()
+        parsed = self.parsed_workflow(".config/modus-operandi/task-pipeline.yml")
+        summary = self.find_step(parsed["steps"], "summary")
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary.get("timeout"), 7200)
+        self.assertIn("agent-step.sh", summary["run"])
+        self.assertIn("executor", summary["run"])
+        self.assertIn("summary.md", summary["run"])
+        check = self.find_step(parsed["steps"], "summary-check")
+        self.assertEqual(check.get("continue_on_error"), True)
+        self.assertIn("check_summary.py", check["run"])
+        self.assertIn('check "{{ inputs.state_dir }}" "{{ inputs.task_id }}"', check["run"])
+        branch = self.find_step(parsed["steps"], "summary-display")
+        self.assertEqual(branch["type"], "if")
+        self.assertIn("steps.summary-check.output.exit_code == 0", branch["condition"])
+        display = self.find_step(parsed["steps"], "summary-display-file")
+        self.assertIn("show-file.sh", display["run"])
+        self.assertIn('"tasks/current/summary.md"', display["run"])
+        # The summary is the very last step: after pass-check.
+        self.assertLess(workflow.index("- id: pass-check"), workflow.index("- id: summary"))

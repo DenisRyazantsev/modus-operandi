@@ -90,6 +90,7 @@ def _layout(base: Path) -> Paths:
         "check_implementation": (base / "opencode" / "scripts" / "check_implementation.py"),
         "check_questions": base / "opencode" / "scripts" / "check_questions.py",
         "check_plan_deviation": (base / "opencode" / "scripts" / "check_plan_deviation.py"),
+        "check_summary": base / "opencode" / "scripts" / "check_summary.py",
         "task_utils": base / "opencode" / "scripts" / "task_utils.py",
         "adr_utils": base / "opencode" / "scripts" / "adr_utils.py",
         "agent_call": base / "opencode" / "scripts" / "agent_call.py",

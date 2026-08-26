@@ -51,6 +51,7 @@ If you have a workflow like this
 9. General review (correctness and quality)
 10. Comment review (readability)
 11. Fixing the issues found
+12. The executor writing a final summary of what was done
 ```
 
 The ADR records the decision (what and why) and is published to the
@@ -76,6 +77,7 @@ If you have a workflow like this
 2. Reviewing the whole project for bugs
 3. Comment review (readability)
 4. Fixing the issues found
+5. The executor writing a final summary of what was done
 ```
 
 then you can use this command
