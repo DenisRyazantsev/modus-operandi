@@ -192,6 +192,15 @@ def _escape_shell_text(text: str) -> str:
     return text.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
 
 
+def _path_exists(path: str) -> bool:
+    """True when path names an existing file. A string that cannot be a
+    filename (e.g. too long, triggering ENAMETOOLONG) is not a file."""
+    try:
+        return Path(path).is_file()
+    except OSError:
+        return False
+
+
 def _build_text_input_command(
     rest: list[str], backend: str | None, workflow: str, input_key: str
 ) -> list[str]:
@@ -237,7 +246,11 @@ def _build_text_input_command(
     text = " ".join(text_parts)
     if not text:
         raise InvalidInvocation
-    if len(text_parts) == 1 and Path(text_parts[0]).is_file():
+    try:
+        is_file = Path(text_parts[0]).is_file()
+    except OSError:
+        is_file = False
+    if len(text_parts) == 1 and is_file:
         # File mode (ADR-0018): a single argument naming an existing file is
         # read as the task description.
         try:
@@ -246,7 +259,7 @@ def _build_text_input_command(
             raise InvalidInvocation(f"cannot read task file {text_parts[0]!r}: {exc}") from exc
         if not text.strip():
             raise InvalidInvocation(f"task file {text_parts[0]!r} is empty")
-    elif any(Path(part).is_file() for part in text_parts):
+    elif any(_path_exists(part) for part in text_parts):
         raise InvalidInvocation("pass either a single task file or task text, not both")
     # The pipeline interpolates the text into double-quoted shell arguments
     # and validate-inputs accepts only the escaped forms (ADR-0018): escape
