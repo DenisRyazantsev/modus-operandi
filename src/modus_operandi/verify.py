@@ -70,6 +70,7 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
         "check_implementation",
         "check_questions",
         "check_plan_deviation",
+        "check_summary",
         "task_utils",
         "adr_utils",
         "agent_call",
@@ -174,6 +175,7 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
         "bug-fix.md",
         "fix.md",
         "fix-all.md",
+        "summary.md",
     ):
         if not (paths["prompts"] / rel).is_file():
             errors.append(f"generated prompt missing: {paths['prompts'] / rel}")

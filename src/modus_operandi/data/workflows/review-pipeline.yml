@@ -98,3 +98,35 @@ steps:
       "${MO_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/pass-check.sh"
       "{{ inputs.state_dir }}"
       ""
+
+  # ADR-0019: the very last step of the run - the executor (warm session)
+  # writes a high-level summary of what was done; a missing summary is
+  # unexpected behavior and degrades to a warning (summary-check exits 1,
+  # the step carries continue_on_error), never to a run failure; the
+  # summary is shown through show-file.sh when present.
+  - id: summary
+    type: shell
+    timeout: 7200
+    run: >-
+      "${MO_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/agent-step.sh"
+      "{{ inputs.state_dir }}"
+      executor
+      summary.md
+
+  - id: summary-check
+    type: shell
+    continue_on_error: true
+    run: >-
+      python3 "${MO_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/check_summary.py"
+      check "{{ inputs.state_dir }}" ""
+
+  - id: summary-display
+    type: if
+    condition: "{{ steps.summary-check.output.exit_code == 0 }}"
+    then:
+      - id: summary-display-file
+        type: shell
+        run: >-
+          "${MO_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/show-file.sh"
+          "{{ inputs.state_dir }}"
+          "tasks/current/summary.md"

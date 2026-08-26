@@ -99,6 +99,7 @@ class UninstallTest(InstallerTestCase):
             ".config/opencode/scripts/pass-check.sh",
             ".config/opencode/scripts/validate_inputs.py",
             ".config/opencode/scripts/check_plan_deviation.py",
+            ".config/opencode/scripts/check_summary.py",
             ".local/bin/modus-operandi",
             ".local/bin/editor.py",
             ".local/bin/edit_command.py",

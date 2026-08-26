@@ -131,6 +131,7 @@ class WorkflowStructureTest(InstallerTestCase):
             "determine-scope",
             "review-fix-loop",
             "pass-check",
+            "summary",
         ):
             self.assertIn(f"- id: {step}", review, step)
         self.assertNotIn("- id: report", review)
@@ -178,6 +179,7 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertIn('merge "{{ inputs.state_dir }}" ""', all_runs)
         self.assertIn('pending "{{ inputs.state_dir }}" ""', all_runs)
         self.assertIn("fix-all.md", all_runs)
+        self.assertIn("summary.md", all_runs)
         # determine-scope logic lives in determine-scope.sh.
         determine = (self.home / ".config/opencode/scripts/determine-scope.sh").read_text(
             encoding="utf-8"
@@ -253,6 +255,7 @@ class WorkflowStructureTest(InstallerTestCase):
                 "determine-scope",
                 "review-fix-loop",
                 "pass-check",
+                "summary",
             )
         ]
         self.assertEqual(order, sorted(order))
@@ -569,3 +572,24 @@ class WorkflowStructureTest(InstallerTestCase):
                     0,
                     msg=f"{rel} step {step_id!r} fails sh -n:\n{proc.stderr}",
                 )
+
+    def test_review_workflow_summary_step(self) -> None:
+        # ADR-0019: the review pipeline ends with the same executor summary
+        # (empty task id, resolved through tasks/current).
+        self.assertEqual(self.install(), 0)
+        workflow = (self.home / REVIEW_WF).read_text(encoding="utf-8")
+        parsed = self.parsed_workflow(REVIEW_WF)
+        summary = self.find_step(parsed["steps"], "summary")
+        self.assertIsNotNone(summary)
+        self.assertIn("agent-step.sh", summary["run"])
+        self.assertIn("executor", summary["run"])
+        self.assertIn("summary.md", summary["run"])
+        check = self.find_step(parsed["steps"], "summary-check")
+        self.assertEqual(check.get("continue_on_error"), True)
+        self.assertIn('check "{{ inputs.state_dir }}" ""', check["run"])
+        branch = self.find_step(parsed["steps"], "summary-display")
+        self.assertIn("steps.summary-check.output.exit_code == 0", branch["condition"])
+        display = self.find_step(parsed["steps"], "summary-display-file")
+        self.assertIn("show-file.sh", display["run"])
+        self.assertIn('"tasks/current/summary.md"', display["run"])
+        self.assertLess(workflow.index("- id: pass-check"), workflow.index("- id: summary"))

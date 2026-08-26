@@ -68,6 +68,7 @@ class InstallLayoutTest(InstallerTestCase):
             ".config/opencode/scripts/check_review.py",
             ".config/opencode/scripts/check_implementation.py",
             ".config/opencode/scripts/check_questions.py",
+            ".config/opencode/scripts/check_summary.py",
             ".config/opencode/scripts/task_utils.py",
             ".config/opencode/scripts/adr_utils.py",
             ".config/opencode/scripts/agent_call.py",
