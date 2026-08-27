@@ -22,6 +22,15 @@ class ShowFileTest(unittest.TestCase):
             text=True,
         )
 
+    def _run_block(
+        self, state_dir: Path, file: str, label: str = "summary"
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", str(SCRIPT), str(state_dir), file, "--block", label],
+            capture_output=True,
+            text=True,
+        )
+
     def test_prints_file_without_control_characters(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)
@@ -64,3 +73,40 @@ class ShowFileTest(unittest.TestCase):
                 text=True,
             )
         self.assertEqual(result.returncode, 2)
+
+    def test_block_mode_wraps_output_in_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp)
+            target = state / "tasks" / "current"
+            target.mkdir(parents=True)
+            (target / "summary.md").write_text("# Summary\n\n- item one\n", encoding="utf-8")
+            result = self._run_block(state, "tasks/current/summary.md")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(
+            result.stdout,
+            "MO-BLOCK-START:summary\n# Summary\n\n- item one\nMO-BLOCK-END\n",
+        )
+
+    def test_block_mode_file_without_trailing_newline_keeps_marker_fresh(self) -> None:
+        # A file that does not end with `\n` must not glue MO-BLOCK-END to
+        # its last content line: the end marker starts a fresh line, and
+        # no extra blank line appears when the file already ends with `\n`.
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp)
+            target = state / "tasks" / "current"
+            target.mkdir(parents=True)
+            (target / "summary.md").write_text("# Summary\n\n- item one", encoding="utf-8")
+            result = self._run_block(state, "tasks/current/summary.md")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(
+            result.stdout,
+            "MO-BLOCK-START:summary\n# Summary\n\n- item one\nMO-BLOCK-END\n",
+        )
+
+    def test_block_mode_missing_file_prints_no_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp)
+            result = self._run_block(state, "tasks/current/missing.md")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertNotEqual(result.stderr, "")
