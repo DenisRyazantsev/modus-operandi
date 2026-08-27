@@ -3,11 +3,13 @@ table rows, and number/format helpers.
 
 One responsibility: the wrapper's console formatting — the `[hh:mm:ss]`
 timestamp primitive, the captured stdout/stderr of finished steps
-re-emitted as `[harness]` rows of the aligned log table (ADR-0016), and
-the number/format helpers (thousands separators, HH:MM:SS durations,
-compact minutes). Consumed by run_pipeline.py, live_monitor.py,
-live_lines.py, table_format.py, run_statistics.py and latency_table.py;
-nothing here reads or writes state.
+re-emitted as `[harness]` rows of the aligned log table (ADR-0016) or as
+document blocks (ADR-0021 — the content between marker lines prints as a
+free-form block from the left margin), and the number/format helpers
+(thousands separators, HH:MM:SS durations, compact minutes). Consumed by
+run_pipeline.py, live_monitor.py, live_lines.py, table_format.py,
+run_statistics.py and latency_table.py; nothing here reads or writes
+state.
 """
 
 from __future__ import annotations
@@ -55,15 +57,56 @@ def fmt_minutes(seconds: float) -> str:
 SESSION_PREFIX = "SESSION:"
 
 
+# The document-block protocol (ADR-0021): a step that wants its captured
+# stdout shown as a free-form block (not as per-line table rows) wraps the
+# content in these marker lines. The FIRST stdout line must be the begin
+# marker `MO-BLOCK-START:<label>`; the first later line equal to BLOCK_END
+# closes the block. Matching is whole-line after rstrip; a begin marker
+# without a matching end marker (torn output) falls back to the per-line
+# table rows. The marker strings are chosen to be distinctive (precedent:
+# GHA ::group::, PGP/PEM armor) and are consumed by the wrapper, never
+# printed.
+BLOCK_START_PREFIX = "MO-BLOCK-START:"
+BLOCK_END = "MO-BLOCK-END"
+
+
+def _stdout_block(stdout: str) -> tuple[str, list[str]] | None:
+    """The (label, lines) of a document block in captured stdout, or None.
+
+    The block protocol (ADR-0021): the first stdout line must be the begin
+    marker `MO-BLOCK-START:<label>` and a later line must equal BLOCK_END;
+    the label may be empty. Returns the enclosed lines verbatim (each
+    rstripped, empty lines kept). A begin marker without a matching end
+    marker returns None: the caller falls back to the per-line table rows
+    and never raises. A stdout that does not start with the marker also
+    returns None (ordinary step output).
+    """
+    lines = stdout.splitlines()
+    if not lines:
+        return None
+    first = lines[0].rstrip()
+    if not first.startswith(BLOCK_START_PREFIX):
+        return None
+    label = first[len(BLOCK_START_PREFIX) :].strip()
+    for index in range(1, len(lines)):
+        if lines[index].rstrip() == BLOCK_END:
+            return label, [line.rstrip() for line in lines[1:index]]
+    return None
+
+
 def step_output_rows(result: dict[str, Any], layout: TableLayout) -> list[str]:
     """The captured stdout/stderr of a finished step as `[harness]` table rows.
 
     No step-marker line (ADR-0016): the pinned live line above already
     names the step, so the step column stays empty. `SESSION:` lines and
     empty lines are dropped; stderr lines keep the `[err] ` prefix. A
-    malformed step result (a non-dict `output`, e.g. a torn state.json
-    write) degrades to no rows: one broken step must not raise inside the
-    monitor thread and silently kill the live status.
+    marker-wrapped stdout (ADR-0021) renders as one announcement row and
+    then the document verbatim from the left margin — the `SESSION:`/
+    empty-line filtering and the table row formatting apply to the
+    fallback (non-block) path only. A malformed step result (a non-dict
+    `output`, e.g. a torn state.json write) degrades to no rows: one
+    broken step must not raise inside the monitor thread and silently
+    kill the live status.
     """
     rows: list[str] = []
     out = result.get("output")
@@ -76,11 +119,21 @@ def step_output_rows(result: dict[str, Any], layout: TableLayout) -> list[str]:
     stdout = stdout if isinstance(stdout, str) else ""
     stderr = out.get("stderr")
     stderr = stderr if isinstance(stderr, str) else ""
-    for line in stdout.splitlines():
-        line = line.rstrip()
-        if not line or line.startswith(SESSION_PREFIX):
-            continue
-        rows.append(layout.row("harness", " ", layout.empty_step(), line))
+    block = _stdout_block(stdout)
+    if block is not None:
+        # ADR-0021: one announcement row (table format, empty step column,
+        # label + colon), then the document verbatim from the left margin;
+        # the marker lines are consumed and never printed.
+        label, lines = block
+        tail = f"{label}:" if label else ""
+        rows.append(layout.row("harness", " ", layout.empty_step(), tail))
+        rows.extend(lines)
+    else:
+        for line in stdout.splitlines():
+            line = line.rstrip()
+            if not line or line.startswith(SESSION_PREFIX):
+                continue
+            rows.append(layout.row("harness", " ", layout.empty_step(), line))
     for line in stderr.splitlines():
         line = line.rstrip()
         if not line:

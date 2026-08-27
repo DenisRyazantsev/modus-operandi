@@ -137,6 +137,87 @@ class TableFormatTest(unittest.TestCase):
             rows = mod.step_output_rows(result, layout)
         self.assertEqual(rows, [])
 
+    def test_step_output_rows_renders_document_block(self) -> None:
+        # ADR-0021: a marker-wrapped stdout renders as one announcement row
+        # plus the document lines verbatim from the left margin; the marker
+        # lines are consumed.
+        mod = load_run_pipeline()
+        layout = mod.table_format.TableLayout(tty=False)
+        result = {
+            "status": "completed",
+            "output": {
+                "stdout": (
+                    "MO-BLOCK-START:summary\n"
+                    "# Summary\n"
+                    "\n"
+                    "- item one\n"
+                    "long paragraph line\n"
+                    "MO-BLOCK-END\n"
+                ),
+                "stderr": "",
+            },
+        }
+        with mock.patch.object(sys.modules["table_format"], "stamp", return_value="07:51:37"):
+            rows = mod.step_output_rows(result, layout)
+        self.assertEqual(len(rows), 5)
+        self.assertTrue(rows[0].startswith("[07:51:37] [harness]"))
+        self.assertIn("summary:", rows[0])
+        self.assertEqual(rows[1], "# Summary")
+        self.assertEqual(rows[2], "")
+        self.assertEqual(rows[3], "- item one")
+        self.assertEqual(rows[4], "long paragraph line")
+        for row in rows:
+            self.assertNotIn("MO-BLOCK", row)
+
+    def test_step_output_rows_block_empty_label(self) -> None:
+        # A begin marker without a label: the announcement row carries no
+        # tail; the block content still prints verbatim.
+        mod = load_run_pipeline()
+        layout = mod.table_format.TableLayout(tty=False)
+        result = {
+            "status": "completed",
+            "output": {"stdout": "MO-BLOCK-START:\nline one\nMO-BLOCK-END\n", "stderr": ""},
+        }
+        with mock.patch.object(sys.modules["table_format"], "stamp", return_value="07:51:37"):
+            rows = mod.step_output_rows(result, layout)
+        self.assertEqual(len(rows), 2)
+        self.assertNotIn("MO-BLOCK", rows[0])
+        self.assertEqual(rows[1], "line one")
+
+    def test_step_output_rows_torn_block_falls_back_to_rows(self) -> None:
+        # A begin marker without a matching end marker (torn output) falls
+        # back to the per-line rows, marker line included; never raises.
+        mod = load_run_pipeline()
+        layout = mod.table_format.TableLayout(tty=False)
+        result = {
+            "status": "completed",
+            "output": {"stdout": "MO-BLOCK-START:summary\nline one\n", "stderr": ""},
+        }
+        with mock.patch.object(sys.modules["table_format"], "stamp", return_value="07:51:37"):
+            rows = mod.step_output_rows(result, layout)
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(rows[0].startswith("[07:51:37] [harness]"))
+        self.assertIn("MO-BLOCK-START:summary", rows[0])
+        self.assertIn("line one", rows[1])
+
+    def test_step_output_rows_block_stderr_keeps_err_prefix(self) -> None:
+        # The block protocol applies to stdout only: stderr still renders
+        # as an [err] row after the block.
+        mod = load_run_pipeline()
+        layout = mod.table_format.TableLayout(tty=False)
+        result = {
+            "status": "completed",
+            "output": {
+                "stdout": "MO-BLOCK-START:summary\nline one\nMO-BLOCK-END\n",
+                "stderr": "boom",
+            },
+        }
+        with mock.patch.object(sys.modules["table_format"], "stamp", return_value="07:51:37"):
+            rows = mod.step_output_rows(result, layout)
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[1], "line one")
+        self.assertIn("[err] boom", rows[2])
+
 
 if __name__ == "__main__":
     unittest.main()

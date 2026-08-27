@@ -371,3 +371,4 @@ steps:
           "${MO_SCRIPTS_DIR:-$HOME/.config/opencode/scripts}/show-file.sh"
           "{{ inputs.state_dir }}"
           "tasks/current/summary.md"
+          --block summary

@@ -393,5 +393,6 @@ class TaskPipelineStructureTest(InstallerTestCase):
         display = self.find_step(parsed["steps"], "summary-display-file")
         self.assertIn("show-file.sh", display["run"])
         self.assertIn('"tasks/current/summary.md"', display["run"])
+        self.assertIn("--block summary", display["run"])
         # The summary is the very last step: after pass-check.
         self.assertLess(workflow.index("- id: pass-check"), workflow.index("- id: summary"))
