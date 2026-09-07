@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from unittest import mock
 
-from modus_operandi import installer_cli, uninstall
+from modus_operandi import installer_cli
 
 from .installer_test_case import InstallerTestCase
 
@@ -29,9 +29,17 @@ class DevLauncherTest(InstallerTestCase):
         target = self.home / ".local/bin/modus-operandi"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("#!/bin/sh\necho pip\n", encoding="utf-8")
-        # pip_installed_bin returns RESOLVED paths (RECORD entries contain
-        # .. components), which is what _render_launcher compares against.
-        with mock.patch.object(uninstall, "pip_installed_bin", return_value={target.resolve()}):
+        # The pip RECORD is faked at the documented service boundary
+        # (importlib.metadata, see workspace.md): uninstall.pip_installed_bin
+        # runs for real and reports the resolved launcher as pip-owned, which
+        # is what _render_launcher compares against.
+        recorded = mock.Mock()
+        recorded.locate.return_value = str(target.resolve())
+        dist = mock.Mock()
+        dist.files = [recorded]
+        with mock.patch(
+            "modus_operandi.uninstall.importlib.metadata.distribution", return_value=dist
+        ):
             rc, _ = self.run_main(["--home", str(self.home)])
         self.assertEqual(rc, 0)
         self.assertEqual(target.read_text(encoding="utf-8"), "#!/bin/sh\necho pip\n")
