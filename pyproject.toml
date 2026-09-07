@@ -38,6 +38,10 @@ dev = [
     "pytest~=9.1.1",
     "ruff~=0.16.4",
     "mypy~=2.3.1",
+    # coverage.py >= 7.6 carries per-function data in its JSON report
+    # (test_reports.py parses it for the tests review kind, ADR-0022). The
+    # 7.x line is pinned: a future 8.x could reshape that JSON.
+    "coverage~=7.6",
     # types-PyYAML does not follow semver: the version is the targeted
     # PyYAML version + a typeshed calver (date) suffix, and any stub update
     # can change type-checking results. Pin exactly.
@@ -51,6 +55,19 @@ lint.select = ["E", "F", "I", "W", "B", "UP", "SIM"]
 # CI scripts live in the hidden .github/ tree, which ruff skips by default;
 # they are first-class code and must be linted like everything else.
 extend-include = [".github/scripts/*.py"]
+
+[tool.pytest.ini_options]
+# The whole suite lives under tests/; the root-level report generator
+# (test_reports.py) matches the default `test_*.py` pattern and must not be
+# collected as a test module by an argument-less `uv run pytest`. The
+# patterns are matched against the repo-root-relative path (a `*` crosses
+# path separators, so the second pattern covers every nesting depth).
+python_files = [
+    "tests/test_*.py",
+    "tests/*/test_*.py",
+    "tests/*_test.py",
+    "tests/*/*_test.py",
+]
 
 [tool.mypy]
 python_version = "3.12"

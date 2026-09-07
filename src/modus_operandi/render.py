@@ -56,11 +56,11 @@ def _agent_markdown(
     return frontmatter + body
 
 
-# The four reviewer agents (one per review kind) render with the planner's
+# The five reviewer agents (one per review kind) render with the planner's
 # model: reviews are an analysis task of the same difficulty as planning
 # (ADR-0017: the reviewers review in their own fresh sessions, never in a
 # fork of the planner session).
-REVIEWER_KINDS: tuple[str, ...] = ("srp", "bugs", "review", "comment")
+REVIEWER_KINDS: tuple[str, ...] = ("srp", "bugs", "review", "comment", "tests")
 
 
 def _reviewer_agent_name(kind: str) -> str:

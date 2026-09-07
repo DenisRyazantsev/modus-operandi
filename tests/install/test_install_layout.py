@@ -24,6 +24,7 @@ class InstallLayoutTest(InstallerTestCase):
             ".config/opencode/agent/reviewer-bugs.md",
             ".config/opencode/agent/reviewer-review.md",
             ".config/opencode/agent/reviewer-comment.md",
+            ".config/opencode/agent/reviewer-tests.md",
             ".config/opencode/scripts/run-agent.sh",
             ".config/opencode/scripts/name-task.sh",
             ".config/opencode/scripts/planner-body.txt",
@@ -32,6 +33,7 @@ class InstallLayoutTest(InstallerTestCase):
             ".config/opencode/scripts/reviewer-bugs-body.txt",
             ".config/opencode/scripts/reviewer-review-body.txt",
             ".config/opencode/scripts/reviewer-comment-body.txt",
+            ".config/opencode/scripts/reviewer-tests-body.txt",
             # run-agent.sh is split one concern per file: the session store
             # and the cursor backend are sourced, prompt_subst.sh is called.
             ".config/opencode/scripts/session_store.sh",
@@ -78,6 +80,9 @@ class InstallLayoutTest(InstallerTestCase):
             ".config/modus-operandi/config.example.yml",
             ".config/modus-operandi/install-version.txt",
             ".config/modus-operandi/prompts/review/srp-review.md",
+            ".config/modus-operandi/prompts/review/tests-review.md",
+            ".config/modus-operandi/prompts/review/tests-rereview.md",
+            ".config/modus-operandi/prompts/adr/tests-review.md",
             ".config/modus-operandi/prompts/adr/implement.md",
             ".config/modus-operandi/prompts/task/study.md",
             ".config/modus-operandi/prompts/srp-fix.md",
@@ -132,7 +137,7 @@ class InstallLayoutTest(InstallerTestCase):
         # the executor's; each reviewer agent carries its own review rules
         # as its system prompt (e.g. the SRP reviewer has the SRP rules).
         self.assertEqual(self.install(), 0)
-        for kind in ("srp", "bugs", "review", "comment"):
+        for kind in ("srp", "bugs", "review", "comment", "tests"):
             agent = (self.home / ".config/opencode/agent" / f"reviewer-{kind}.md").read_text(
                 encoding="utf-8"
             )

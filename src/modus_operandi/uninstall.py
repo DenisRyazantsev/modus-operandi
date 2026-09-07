@@ -28,6 +28,7 @@ _SCRIPTS_KEYS = (
     "reviewer-bugs_body",
     "reviewer-review_body",
     "reviewer-comment_body",
+    "reviewer-tests_body",
     "session_store",
     "run_agent_cursor",
     "prompt_subst",
@@ -146,6 +147,7 @@ def do_uninstall(paths: Paths, yes: bool) -> int:
         paths["agents"] / "reviewer-bugs.md",
         paths["agents"] / "reviewer-review.md",
         paths["agents"] / "reviewer-comment.md",
+        paths["agents"] / "reviewer-tests.md",
         *(paths[key] for key in _SCRIPTS_KEYS),
     ):
         if path.exists():

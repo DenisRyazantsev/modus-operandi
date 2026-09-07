@@ -17,7 +17,7 @@
 #                       future use)
 #   --review-fork <kind> run the prompt in an ISOLATED per-kind session of a
 #                       reviewer role (reviewer-srp|reviewer-bugs|
-#                       reviewer-review|reviewer-comment): the FIRST call of
+#                       reviewer-review|reviewer-comment|reviewer-tests): the FIRST call of
 #                       a kind starts a FRESH session (no context is
 #                       inherited from any other agent) and saves its id in
 #                       <state_dir>/sessions-<task-id>-review-<kind>.json;
@@ -26,7 +26,7 @@
 #                       --fork; cursor: `--resume <chatId>`), so the reviewer
 #                       keeps its past findings across the review-fix-loop
 #                       iterations. One session per review kind
-#                       (srp|bugs|review|comment) lives through the whole
+#                       (srp|bugs|review|comment|tests) lives through the whole
 #                       loop. If the saved session vanished (opencode
 #                       auto-compact/cleanup, "Session not found"), the id is
 #                       dropped and a fresh session is started again.
@@ -59,14 +59,14 @@ usage() {
   echo "usage: $0 <role> \"<prompt>\" [--task <task-id>] [--review-fork <kind>]" >&2
   echo "       $0 <role> --prompt-file <path> [--task <task-id>] [--review-fork <kind>]" >&2
   echo "       role must be 'planner', 'executor' or one of the reviewer roles" >&2
-  echo "       (reviewer-srp, reviewer-bugs, reviewer-review, reviewer-comment)" >&2
+  echo "       (reviewer-srp, reviewer-bugs, reviewer-review, reviewer-comment, reviewer-tests)" >&2
   exit 2
 }
 
 [ $# -ge 2 ] || usage
 ROLE="$1"
 shift
-REVIEWER_ROLE_RE='^(reviewer-srp|reviewer-bugs|reviewer-review|reviewer-comment)$'
+REVIEWER_ROLE_RE='^(reviewer-srp|reviewer-bugs|reviewer-review|reviewer-comment|reviewer-tests)$'
 [ "$ROLE" = "planner" ] || [ "$ROLE" = "executor" ] || printf '%s' "$ROLE" | grep -qE "$REVIEWER_ROLE_RE" || usage
 
 # Flags are order-independent; --prompt-file is recognized at any position

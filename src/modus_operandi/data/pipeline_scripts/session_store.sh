@@ -18,8 +18,8 @@ session_paths() {
   ROLE_SESSIONS_FILE="$STATE_DIR/$BASE.json"
   SESSIONS_FILE="$ROLE_SESSIONS_FILE"
   if [ -n "${REVIEW_FORK:-}" ]; then
-    # A per-kind review session. One file per kind (srp|bugs|review|comment):
-    # the four parallel first-time checks never race on one file
+    # A per-kind review session. One file per kind (srp|bugs|review|comment|tests):
+    # the five parallel first-time checks never race on one file
     # (session_store reads/writes a JSON file whole).
     SESSIONS_FILE="$STATE_DIR/$BASE-review-$REVIEW_FORK.json"
   fi

@@ -66,6 +66,9 @@ class RunStatisticsTest(unittest.TestCase):
             (state / "sessions-task-1-review-comment.json").write_text(
                 json.dumps({"reviewer-comment": ""}), encoding="utf-8"
             )
+            (state / "sessions-task-1-review-tests.json").write_text(
+                json.dumps({"reviewer-tests": "r-tests"}), encoding="utf-8"
+            )
             # An unreadable/absent kind file contributes nothing.
             self.assertEqual(
                 mod.read_session_ids(state),
@@ -74,6 +77,7 @@ class RunStatisticsTest(unittest.TestCase):
                     "executor": "e1",
                     "reviewer-srp": "r-srp",
                     "reviewer-bugs": "r-bugs",
+                    "reviewer-tests": "r-tests",
                 },
             )
 

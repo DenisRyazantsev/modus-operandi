@@ -50,8 +50,9 @@ If you have a workflow like this
 8. Reviewing for bugs
 9. General review (correctness and quality)
 10. Comment review (readability)
-11. Fixing the issues found
-12. The executor writing a final summary of what was done
+11. Tests review (the tests for the change, judged against the test conventions on machine-generated coverage and latency reports)
+12. Fixing the issues found
+13. The executor writing a final summary of what was done
 ```
 
 The ADR records the decision (what and why) and is published to the
@@ -76,8 +77,9 @@ If you have a workflow like this
 1. Reviewing the whole project for SRP violations
 2. Reviewing the whole project for bugs
 3. Comment review (readability)
-4. Fixing the issues found
-5. The executor writing a final summary of what was done
+4. Tests review (the tests for the change, judged against the test conventions on machine-generated coverage and latency reports)
+5. Fixing the issues found
+6. The executor writing a final summary of what was done
 ```
 
 then you can use this command

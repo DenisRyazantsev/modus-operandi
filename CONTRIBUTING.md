@@ -85,3 +85,48 @@ uv run mypy
 
 The installer tests exercise the full `install.py --home` flow and assert the workflow
 structures, so a workflow change without a matching test update fails the suite.
+
+## Test reports
+
+The tests review kind (ADR-0022) judges the executor's tests on machine-produced
+function-call-level coverage and latency reports. This repository's test process
+produces them with a root-level script:
+
+```
+uv run python test_reports.py
+```
+
+Run from the repository root, it runs the whole suite once under coverage.py
+(>= 7.6, a dev dependency: its JSON report carries per-function data), then
+writes four outputs into the state directory's `tasks/current/`
+(`$MO_STATE_DIR/tasks/current`, or `.workflow/tasks/current` when `MO_STATE_DIR`
+is unset):
+
+- `function-coverage.md` — the per-file function report for the changed
+  `src/` Python files (scope: `git diff HEAD` plus untracked files, or every
+  `src/**/*.py` without a git HEAD);
+- `test-latency.md` — suite wall time, the 20 slowest tests and per-file
+  sums (informational);
+- `coverage.json` and `pytest.xml` — the machine data both reports are
+  derived from.
+
+The suite must be green first: a failing run exits 2 and writes no reports
+(reports are only meaningful for a passing suite). `--out-dir DIR` and
+`--base REF` override the defaults; nothing outside `--out-dir` is ever
+written. The tests-review reviewer and the executor's fix pass use this same
+documented command to (re)generate the reports.
+
+`--base` defaults to `HEAD`, so the plain invocation covers only uncommitted
+working-tree changes (plus untracked files). In a review-pipeline run in
+branch-diff mode (`scope.txt` starts with `branch-diff: <base>` —
+`determine-scope.sh` writes it, and `base-branch.txt` holds the base), the
+reviewed diff may be entirely committed: a clean working tree would yield an
+empty report. Generate against the scope base instead:
+
+```
+uv run python test_reports.py --base <base>
+```
+
+with `<base>` read from `scope.txt`/`base-branch.txt` (e.g. `origin/main`).
+This is the documented invocation the review-pipeline prompts and the
+reviewer's duty-1 instruction point at.
