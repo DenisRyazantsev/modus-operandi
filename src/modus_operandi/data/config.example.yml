@@ -25,7 +25,7 @@ cursor:                    # models for the cursor backend (passed to cursor-age
 
 workflow:
   state_dir: .workflow           # task artifact directory inside a project
-  max_fix_iterations: 5          # ceiling for the unified parallel review-fix loop (SRP, bugs, general review, comments, ADR-0009)
+  max_fix_iterations: 5          # ceiling for the unified parallel review-fix loop (SRP, bugs, general review, comments, tests review; ADR-0009, ADR-0022)
   max_srp_iterations: 5          # legacy: no longer binds a separate SRP loop (kept for backward compatibility)
   max_bug_iterations: 5          # legacy: no longer binds a separate bug loop (kept for backward compatibility)
   max_comment_iterations: 5      # legacy: no longer binds a separate comment loop (kept for backward compatibility)

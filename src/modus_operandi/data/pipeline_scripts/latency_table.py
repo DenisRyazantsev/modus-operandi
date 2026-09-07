@@ -116,12 +116,13 @@ def _span_within(timestamps: list[float], start: float, end: float) -> float:
 def _fan_out_kind(run_dir: Path, step_id: str, idx: int) -> str | None:
     """Best-effort kind label of a fan-out item step, or None.
 
-    Iteration 1 of the retry loop always fans out over all four kinds in the
-    deterministic order srp/bugs/review/comment, so the label is positional.
-    On later iterations (review-fix-loop:review-fan:<iter>:check:<idx>) the
-    per-iteration pending step's stdout (a JSON list of the re-reviewed
-    kinds) is read from the run's final state.json. Any failure (no state
-    file, unparseable output) degrades to None — the raw step id is shown.
+    Iteration 1 of the retry loop always fans out over every kind in the
+    deterministic order of KIND_ORDER (imported above), so the label is
+    positional. On later iterations (review-fix-loop:review-fan:<iter>:
+    check:<idx>) the per-iteration pending step's stdout (a JSON list of the
+    re-reviewed kinds) is read from the run's final state.json. Any failure
+    (no state file, unparseable output) degrades to None — the raw step id
+    is shown.
     """
     kinds = KIND_ORDER
     m = re.match(r"^review-fix-loop:review-fan:(\d+):", step_id)

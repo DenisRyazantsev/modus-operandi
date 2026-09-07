@@ -292,7 +292,7 @@ steps:
 
       - id: review-fan
         type: fan-out
-        max_concurrency: 4
+        max_concurrency: 5
         items: "{{ steps.pending-kinds.output.stdout | from_json }}"
         step:
           id: check

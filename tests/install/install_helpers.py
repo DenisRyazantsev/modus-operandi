@@ -38,7 +38,8 @@ def make_run(
                 "reviewer-srp (subagent)\n"
                 "reviewer-bugs (subagent)\n"
                 "reviewer-review (subagent)\n"
-                "reviewer-comment (subagent)\n",
+                "reviewer-comment (subagent)\n"
+                "reviewer-tests (subagent)\n",
             )
         return FakeResult(0)
 

@@ -23,8 +23,8 @@ class TableFormatTest(unittest.TestCase):
         self.assertEqual(layout.role_width, len("[reviewer-comment]"))
         labels = (
             ("planner", "executor", "harness")
-            + tuple(f"reviewer-{kind}" for kind in ("srp", "bugs", "review", "comment"))
-            + tuple(f"planner#{kind}" for kind in ("srp", "bugs", "review", "comment"))
+            + tuple(f"reviewer-{kind}" for kind in ("srp", "bugs", "review", "comment", "tests"))
+            + tuple(f"planner#{kind}" for kind in ("srp", "bugs", "review", "comment", "tests"))
         )
         for label in labels:
             rendered = layout.role_field(label)

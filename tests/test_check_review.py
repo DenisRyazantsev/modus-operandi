@@ -129,6 +129,31 @@ class CmdCheckReviewTest(unittest.TestCase):
             self.check("comment")
         self.assertEqual(cm.exception.code, 0)
 
+    def test_tests_kind_uses_tests_marker(self) -> None:
+        (self.task_dir / "tests-review-1.md").write_text("TESTS: FIX\n- x\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as cm:
+            self.check("tests")
+        self.assertEqual(cm.exception.code, 1)
+        (self.task_dir / "tests-review-2.md").write_text("TESTS: PASS\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as cm:
+            self.check("tests")
+        self.assertEqual(cm.exception.code, 0)
+
+    def test_main_cli_entry_dispatches_check_review(self) -> None:
+        # The module's public CLI entry (what review-check.sh and
+        # pass-check.sh invoke) must be called in-process: rule 1 of the
+        # test conventions - no orphan public entry. The argparse wiring
+        # (kind choices incl. the `tests` kind) is exercised here directly.
+        state_dir = str(self.root / ".workflow")
+        (self.task_dir / "tests-review-1.md").write_text("TESTS: FIX\n- x\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as cm:
+            check_review.main(["check-review", state_dir, "t1", "tests"])
+        self.assertEqual(cm.exception.code, 1)
+        (self.task_dir / "tests-review-1.md").write_text("TESTS: PASS\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as cm:
+            check_review.main(["check-review", state_dir, "t1", "tests"])
+        self.assertEqual(cm.exception.code, 0)
+
     # -- pending (ADR-0009: kinds the parallel fan-out must re-run) ----------
 
     def pending(self) -> Any:
@@ -151,7 +176,7 @@ class CmdCheckReviewTest(unittest.TestCase):
     def test_pending_all_kinds_when_no_reports(self) -> None:
         self.assertEqual(
             self.pending_stdout(),
-            '["srp", "bugs", "review", "comment"]\n',
+            '["srp", "bugs", "review", "comment", "tests"]\n',
         )
 
     def test_pending_only_failed_kinds(self) -> None:
@@ -159,6 +184,7 @@ class CmdCheckReviewTest(unittest.TestCase):
         (self.task_dir / "bug-review-1.md").write_text("BUGS: FIX\n- x\n", encoding="utf-8")
         (self.task_dir / "review-1.md").write_text("VERDICT: PASS\n", encoding="utf-8")
         (self.task_dir / "comment-review-1.md").write_text("VERDICT: FIX\n- y\n", encoding="utf-8")
+        (self.task_dir / "tests-review-1.md").write_text("TESTS: PASS\n", encoding="utf-8")
         self.assertEqual(self.pending_stdout(), '["bugs", "comment"]\n')
 
     def test_pending_none_when_all_pass(self) -> None:
@@ -167,13 +193,14 @@ class CmdCheckReviewTest(unittest.TestCase):
             ("bug-review-1.md", "BUGS: PASS"),
             ("review-1.md", "VERDICT: PASS"),
             ("comment-review-1.md", "VERDICT: PASS"),
+            ("tests-review-1.md", "TESTS: PASS"),
         ):
             (self.task_dir / name).write_text(marker + "\n", encoding="utf-8")
         self.assertEqual(self.pending_stdout(), "[]\n")
 
     # -- merge (ADR-0009: deterministic review-report.md for the executor) ---
 
-    def test_merge_concatenates_all_four_sections(self) -> None:
+    def test_merge_concatenates_all_five_sections(self) -> None:
         (self.task_dir / "srp-review-1.md").write_text(
             "SRP: FIX\n- split file.py\n", encoding="utf-8"
         )
@@ -182,6 +209,7 @@ class CmdCheckReviewTest(unittest.TestCase):
             "VERDICT: FIX\n- handle the edge case\n", encoding="utf-8"
         )
         (self.task_dir / "comment-review-1.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+        (self.task_dir / "tests-review-1.md").write_text("TESTS: PASS\n", encoding="utf-8")
         with self.assertRaises(SystemExit) as cm:
             self.merge()
         self.assertEqual(cm.exception.code, 1)  # review/srp still FIX
@@ -190,6 +218,8 @@ class CmdCheckReviewTest(unittest.TestCase):
         self.assertIn("## Bugs review", report)
         self.assertIn("## General review", report)
         self.assertIn("## Comment (readability) review", report)
+        self.assertIn("## Tests review", report)
+        self.assertIn("TESTS: PASS", report)
         # Sections are concatenated with headings, no synthesis: the FIX
         # bodies survive verbatim.
         self.assertIn("split file.py", report)
@@ -201,6 +231,7 @@ class CmdCheckReviewTest(unittest.TestCase):
             ("bug-review-1.md", "BUGS: PASS"),
             ("review-1.md", "VERDICT: PASS"),
             ("comment-review-1.md", "VERDICT: PASS"),
+            ("tests-review-1.md", "TESTS: PASS"),
         ):
             (self.task_dir / name).write_text(marker + "\n", encoding="utf-8")
         with self.assertRaises(SystemExit) as cm:
@@ -212,6 +243,7 @@ class CmdCheckReviewTest(unittest.TestCase):
             "## Bugs review",
             "## General review",
             "## Comment (readability) review",
+            "## Tests review",
         ):
             self.assertIn(heading, report)
 
@@ -221,6 +253,7 @@ class CmdCheckReviewTest(unittest.TestCase):
         (self.task_dir / "srp-review-1.md").write_text("SRP: PASS\n", encoding="utf-8")
         (self.task_dir / "bug-review-1.md").write_text("BUGS: PASS\n", encoding="utf-8")
         (self.task_dir / "comment-review-1.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+        (self.task_dir / "tests-review-1.md").write_text("TESTS: PASS\n", encoding="utf-8")
         with self.assertRaises(SystemExit) as cm:
             self.merge()
         self.assertEqual(cm.exception.code, 0)

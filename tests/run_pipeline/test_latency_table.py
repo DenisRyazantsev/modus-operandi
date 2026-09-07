@@ -1,8 +1,10 @@
 """Unit tests for the per-stage latency table (latency_table.py, ADR-0009/0011)."""
 
 import datetime
+import importlib.util
 import io
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +12,22 @@ from pathlib import Path
 from tests.env_sandbox import env, stdout
 
 from .helpers import export_env, load_run_pipeline
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+# Load latency_table.py from the repo's scripts dir (same idiom as
+# tests/test_check_review.py): the coverage run attributes only src/
+# imports, and the behavior tests below drive a temp-dir COPY of the
+# pipeline scripts (helpers.load_run_pipeline), so without this direct load
+# a changed latency_table.py would be reported as "never imported by the
+# test suite" with every function unexercised. The module's sibling imports
+# (check_review, display) resolve from the same dir.
+sys.path.insert(0, str(_REPO_ROOT / "src/modus_operandi/data/pipeline_scripts"))
+_SPEC = importlib.util.spec_from_file_location(
+    "latency_table", _REPO_ROOT / "src/modus_operandi/data/pipeline_scripts" / "latency_table.py"
+)
+assert _SPEC is not None and _SPEC.loader is not None
+latency_table_src = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(latency_table_src)
 
 
 def _ms(iso: str) -> int:
@@ -47,6 +65,9 @@ class LatencyTableTest(unittest.TestCase):
             ("review-fan", 1, 6, "completed"),
             ("review-fan:check:0", 2, 5, "completed"),
             ("review-fan:check:1", 2, 6, "completed"),
+            ("review-fan:check:2", 3, 5, "completed"),
+            ("review-fan:check:3", 3, 6, "completed"),
+            ("review-fan:check:4", 4, 6, "completed"),
             ("merge-reports", 6, 7, "failed"),
             ("fix-all", 7, 30, "completed"),
         ]
@@ -68,13 +89,15 @@ class LatencyTableTest(unittest.TestCase):
         (run_dir / "log.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
         if with_state:
             # The single-iteration pending output maps the fan-out items to
-            # the four kinds (first iteration always reviews all of them).
+            # the five kinds (first iteration always reviews all of them).
             (run_dir / "state.json").write_text(
                 json.dumps(
                     {
                         "step_results": {
                             "pending-kinds": {
-                                "output": {"stdout": '["srp", "bugs", "review", "comment"]'}
+                                "output": {
+                                    "stdout": '["srp", "bugs", "review", "comment", "tests"]'
+                                }
                             }
                         }
                     }
@@ -133,15 +156,40 @@ class LatencyTableTest(unittest.TestCase):
         out = captured.getvalue()
         self.assertIn("parallel checks (fan-out):", out)
         self.assertIn("iteration 1:", out)
-        # The iteration-1 items map positionally to the four kinds.
+        # The iteration-1 items map positionally to the five kinds of
+        # KIND_ORDER: check:4 renders as the "tests" slot label.
         self.assertIn("srp", out)
         self.assertIn("bugs", out)
+        self.assertIn("tests", out)
         # srp ran 3s (02 -> 05), bugs 4s (02 -> 06); fan-out wall is 4s.
         self.assertIn("fan-out wall", out)
         # Percentages against the run's wall time (records span 0..30s):
         # srp = 10.0%, wall = 13.3%.
         self.assertIn("10.0%", out)
         self.assertIn("13.3%", out)
+
+    def test_src_imported_module_is_measured_by_the_coverage_run(self) -> None:
+        # Drive the src-loaded module (module level above) through one full
+        # print with agent logs: every module function (collect_latency,
+        # _epoch, _agent_timestamps, _span_within, _fan_out_kind,
+        # print_latency_table) is called on the src file, so the
+        # function-coverage report measures latency_table.py whenever it is
+        # in review scope instead of listing it as never imported.
+        with tempfile.TemporaryDirectory() as tmp:
+            state = self._state(tmp, {"planner": "p1"})
+            run_dir = self._run_dir(tmp)
+            self._agent_logs(state)
+            captured = io.StringIO()
+            with (
+                env(export_env(Path(tmp) / "bin")),
+                stdout(captured),
+            ):
+                latency_table_src.print_latency_table(state, run_dir)
+        out = captured.getvalue()
+        self.assertIn("=== latency by stage ===", out)
+        self.assertIn("parallel checks (fan-out):", out)
+        self.assertIn("iteration 1:", out)
+        self.assertIn("tests", out)  # the fifth fan-out slot, positionally
 
     def test_latency_table_fan_out_wall_is_per_iteration(self) -> None:
         # Bug fix: the fan-out wall must be computed per retry-loop iteration,
@@ -159,11 +207,12 @@ class LatencyTableTest(unittest.TestCase):
                 return (base + datetime.timedelta(seconds=offset_s)).isoformat()
 
             events = [
-                # iteration 1: four parallel checks (02..07)
+                # iteration 1: five parallel checks (02..07)
                 ("review-fan:check:0", 2, 5, "completed"),
                 ("review-fan:check:1", 2, 6, "completed"),
                 ("review-fan:check:2", 3, 4, "completed"),
                 ("review-fan:check:3", 3, 7, "completed"),
+                ("review-fan:check:4", 4, 6, "completed"),
                 # merge + fix between the iterations
                 ("merge-reports", 7, 8, "failed"),
                 ("fix-all", 8, 20, "completed"),

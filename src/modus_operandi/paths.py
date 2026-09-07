@@ -37,7 +37,7 @@ def _layout(base: Path) -> Paths:
         "run_agent_cursor": (base / "opencode" / "scripts" / "run-agent-cursor.sh"),
         "prompt_subst": base / "opencode" / "scripts" / "prompt_subst.sh",
         # Role bodies as plain text, read by run-agent.sh for the cursor
-        # backend (cursor has no agent files to carry the role). The four
+        # backend (cursor has no agent files to carry the role). The five
         # reviewer roles have their own bodies, named reviewer-<kind>-body.txt.
         "planner_body": base / "opencode" / "scripts" / "planner-body.txt",
         "executor_body": base / "opencode" / "scripts" / "executor-body.txt",
@@ -45,6 +45,7 @@ def _layout(base: Path) -> Paths:
         "reviewer-bugs_body": base / "opencode" / "scripts" / "reviewer-bugs-body.txt",
         "reviewer-review_body": base / "opencode" / "scripts" / "reviewer-review-body.txt",
         "reviewer-comment_body": base / "opencode" / "scripts" / "reviewer-comment-body.txt",
+        "reviewer-tests_body": base / "opencode" / "scripts" / "reviewer-tests-body.txt",
         "run_pipeline": base / "opencode" / "scripts" / "run-pipeline.py",
         # run-pipeline.py is split one concern per file; the modules below
         # are copied next to it so the installed wrapper stays importable.

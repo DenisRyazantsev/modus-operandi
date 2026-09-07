@@ -49,7 +49,7 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
     # Opencode agent files are required under the same predicate that renders
     # them (config.opencode_models_complete): an opencode backend always has
     # them, while a cursor-only config with an empty/incomplete opencode
-    # section neither renders nor demands them. The four reviewer agents
+    # section neither renders nor demands them. The five reviewer agents
     # (one per review kind) render under the same predicate.
     require_agents = config.opencode_models_complete(cfg)
     if require_agents:
@@ -60,6 +60,7 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
             "reviewer-bugs.md",
             "reviewer-review.md",
             "reviewer-comment.md",
+            "reviewer-tests.md",
         ):
             agent = paths["agents"] / agent_name
             if not agent.exists():
@@ -146,6 +147,7 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
         "reviewer-bugs_body",
         "reviewer-review_body",
         "reviewer-comment_body",
+        "reviewer-tests_body",
     ):
         if not paths[key].is_file():
             errors.append(f"generated role body missing: {paths[key]}")
@@ -159,6 +161,8 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
         "review/comment-review.md",
         "review/comment-rereview.md",
         "review/comment-fix.md",
+        "review/tests-review.md",
+        "review/tests-rereview.md",
         "adr/executor-questions.md",
         "adr/planner-answers.md",
         "adr/implement.md",
@@ -170,6 +174,7 @@ def check_files(paths: Paths, cfg: dict[str, Any] | None = None) -> list[str]:
         "adr/review.md",
         "adr/comment-review.md",
         "adr/comment-fix.md",
+        "adr/tests-review.md",
         "task/write-plan.md",
         "srp-fix.md",
         "bug-fix.md",
@@ -235,6 +240,7 @@ def check_agents_visible(paths: Paths, cfg: dict[str, Any] | None = None) -> lis
         "reviewer-bugs",
         "reviewer-review",
         "reviewer-comment",
+        "reviewer-tests",
     ):
         if name not in names:
             errors.append(

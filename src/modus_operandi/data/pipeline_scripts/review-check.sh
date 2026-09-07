@@ -6,7 +6,7 @@
 # report prefix and prompt files, computes the next report number, exports
 # STATE_DIR/LATEST/N(/SNAP) for the @TOKEN@ prompt substitution and runs the
 # check in the per-kind session of the dedicated reviewer role
-# (reviewer-srp|reviewer-bugs|reviewer-review|reviewer-comment). The first
+# (reviewer-srp|reviewer-bugs|reviewer-review|reviewer-comment|reviewer-tests). The first
 # check of a kind starts a fresh session that receives ONLY the plan and the
 # ADR (via the step prompt) — it never inherits the planner's context; every
 # later check continues the same session, so the reviewer keeps its past
@@ -14,7 +14,7 @@
 #
 # Usage: review-check.sh <state_dir> <task_id> <item> <prompt-ns>
 #
-#   item       one of srp|bugs|review|comment
+#   item       one of srp|bugs|review|comment|tests
 #   prompt-ns  "review" (review-pipeline: rereview-vs-review selected by the
 #              per-kind snapshot file) or "adr" (task-pipeline: full review
 #              every iteration, no snapshot)
@@ -39,6 +39,7 @@ case "$ITEM" in
   bugs) PREFIX=bug-review; PROMPT="$PROMPT_NS/bug-review.md"; REREVIEW="$PROMPT_NS/bug-rereview.md"; ROLE=reviewer-bugs;;
   review) PREFIX=review; PROMPT="$PROMPT_NS/review.md"; REREVIEW="$PROMPT_NS/review-rereview.md"; ROLE=reviewer-review;;
   comment) PREFIX=comment-review; PROMPT="$PROMPT_NS/comment-review.md"; REREVIEW="$PROMPT_NS/comment-rereview.md"; ROLE=reviewer-comment;;
+  tests) PREFIX=tests-review; PROMPT="$PROMPT_NS/tests-review.md"; REREVIEW="$PROMPT_NS/tests-rereview.md"; ROLE=reviewer-tests;;
   *) echo "error: unknown review kind '$ITEM'" >&2; exit 2;;
 esac
 

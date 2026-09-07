@@ -9,19 +9,19 @@ Usage:
 <task_id> may be empty: it is then resolved through the
 <state_dir>/tasks/current symlink (see generate-task-id in the workflows).
 
-kind is one of review|srp|bugs|comment. check-review exits 0 when the LATEST
+kind is one of review|srp|bugs|comment|tests. check-review exits 0 when the LATEST
 <kind>-review-N.md starts with its PASS marker, 1 otherwise (mirrors the old
 shell chain `ls | sort -V | tail -1 && head -1 | grep`). Always prints the
 latest file path (or nothing) so the review steps can compute the next
 report number.
 
 pending prints a JSON array of the kinds whose latest report does NOT start
-with its PASS marker (all four kinds when no reports exist yet); it always
+with its PASS marker (all five kinds when no reports exist yet); it always
 exits 0. The parallel review fan-out step uses it as its `items`.
 
-merge deterministically concatenates the four LATEST reports into
+merge deterministically concatenates the five LATEST reports into
 <task_dir>/review-report.md (one section per kind, no synthesis) — the single
-input document for the executor's fix-all step. It exits 0 only when all four
+input document for the executor's fix-all step. It exits 0 only when all five
 latest reports carry their PASS markers, 1 otherwise (a FIX verdict is an
 expected outcome, so callers run it with continue_on_error).
 """
@@ -37,24 +37,27 @@ from pathlib import Path
 from task_utils import resolve_task_dir
 
 # kind -> (file prefix, PASS marker). Files are named review-N.md,
-# srp-review-N.md, bug-review-N.md and comment-review-N.md.
+# srp-review-N.md, bug-review-N.md, comment-review-N.md and tests-review-N.md.
 KINDS: dict[str, tuple[str, str]] = {
     "srp": ("srp-review", "SRP: PASS"),
     "bugs": ("bug-review", "BUGS: PASS"),
     "comment": ("comment-review", "VERDICT: PASS"),
     "review": ("review", "VERDICT: PASS"),
+    "tests": ("tests-review", "TESTS: PASS"),
 }
 
 # Deterministic order of the parallel checks: the order of the fan-out items
 # on the first iteration and of the merged review-report.md sections.
-KIND_ORDER: tuple[str, ...] = ("srp", "bugs", "review", "comment")
+KIND_ORDER: tuple[str, ...] = ("srp", "bugs", "review", "comment", "tests")
 
 # Kind -> reviewer role convention (ADR-0017): the reviewer role name of a
 # kind is `reviewer-<kind>` (reviewer-srp, reviewer-bugs, reviewer-review,
-# reviewer-comment). KIND_ORDER is the single source of truth for the kinds:
-# the Python consumers derive the reviewer names from it (table_format.py
-# ROLE_WIDTH, agent_log_tailer.py's reviewer-log regex, run_statistics.py's
-# kind loop). The shell consumers (review-check.sh's case, run-agent.sh's
+# reviewer-comment, reviewer-tests). KIND_ORDER is the single source of truth
+# for the kinds:
+# the Python consumers derive the reviewer names / fan-out labels from it
+# (table_format.py ROLE_WIDTH, agent_log_tailer.py's reviewer-log regex,
+# run_statistics.py's kind loop, latency_table.py's positional fan-out label
+# mapping). The shell consumers (review-check.sh's case, run-agent.sh's
 # REVIEWER_ROLE_RE) and the install-side lists (render.py REVIEWER_KINDS,
 # paths.py / verify.py / uninstall.py) carry their own copies — a new kind
 # must be added to every consumer above in lockstep.
@@ -65,6 +68,7 @@ KIND_TITLES: dict[str, str] = {
     "bugs": "Bugs review",
     "review": "General review",
     "comment": "Comment (readability) review",
+    "tests": "Tests review",
 }
 
 SUFFIX_RE = re.compile(r"-(\d+)\.md$")

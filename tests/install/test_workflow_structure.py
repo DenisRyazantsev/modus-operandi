@@ -160,6 +160,7 @@ class WorkflowStructureTest(InstallerTestCase):
         self.assertIn("ROLE=reviewer-bugs", review_check)
         self.assertIn("ROLE=reviewer-review", review_check)
         self.assertIn("ROLE=reviewer-comment", review_check)
+        self.assertIn("ROLE=reviewer-tests", review_check)
         self.assertNotIn("planner --review-fork", review_check)
         # The prompt namespace is parametrized: the yaml call passes "review",
         # the script picks review vs rereview from the per-kind snapshot.
@@ -168,10 +169,12 @@ class WorkflowStructureTest(InstallerTestCase):
             '"$PROMPT_NS/bug-review.md"',
             '"$PROMPT_NS/review.md"',
             '"$PROMPT_NS/comment-review.md"',
+            '"$PROMPT_NS/tests-review.md"',
             '"$PROMPT_NS/srp-rereview.md"',
             '"$PROMPT_NS/bug-rereview.md"',
             '"$PROMPT_NS/review-rereview.md"',
             '"$PROMPT_NS/comment-rereview.md"',
+            '"$PROMPT_NS/tests-rereview.md"',
         ):
             self.assertIn(prompt, review_check, prompt)
         self.assertIn("-snapshot.sha", review_check)
@@ -217,7 +220,13 @@ class WorkflowStructureTest(InstallerTestCase):
         # for git status so untracked files are in the review scope.
         self.assertEqual(self.install(), 0)
         prompts = self.home / ".config/modus-operandi/prompts/review"
-        for name in ("srp-rereview", "bug-rereview", "review-rereview", "comment-rereview"):
+        for name in (
+            "srp-rereview",
+            "bug-rereview",
+            "review-rereview",
+            "comment-rereview",
+            "tests-rereview",
+        ):
             # The prompts are prose wrapped across lines (srp-rereview breaks
             # mid-phrase), so join the lines before substring checks.
             prompt = (prompts / f"{name}.md").read_text().replace("\n", " ")
@@ -236,7 +245,7 @@ class WorkflowStructureTest(InstallerTestCase):
         # untracked files are in the review scope on the first pass too.
         self.assertEqual(self.install(), 0)
         prompts = self.home / ".config/modus-operandi/prompts/review"
-        for name in ("srp-review", "bug-review", "review", "comment-review"):
+        for name in ("srp-review", "bug-review", "review", "comment-review", "tests-review"):
             prompt = (prompts / f"{name}.md").read_text()
             # The wording differs per stage ("Run git status" in srp-review
             # vs "Also run git status" in the others); the shared guarantee
@@ -396,7 +405,7 @@ class WorkflowStructureTest(InstallerTestCase):
         fan = self.find_step(parsed["steps"], "review-fan")
         self.assertIsNotNone(fan)
         self.assertEqual(fan["type"], "fan-out")
-        self.assertEqual(fan["max_concurrency"], 4)
+        self.assertEqual(fan["max_concurrency"], 5)
         self.assertIn("{{ steps.pending-kinds.output.stdout | from_json }}", fan["items"])
         check = fan["step"]
         self.assertEqual(check["id"], "check")
@@ -422,9 +431,10 @@ class WorkflowStructureTest(InstallerTestCase):
             '"$PROMPT_NS/bug-review.md"',
             '"$PROMPT_NS/review.md"',
             '"$PROMPT_NS/comment-review.md"',
+            '"$PROMPT_NS/tests-review.md"',
         ):
             self.assertIn(prompt, review_check, prompt)
-        for prefix in ("srp-review", "bug-review", "review", "comment-review"):
+        for prefix in ("srp-review", "bug-review", "review", "comment-review", "tests-review"):
             self.assertIn(prefix, review_check)
         fix_all = self.find_step(parsed["steps"], "fix-all")
         self.assertIsNotNone(fix_all)
@@ -517,14 +527,14 @@ class WorkflowStructureTest(InstallerTestCase):
 
     def test_workflow_per_kind_review_prompts_still_ship(self) -> None:
         # ADR-0009 retires the per-kind FIX prompts and the sequential loops,
-        # but the four per-kind REVIEW prompts are still the prompt files the
+        # but the five per-kind REVIEW prompts are still the prompt files the
         # parallel fan-out dispatches on (one per kind). The verdict markers
         # live in the reviewer role bodies (the agents' system prompts,
         # ADR-0017); the step prompts carry the review scope and the report
         # path.
         self.assertEqual(self.install(), 0)
         adr_prompts = self.home / ".config/modus-operandi/prompts/adr"
-        for name in ("srp-review", "bug-review", "review", "comment-review"):
+        for name in ("srp-review", "bug-review", "review", "comment-review", "tests-review"):
             prompt = (adr_prompts / f"{name}.md").read_text(encoding="utf-8")
             self.assertIn("@STATE_DIR@/tasks/current/plan.md", prompt)
             self.assertIn("@STATE_DIR@/tasks/current/adr.md", prompt)
