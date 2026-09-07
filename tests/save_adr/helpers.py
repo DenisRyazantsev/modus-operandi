@@ -1,8 +1,8 @@
 """Shared fixtures for the save_adr.py tests.
 
 save_adr.py is loaded once from the repo (it imports task_utils.py from the
-same directory); the per-class result fakes live in fake_result.py and
-failed_result.py.
+same directory); the tests drive it against real files and real subprocess
+scripts.
 """
 
 import importlib.util

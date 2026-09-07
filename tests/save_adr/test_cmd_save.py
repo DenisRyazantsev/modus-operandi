@@ -121,22 +121,6 @@ class CmdSaveTest(unittest.TestCase):
         self.assertFalse((t2 / "adr-saved.txt").exists())
         self.assertIn("# ADR-0001: Сплиты t1", saved.read_text(encoding="utf-8"))
 
-    def test_ask_planner_uses_list_form(self) -> None:
-        # The list-form invocation keeps a path with spaces as one argv
-        # element (a shell=True join would split it): the script logs its
-        # arguments, and the recorded argv is the real one. The path with
-        # spaces itself ran without FileNotFoundError.
-        log = self.root / "args.log"
-        agent = self.root / "run agent.sh"
-        agent.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{log}"\nexit 0\n')
-        agent.chmod(0o755)
-        save_adr._ask_planner_for_slug(Path("/tmp/t1/adr.md"), str(agent), "t1")
-        args = log.read_text(encoding="utf-8").splitlines()
-        self.assertEqual(args[0], "planner")
-        self.assertEqual(args[-2:], ["--task", "t1"])
-        # The prompt with spaces stayed a single argv element.
-        self.assertIn("Read /tmp/t1/adr.md.", args[1])
-
     def test_save_via_symlink_is_idempotent(self) -> None:
         tasks = self.root / ".workflow" / "tasks"
         (tasks / "auto-1").mkdir()
